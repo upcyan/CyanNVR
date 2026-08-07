@@ -1,0 +1,22 @@
+services:
+  simplenvr:
+    image: ${REGISTRY:-your-dockerhub-username}/simplenvr:${TAG:-latest}
+    container_name: simplenvr
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NVR_PORT=8080
+      - NVR_DATA=/data
+      - NVR_WEB=/app/dist
+      - NVR_JWT_SECRET=${NVR_JWT_SECRET:?请在 .env 设置 NVR_JWT_SECRET}
+      - NVR_ADMIN_PASSWORD=${NVR_ADMIN_PASSWORD:-admin123}
+      - NVR_AI_ENABLED=${NVR_AI_ENABLED:-false}
+      - NVR_AI_BASE_URL=${NVR_AI_BASE_URL:-https://api.openai.com/v1}
+      - NVR_AI_MODEL=${NVR_AI_MODEL:-gpt-4o-mini}
+      - NVR_AI_API_KEY=${NVR_AI_API_KEY:-}
+    volumes:
+      - ./data:/data
+    # 局域网 ONVIF 发现需要多播。若需自动发现摄像头，Linux 上改回 host 网络：
+    # network_mode: host
+    # 此时无需 ports 映射，直接访问 VPS 的 8080

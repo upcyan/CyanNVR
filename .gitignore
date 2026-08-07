@@ -1,0 +1,10 @@
+bin/
+obj/
+*.exe
+*.log
+data/
+server/data/
+web/dist/
+web/node_modules/
+.DS_Store
+nvr-data/

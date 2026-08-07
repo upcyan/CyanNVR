@@ -1,0 +1,22 @@
+services:
+  simplenvr:
+    build: .
+    container_name: simplenvr
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NVR_PORT=8080
+      - NVR_DATA=/data
+      - NVR_WEB=/app/dist
+      - NVR_JWT_SECRET=${NVR_JWT_SECRET:-change-me-please}
+      - NVR_ADMIN_PASSWORD=${NVR_ADMIN_PASSWORD:-admin123}
+      # AI 画面识别（OpenAI 兼容接口）
+      - NVR_AI_ENABLED=${NVR_AI_ENABLED:-false}
+      - NVR_AI_BASE_URL=${NVR_AI_BASE_URL:-https://api.openai.com/v1}
+      - NVR_AI_MODEL=${NVR_AI_MODEL:-gpt-4o-mini}
+      - NVR_AI_API_KEY=${NVR_AI_API_KEY:-}
+    volumes:
+      - ./data:/data
+    # 局域网 ONVIF 发现需网卡多播，如需使用请打开 network_mode: host（Linux）
+    # network_mode: host

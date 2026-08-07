@@ -1,0 +1,230 @@
+:root {
+  --nvr-bg: #060709;
+  --nvr-panel: #101218;
+  --nvr-panel-2: #171a22;
+  --nvr-border: rgba(255, 255, 255, 0.06);
+  --nvr-text: #e6e9ef;
+  --nvr-text-2: #8b93a3;
+  --nvr-accent: #2ea8ff;
+  --nvr-green: #2ecc8f;
+  --nvr-red: #ff5d5d;
+  --nvr-amber: #ffb054;
+  --nvr-radius: 16px;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--nvr-bg);
+  color: var(--nvr-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.light {
+  --nvr-bg: #f3f5f8;
+  --nvr-panel: #ffffff;
+  --nvr-panel-2: #eef1f5;
+  --nvr-border: #e3e8ee;
+  --nvr-text: #1f2630;
+  --nvr-text-2: #6b7280;
+}
+
+.app-shell {
+  max-width: 560px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.page {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 56px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, 'Cascadia Mono', Consolas, monospace;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (min-width: 900px) {
+  .app-shell {
+    max-width: none;
+    flex-direction: row;
+  }
+
+  .app-shell .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .page {
+    padding-bottom: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .van-popup--bottom {
+    right: auto !important;
+    left: 50% !important;
+    width: 480px !important;
+    margin-left: -240px;
+  }
+
+  .van-popup--bottom.van-popup--round {
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+@media (hover: hover) {
+  button {
+    cursor: pointer;
+  }
+}
+
+/* ===== 关怀模式（适老化） ===== */
+body.care {
+  --nvr-text: #ffffff;
+  --nvr-text-2: #b4bdcc;
+  --nvr-border: rgba(255, 255, 255, 0.22);
+}
+
+body.care .van-nav-bar__title {
+  font-size: 20px;
+}
+
+body.care .van-tabbar-item__text {
+  font-size: 14px;
+}
+
+body.care .van-cell {
+  padding: 18px 16px;
+}
+body.care .van-cell__title,
+body.care .van-cell__value {
+  font-size: 17px;
+}
+body.care .van-cell__label {
+  font-size: 14px;
+}
+body.care .van-cell-group__title {
+  font-size: 16px;
+}
+
+body.care .van-button {
+  min-height: 50px;
+  font-size: 17px;
+}
+body.care .van-field__control,
+body.care .van-field__label {
+  font-size: 17px;
+}
+body.care .van-radio__label,
+body.care .van-switch {
+  font-size: 17px;
+}
+
+body.care .hd h1 {
+  font-size: 26px;
+}
+body.care .icon-btn {
+  width: 46px;
+  height: 46px;
+}
+body.care .chip {
+  padding: 11px 18px;
+  font-size: 15px;
+}
+
+body.care .cam-card .name {
+  font-size: 18px;
+}
+body.care .cam-card .model {
+  font-size: 13px;
+}
+body.care .cam-card .enter {
+  padding: 8px 16px;
+  font-size: 14px;
+}
+body.care .cam-card .more {
+  width: 44px;
+  height: 44px;
+}
+body.care .cam-card .offline-tip {
+  font-size: 16px;
+}
+
+body.care .nav-item {
+  font-size: 16px;
+  padding: 14px;
+}
+body.care .side-foot {
+  font-size: 14px;
+}
+
+body.care .date-bar {
+  font-size: 18px;
+}
+body.care .calendar .day {
+  font-size: 15px;
+}
+body.care .calendar .week {
+  font-size: 13px;
+}
+body.care .timeline .track {
+  height: 46px;
+}
+body.care .timeline .labels {
+  font-size: 13px;
+}
+body.care .seg-list .chip {
+  padding: 7px 14px;
+  font-size: 14px;
+}
+
+body.care .ev-name {
+  font-size: 16px;
+}
+body.care .ev-text,
+body.care .ev-time {
+  font-size: 14px;
+}
+body.care .ev-hd {
+  font-size: 18px;
+}
+
+body.care .vname {
+  font-size: 19px;
+}
+body.care .vbtn {
+  font-size: 14px;
+}
