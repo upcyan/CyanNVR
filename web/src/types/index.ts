@@ -6,9 +6,17 @@ export interface Device {
   username: string
   password?: string
   online: boolean
-  channel: number
+  source: 'rtsp' | 'test'
   model?: string
   rtspUrl?: string
+  created?: string
+}
+
+export interface DiscoveredDevice {
+  ip: string
+  port: number
+  name: string
+  xaddr?: string
 }
 
 export interface RecordingSegment {
@@ -52,18 +60,28 @@ export interface EventItem {
   videoEnd?: number
 }
 
+export interface AIConfig {
+  enabled: boolean
+  baseUrl: string
+  model: string
+  apiKey: string
+  prompt: string
+  interval: number
+  cooldown: number
+  threshold: number
+}
+
 export interface Settings {
-  storageTotalGB: number
-  storageUsedGB: number
   retentionDays: number
   recordMode: RecordMode
   scheduleStart: string
   scheduleEnd: string
   motionPush: boolean
   offlinePush: boolean
-  httpPort: number
-  httpsEnabled: boolean
+  https: boolean
+  ai: AIConfig
   theme: 'dark' | 'light'
   fontSize: FontSize
   careMode: boolean
+  demoMode: boolean
 }

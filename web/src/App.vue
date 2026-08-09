@@ -18,8 +18,7 @@ function applyA11y() {
 }
 
 onMounted(() => {
-  devices.load()
-  devices.startHeartbeat()
+  devices.load().then(() => devices.startPolling())
   mq = window.matchMedia('(min-width: 900px)')
   isDesktop.value = mq.matches
   onMqChange = (e) => (isDesktop.value = e.matches)
@@ -32,7 +31,15 @@ watch(
   applyA11y,
 )
 
+watch(
+  () => settings.settings.demoMode,
+  () => {
+    devices.load().then(() => devices.startPolling())
+  },
+)
+
 onBeforeUnmount(() => {
+  devices.stopPolling()
   if (mq && onMqChange) mq.removeEventListener('change', onMqChange)
 })
 </script>

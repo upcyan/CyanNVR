@@ -62,3 +62,11 @@ func (p *Proc) Pid() int {
 	}
 	return 0
 }
+
+func TestRTSP(bin, url string) bool {
+	cmd := exec.Command(bin, "-rtsp_transport", "tcp", "-i", url, "-t", "3", "-f", "null", "-")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return err == nil
+}

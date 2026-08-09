@@ -102,6 +102,9 @@ func (s *Server) applySettings() {
 		s.cfg.AICooldown = s.settings.AI.Cooldown
 	}
 	s.cfg.AIThreshold = s.settings.AI.Threshold
+	if s.settings.RetentionDays > 0 {
+		s.cfg.RetentionDays = s.settings.RetentionDays
+	}
 }
 
 func (s *Server) saveSettings() {
@@ -132,11 +135,14 @@ func (s *Server) Router() http.Handler {
 
 	protected.GET("/devices", s.listDevices)
 	protected.POST("/devices", s.requireOperator, s.createDevice)
+	protected.PUT("/devices/:id", s.requireOperator, s.updateDevice)
 	protected.DELETE("/devices/:id", s.requireAdmin, s.deleteDevice)
+	protected.POST("/devices/test", s.requireOperator, s.testDevice)
 	protected.POST("/devices/discover", s.requireOperator, s.discoverDevices)
 	protected.POST("/devices/:id/probe", s.requireOperator, s.probeDevice)
 	protected.GET("/devices/:id/snapshot", s.deviceSnapshot)
 	protected.GET("/devices/:id/recordings", s.deviceRecordings)
+	protected.GET("/devices/:id/recordings/:date/:time/download", s.downloadRecording)
 	protected.GET("/devices/:id/month", s.deviceMonth)
 	protected.POST("/devices/:id/playback", s.createPlayback)
 
@@ -144,9 +150,12 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/events/:id/snapshot", s.eventSnapshot)
 	protected.GET("/events/:id/gif", s.eventGIF)
 	protected.DELETE("/events/:id", s.requireOperator, s.deleteEvent)
+	protected.GET("/events/:id/snapshot/download", s.downloadEventSnapshot)
+	protected.GET("/events/:id/gif/download", s.downloadEventGIF)
 
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)
+	protected.GET("/storage", s.storageInfo)
 
 	stream := r.Group("/api/stream")
 	stream.Use(s.streamAuth())

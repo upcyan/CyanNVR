@@ -2,9 +2,9 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
-import type { Device } from '../types'
+import type { Device, DiscoveredDevice } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { isBackend, liveStreamUrl } from '../api'
+import { isBackend, isDemoMode, liveStreamUrl } from '../api'
 import CameraCard from '../components/CameraCard.vue'
 import LiveViewer from '../components/LiveViewer.vue'
 import VideoGrid from '../components/VideoGrid.vue'
@@ -15,18 +15,20 @@ const router = useRouter()
 
 const showAdd = ref(false)
 const discovering = ref(false)
-const foundDevices = ref<Device[]>([])
+const foundDevices = ref<DiscoveredDevice[]>([])
 const showMulti = ref(false)
 const viewerDevice = ref<Device | null>(null)
 const showViewer = ref(false)
 const showActions = ref(false)
 const actionDevice = ref<Device | null>(null)
+const editingDevice = ref<Device | null>(null)
 
 const onlineDevices = computed(() => store.devices.filter((d) => d.online))
-const streamUrlFor = (d: Device) => (isBackend() ? liveStreamUrl(d.id) : undefined)
+const streamUrlFor = (d: Device) => (isBackend() && !isDemoMode() ? liveStreamUrl(d.id) : undefined)
 
 const actionItems = computed(() => [
   { name: '历史回放', icon: 'clock-o' },
+  { name: '编辑设备', icon: 'edit' },
   { name: '删除设备', icon: 'delete-o', color: '#ff5d5d' },
 ])
 
@@ -46,6 +48,9 @@ async function onActionSelect(action: { name: string }) {
   if (!d) return
   if (action.name === '历史回放') {
     router.push({ path: '/playback', query: { device: d.id } })
+  } else if (action.name === '编辑设备') {
+    editingDevice.value = d
+    showAdd.value = true
   } else if (action.name === '删除设备') {
     try {
       await showConfirmDialog({
@@ -61,9 +66,20 @@ async function onActionSelect(action: { name: string }) {
 }
 
 async function onAdd(input: Partial<Device>) {
-  await store.add(input)
-  showToast('设备已添加')
+  if (editingDevice.value) {
+    await store.update(editingDevice.value.id, input)
+    showToast('设备已更新')
+  } else {
+    await store.add(input)
+    showToast('设备已添加')
+  }
   showAdd.value = false
+  editingDevice.value = null
+}
+
+function onAddClose() {
+  showAdd.value = false
+  editingDevice.value = null
 }
 
 async function onDiscover() {
@@ -127,8 +143,10 @@ function onViewerPlayback(d: Device) {
       v-model:show="showAdd"
       :devices="foundDevices"
       :discovering="discovering"
+      :edit-device="editingDevice"
       @add="onAdd"
       @discover="onDiscover"
+      @update:show="!$event && onAddClose()"
     />
 
     <LiveViewer

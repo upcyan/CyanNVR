@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { createPlayback, fetchDaySegments, fetchMonthRecords, isBackend } from '../api'
+import { createPlayback, fetchDaySegments, fetchMonthRecords, isBackend, isDemoMode } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -66,7 +66,7 @@ function rebuildPlayable() {
   const start = segments.value[0].start
   currentTs.value = start
   playing.value = true
-  if (isBackend()) {
+  if (isBackend() && !isDemoMode()) {
     buildSession(start)
   } else {
     playable = createPlayable({ seed: hashStr(deviceId.value), label: device.value.name, baseTs: start })
@@ -103,7 +103,7 @@ function startTimer() {
 
 function onSeek(ts: number) {
   currentTs.value = ts
-  if (!isBackend()) {
+  if (!isBackend() || isDemoMode()) {
     playable?.seek(ts)
     return
   }

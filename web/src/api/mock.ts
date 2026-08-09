@@ -1,4 +1,4 @@
-import type { DayRecord, Device, RecordingSegment, Settings } from '../types'
+import type { DayRecord, Device, DiscoveredDevice, RecordingSegment, Settings } from '../types'
 import {
   daySegments,
   defaultSettings,
@@ -48,9 +48,26 @@ export async function removeDevice(id: string): Promise<void> {
   persistDevices(loadDevices().filter((d) => d.id !== id))
 }
 
-export async function discoverDevices(): Promise<Device[]> {
+export async function updateDevice(id: string, input: Partial<Device>): Promise<Device> {
+  await delay(300)
+  const list = loadDevices()
+  const idx = list.findIndex((d) => d.id === id)
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], ...input }
+    persistDevices(list)
+    return list[idx]
+  }
+  throw new Error('device not found')
+}
+
+export async function discoverDevices(): Promise<DiscoveredDevice[]> {
   await delay(1200)
-  return discoveryCandidates()
+  return discoveryCandidates().map((d) => ({
+    ip: d.ip,
+    port: d.port,
+    name: d.name,
+    xaddr: `http://${d.ip}:${d.port}/onvif/device_service`,
+  }))
 }
 
 export async function fetchMonthRecords(deviceId: string, ym: string): Promise<DayRecord[]> {
@@ -71,6 +88,10 @@ export async function fetchSettings(): Promise<Settings> {
 export async function saveSettings(s: Settings): Promise<Settings> {
   await delay(200)
   return { ...s }
+}
+
+export async function deleteEvent(_id: string): Promise<void> {
+  await delay(200)
 }
 
 export { recentEvents } from '../mocks/generator'

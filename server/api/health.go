@@ -44,7 +44,6 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	// keep existing api key when a masked value was submitted
 	if in.AI.APIKey != "" && len(in.AI.APIKey) < 20 && s.settings.AI.APIKey != "" {
 		in.AI.APIKey = s.settings.AI.APIKey
 	}
@@ -52,4 +51,8 @@ func (s *Server) putSettings(c *gin.Context) {
 	s.saveSettings()
 	s.applySettings()
 	c.JSON(http.StatusOK, gin.H{"settings": *s.settings})
+}
+
+func mathRound(f float64) float64 {
+	return float64(int(f*10)) / 10
 }

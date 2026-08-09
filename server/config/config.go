@@ -13,6 +13,7 @@ type Config struct {
 	Ffmpeg    string
 	JWTSecret string
 
+	RetentionDays       int
 	SnapshotIntervalSec int
 
 	AIEnabled   bool
@@ -44,6 +45,7 @@ func Load() *Config {
 		WebDir:              env("NVR_WEB", "./dist"),
 		Ffmpeg:              env("FFMPEG", "ffmpeg"),
 		JWTSecret:           env("NVR_JWT_SECRET", "simplenvr-dev-secret-change-me"),
+		RetentionDays:       30,
 		SnapshotIntervalSec: 10,
 
 		AIEnabled:   env("NVR_AI_ENABLED", "false") == "true",

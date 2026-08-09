@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { showToast } from 'vant'
+import { computed, onMounted, ref } from 'vue'
+import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
-import { changeOwnPassword, fetchAppSettings, isBackend, saveAppSettings, type AppSettings } from '../api'
+import { useAuthStore } from '../stores/auth'
+import {
+  changeOwnPassword,
+  createUser,
+  deleteUser,
+  fetchUsers,
+  isBackend,
+  updateUser,
+  type ManagedUser,
+} from '../api'
 
 const store = useSettingsStore()
+const auth = useAuthStore()
 const s = store.settings
 
 const saving = ref(false)
@@ -13,34 +23,16 @@ const showStartPicker = ref(false)
 const showEndPicker = ref(false)
 const pwd = ref({ old: '', next: '', confirm: '' })
 
-const ai = ref<AppSettings['ai']>({
-  enabled: false,
-  baseUrl: 'https://api.openai.com/v1',
-  model: 'gpt-4o-mini',
-  apiKey: '',
-  prompt: '你是安防监控分析助手。分析图中画面，仅输出JSON：{"alert":true/false,"label":"事件类别","description":"简短中文描述"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。',
-  interval: 10,
-  cooldown: 60,
-  threshold: 0.5,
+const usedPct = computed(() => {
+  const { totalGB, usedGB } = store.storage
+  if (!totalGB) return 0
+  return Math.round((usedGB / totalGB) * 100)
 })
-const aiLoading = ref(false)
 
-async function loadAi() {
-  if (!isBackend()) return
-  aiLoading.value = true
-  try {
-    const st = await fetchAppSettings()
-    ai.value = st.ai
-  } catch {
-    /* ignore */
-  } finally {
-    aiLoading.value = false
-  }
-}
-
-onMounted(loadAi)
-
-const usedPct = Math.round((s.storageUsedGB / s.storageTotalGB) * 100)
+onMounted(() => {
+  store.loadFromServer()
+  loadUsers()
+})
 
 const modeOptions = [
   { label: '连续录制', desc: '全天不间断录像', value: 'continuous' },
@@ -74,7 +66,6 @@ async function save() {
       await changeOwnPassword(pwd.value.old, pwd.value.next)
       pwd.value = { old: '', next: '', confirm: '' }
     }
-    await saveAi()
     await store.save()
     showToast('设置已保存')
   } catch (e: any) {
@@ -82,11 +73,6 @@ async function save() {
   } finally {
     saving.value = false
   }
-}
-
-async function saveAi() {
-  if (!isBackend()) return
-  await saveAppSettings({ ...defaultAppSettings(), ai: ai.value })
 }
 
 function logout() {
@@ -118,16 +104,82 @@ function setCareMode(v: boolean) {
   store.set({ careMode: v })
 }
 
-function defaultAppSettings(): AppSettings {
-  return {
-    retentionDays: s.retentionDays,
-    recordMode: s.recordMode,
-    scheduleStart: s.scheduleStart,
-    scheduleEnd: s.scheduleEnd,
-    motionPush: s.motionPush,
-    offlinePush: s.offlinePush,
-    https: s.httpsEnabled,
-    ai: ai.value,
+function setDemoMode(v: boolean) {
+  store.set({ demoMode: v })
+}
+
+// ---- user management ----
+
+const users = ref<ManagedUser[]>([])
+const usersLoaded = ref(false)
+const showUserDialog = ref(false)
+const editingUser = ref<ManagedUser | null>(null)
+const userForm = ref({ username: '', password: '', role: 'user' as string })
+const showRolePicker = ref(false)
+
+const roleOptions = [
+  { label: '管理员', value: 'admin' },
+  { label: '操作员', value: 'operator' },
+  { label: '普通用户', value: 'user' },
+  { label: '只读', value: 'viewer' },
+]
+
+async function loadUsers() {
+  if (!isBackend()) return
+  try {
+    users.value = await fetchUsers()
+    usersLoaded.value = true
+  } catch {
+    /* ignore */
+  }
+}
+
+function openAddUser() {
+  editingUser.value = null
+  userForm.value = { username: '', password: '', role: 'user' }
+  showUserDialog.value = true
+}
+
+function openEditUser(u: ManagedUser) {
+  editingUser.value = u
+  userForm.value = { username: u.username, password: '', role: u.role }
+  showUserDialog.value = true
+}
+
+async function saveUser() {
+  try {
+    if (editingUser.value) {
+      const patch: { password?: string; role?: string } = { role: userForm.value.role }
+      if (userForm.value.password) patch.password = userForm.value.password
+      await updateUser(editingUser.value.id, patch)
+      showToast('已更新')
+    } else {
+      if (!userForm.value.username || !userForm.value.password) {
+        showToast('请填写用户名和密码')
+        return
+      }
+      await createUser(userForm.value.username, userForm.value.password, userForm.value.role)
+      showToast('已创建')
+    }
+    showUserDialog.value = false
+    await loadUsers()
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '操作失败')
+  }
+}
+
+async function removeUser(u: ManagedUser) {
+  try {
+    await showConfirmDialog({ title: '删除用户', message: `确定删除「${u.username}」吗？` })
+  } catch {
+    return
+  }
+  try {
+    await deleteUser(u.id)
+    showToast('已删除')
+    await loadUsers()
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '删除失败')
   }
 }
 </script>
@@ -137,7 +189,11 @@ function defaultAppSettings(): AppSettings {
     <van-nav-bar title="设置" left-arrow @click-left="$router.back()" />
 
     <van-cell-group title="存储管理">
-      <van-cell title="存储空间" :label="`已用 ${s.storageUsedGB}GB / 共 ${s.storageTotalGB}GB`">
+      <van-cell
+        v-if="store.storage.totalGB > 0"
+        title="存储空间"
+        :label="`已用 ${store.storage.usedGB}GB / 共 ${store.storage.totalGB}GB`"
+      >
         <template #value>
           <div class="progress">
             <div class="bar">
@@ -199,10 +255,9 @@ function defaultAppSettings(): AppSettings {
     </van-cell-group>
 
     <van-cell-group title="网络">
-      <van-field v-model="s.httpPort" type="number" label="HTTP 端口" placeholder="8080" />
       <van-cell title="启用 HTTPS" label="通过安全通道访问">
         <template #right-icon>
-          <van-switch v-model="s.httpsEnabled" size="20" @update:model-value="store.set({ httpsEnabled: $event })" />
+          <van-switch v-model="s.https" size="20" @update:model-value="store.set({ https: $event })" />
         </template>
       </van-cell>
     </van-cell-group>
@@ -234,6 +289,11 @@ function defaultAppSettings(): AppSettings {
           <van-switch :model-value="s.careMode" size="20" @update:model-value="setCareMode" />
         </template>
       </van-cell>
+      <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
+        <template #right-icon>
+          <van-switch :model-value="s.demoMode" size="20" @update:model-value="setDemoMode" />
+        </template>
+      </van-cell>
     </van-cell-group>
 
     <van-cell-group title="服务器">
@@ -248,30 +308,30 @@ function defaultAppSettings(): AppSettings {
     <van-cell-group title="AI 画面识别">
       <van-cell title="启用 AI 识别" label="对画面进行分析并记录事件与动图">
         <template #right-icon>
-          <van-switch v-model="ai.enabled" size="20" />
+          <van-switch v-model="s.ai.enabled" size="20" />
         </template>
       </van-cell>
-      <template v-if="ai.enabled">
-        <van-field v-model="ai.baseUrl" label="接口地址" placeholder="https://api.openai.com/v1" />
-        <van-field v-model="ai.model" label="模型" placeholder="gpt-4o-mini" />
-        <van-field v-model="ai.apiKey" label="API Key" placeholder="sk-..." />
+      <template v-if="s.ai.enabled">
+        <van-field v-model="s.ai.baseUrl" label="接口地址" placeholder="https://api.openai.com/v1" />
+        <van-field v-model="s.ai.model" label="模型" placeholder="gpt-4o-mini" />
+        <van-field v-model="s.ai.apiKey" label="API Key" placeholder="sk-..." />
         <van-cell title="识别间隔(秒)" label="每隔多久分析一帧">
           <template #value>
-            <van-stepper v-model="ai.interval" :min="5" :max="120" step="5" />
+            <van-stepper v-model="s.ai.interval" :min="5" :max="120" step="5" />
           </template>
         </van-cell>
         <van-cell title="事件冷却(秒)" label="同一设备事件间隔">
           <template #value>
-            <van-stepper v-model="ai.cooldown" :min="10" :max="600" step="10" />
+            <van-stepper v-model="s.ai.cooldown" :min="10" :max="600" step="10" />
           </template>
         </van-cell>
         <van-cell title="触发阈值" label="置信度达到该值才记录">
           <template #value>
-            <van-slider v-model="ai.threshold" :min="0.3" :max="1" :step="0.05" style="width: 120px" />
+            <van-slider v-model="s.ai.threshold" :min="0.3" :max="1" :step="0.05" style="width: 120px" />
           </template>
         </van-cell>
         <van-field
-          v-model="ai.prompt"
+          v-model="s.ai.prompt"
           type="textarea"
           rows="3"
           autosize
@@ -280,13 +340,38 @@ function defaultAppSettings(): AppSettings {
         />
       </template>
       <van-cell v-if="!isBackend()" title="演示模式" label="连接服务器后可配置 AI 识别" />
-      <van-cell v-if="isBackend() && aiLoading" title="加载中..." />
     </van-cell-group>
 
     <van-cell-group title="账户安全">
       <van-field v-model="pwd.old" type="password" label="原密码" placeholder="请输入原密码" />
       <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码" />
       <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
+    </van-cell-group>
+
+    <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
+      <van-cell
+        v-for="u in users"
+        :key="u.id"
+        :title="u.username"
+        :label="roleOptions.find((r) => r.value === u.role)?.label || u.role"
+      >
+        <template #right-icon>
+          <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
+          <van-icon
+            v-if="u.id !== auth.user?.id"
+            name="delete-o"
+            class="user-action del"
+            @click="removeUser(u)"
+          />
+        </template>
+      </van-cell>
+      <van-cell v-if="!usersLoaded" title="加载中..." />
+      <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
+      <div style="padding: 12px 16px">
+        <van-button plain block round size="small" @click="openAddUser">
+          <van-icon name="plus" style="margin-right: 4px" />添加用户
+        </van-button>
+      </div>
     </van-cell-group>
 
     <div class="save-area">
@@ -322,6 +407,39 @@ function defaultAppSettings(): AppSettings {
         title="结束时间"
         @confirm="onEndConfirm"
         @cancel="showEndPicker = false"
+      />
+    </van-popup>
+
+    <van-popup v-model:show="showUserDialog" position="bottom" round :style="{ maxHeight: '80%' }">
+      <div class="dialog-head">
+        <span>{{ editingUser ? '编辑用户' : '添加用户' }}</span>
+        <van-icon name="cross" size="18" @click="showUserDialog = false" />
+      </div>
+      <van-cell-group inset style="margin: 0 10px">
+        <van-field
+          v-model="userForm.username"
+          label="用户名"
+          placeholder="请输入用户名"
+          :disabled="!!editingUser"
+        />
+        <van-field
+          v-model="userForm.password"
+          type="password"
+          :label="editingUser ? '新密码（留空不改）' : '密码'"
+          :placeholder="editingUser ? '留空则不修改' : '请输入密码'"
+        />
+        <van-field label="角色" :model-value="roleOptions.find((r) => r.value === userForm.role)?.label" is-link @click="showRolePicker = true" />
+      </van-cell-group>
+      <div style="padding: 16px">
+        <van-button type="primary" block round @click="saveUser">保存</van-button>
+      </div>
+    </van-popup>
+
+    <van-popup v-model:show="showRolePicker" position="bottom" round>
+      <van-picker
+        :columns="roleOptions.map((r) => ({ text: r.label, value: r.value }))"
+        @confirm="(v: { selectedOptions: Array<{ text: string; value: string }> }) => { userForm.role = v.selectedOptions[0]?.value || 'user'; showRolePicker = false }"
+        @cancel="showRolePicker = false"
       />
     </van-popup>
   </div>
@@ -409,6 +527,22 @@ function defaultAppSettings(): AppSettings {
   border-color: var(--nvr-accent);
   color: var(--nvr-accent);
   background: rgba(46, 168, 255, 0.12);
+}
+.user-action {
+  margin-left: 12px;
+  color: var(--nvr-text-2);
+  font-size: 18px;
+}
+.user-action.del:active {
+  color: var(--nvr-red);
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  font-weight: 600;
+  font-size: 16px;
 }
 
 @media (min-width: 900px) {

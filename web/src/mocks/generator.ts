@@ -40,7 +40,7 @@ export function makeDevice(input: Partial<Device>): Device {
     username: input.username ?? 'admin',
     password: input.password ?? 'admin123',
     online: input.online ?? true,
-    channel: input.channel ?? 1,
+    source: input.source ?? 'rtsp',
     model: input.model ?? 'ONVIF Camera',
     rtspUrl: input.rtspUrl,
   }
@@ -55,7 +55,7 @@ export function initialDevices(): Device[] {
       username: 'admin',
       password: 'admin123',
       online: i !== 2,
-      channel: 1,
+      source: 'rtsp',
       model: c.model,
       rtspUrl: `rtsp://admin:admin123@${c.ip}:554/stream1`,
     }),
@@ -71,7 +71,7 @@ export function discoveryCandidates(): Device[] {
       username: 'admin',
       password: 'admin123',
       online: true,
-      channel: 1,
+      source: 'rtsp',
       model: c.model,
       rtspUrl: `rtsp://admin:admin123@${c.ip}:554/stream1`,
       id: `disc_${i}`,
@@ -154,18 +154,26 @@ export function recentEvents(devices: Device[]): AppEvent[] {
 
 export function defaultSettings(): Settings {
   return {
-    storageTotalGB: 512,
-    storageUsedGB: 263.5,
     retentionDays: 30,
     recordMode: 'continuous',
     scheduleStart: '08:00',
     scheduleEnd: '20:00',
     motionPush: true,
     offlinePush: true,
-    httpPort: 8080,
-    httpsEnabled: false,
+    https: false,
+    ai: {
+      enabled: false,
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      apiKey: '',
+      prompt: '你是安防监控分析助手。分析图中画面，仅输出JSON：{"alert":true/false,"label":"事件类别","description":"简短中文描述"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。',
+      interval: 10,
+      cooldown: 60,
+      threshold: 0.5,
+    },
     theme: 'dark',
     fontSize: 'normal',
     careMode: false,
+    demoMode: false,
   }
 }

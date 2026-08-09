@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import type { Device } from '../types'
-import { addDevice, discoverDevices, fetchDevices, removeDevice } from '../api/mock'
+import { addDevice, discoverDevices, fetchDevices, isBackend, removeDevice, updateDevice } from '../api'
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 export const useDeviceStore = defineStore('devices', {
   state: () => ({
@@ -26,15 +28,35 @@ export const useDeviceStore = defineStore('devices', {
       await removeDevice(id)
       this.devices = this.devices.filter((d) => d.id !== id)
     },
+    async update(id: string, input: Partial<Device>) {
+      const d = await updateDevice(id, input)
+      const idx = this.devices.findIndex((x) => x.id === id)
+      if (idx >= 0) this.devices[idx] = { ...this.devices[idx], ...d }
+      return d
+    },
     async discover() {
       return discoverDevices()
     },
-    startHeartbeat() {
-      setInterval(() => {
-        if (!this.devices.length) return
-        const i = Math.floor(Math.random() * this.devices.length)
-        this.devices[i].online = !this.devices[i].online
-      }, 20000)
+    async refresh() {
+      const list = await fetchDevices()
+      const byId = new Map(list.map((d) => [d.id, d]))
+      this.devices = this.devices.map((d) => {
+        const fresh = byId.get(d.id)
+        return fresh ? { ...d, online: fresh.online, rtspUrl: fresh.rtspUrl ?? d.rtspUrl } : d
+      })
+    },
+    startPolling() {
+      this.stopPolling()
+      if (!isBackend()) return
+      pollTimer = setInterval(() => {
+        this.refresh()
+      }, 10000)
+    },
+    stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
     },
   },
 })

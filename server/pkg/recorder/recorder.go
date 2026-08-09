@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,7 @@ func (m *Manager) Start() {
 		go m.aiLoop()
 	}
 	go m.indexerLoop()
+	go m.cleanupLoop()
 	devs, err := m.st.ListDevices()
 	if err != nil {
 		log.Printf("list devices: %v", err)
@@ -375,6 +377,14 @@ func (m *Manager) indexDeviceDay(deviceID, dayDir string) {
 		yy := atoi(dateStr[0:4])
 		mm := atoi(dateStr[4:6])
 		dd := atoi(dateStr[6:8])
+
+		type segInfo struct {
+			start time.Time
+			path  string
+			name  string
+		}
+		var segs []segInfo
+
 		files, err := os.ReadDir(filepath.Join(dayDir, sub.Name()))
 		if err != nil {
 			continue
@@ -391,12 +401,29 @@ func (m *Manager) indexDeviceDay(deviceID, dayDir string) {
 			mi := atoi(match[1][2:4])
 			ss := atoi(match[1][4:6])
 			start := time.Date(yy, time.Month(mm), dd, hh, mi, ss, 0, time.Local)
+			segs = append(segs, segInfo{
+				start: start,
+				path:  filepath.Join(dayDir, sub.Name(), f.Name()),
+				name:  f.Name(),
+			})
+		}
+
+		sort.Slice(segs, func(i, j int) bool { return segs[i].start.Before(segs[j].start) })
+
+		for i, sg := range segs {
+			end := sg.start.Add(5 * time.Minute)
+			if i+1 < len(segs) {
+				nextStart := segs[i+1].start
+				if nextStart.After(sg.start) && nextStart.Before(end.Add(2*time.Minute)) {
+					end = nextStart
+				}
+			}
 			seg := models.RecordingSegment{
-				ID:       deviceID + "_" + start.Format("20060102150405"),
+				ID:       deviceID + "_" + sg.start.Format("20060102150405"),
 				DeviceID: deviceID,
-				Start:    start,
-				End:      start.Add(5 * time.Minute),
-				Path:     filepath.Join(dayDir, sub.Name(), f.Name()),
+				Start:    sg.start,
+				End:      end,
+				Path:     sg.path,
 			}
 			if err := m.st.UpsertSegment(seg); err != nil {
 				log.Printf("upsert segment: %v", err)
@@ -408,6 +435,66 @@ func (m *Manager) indexDeviceDay(deviceID, dayDir string) {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+// ---------- retention cleanup ----------
+
+func (m *Manager) cleanupLoop() {
+	tick := time.NewTicker(1 * time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-m.stopAll:
+			return
+		case <-tick.C:
+			m.cleanupOldRecordings()
+		}
+	}
+}
+
+func (m *Manager) cleanupOldRecordings() {
+	days := m.cfg.RetentionDays
+	if days <= 0 {
+		days = 30
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+
+	deviceDirs, err := os.ReadDir(m.cfg.RecordDir)
+	if err != nil {
+		return
+	}
+	for _, dd := range deviceDirs {
+		if !dd.IsDir() {
+			continue
+		}
+		deviceID := dd.Name()
+		dayDirs, err := os.ReadDir(filepath.Join(m.cfg.RecordDir, deviceID))
+		if err != nil {
+			continue
+		}
+		for _, dayDir := range dayDirs {
+			if !dayDir.IsDir() || !dayDirRe.MatchString(dayDir.Name()) {
+				continue
+			}
+			dateStr := dayDir.Name()
+			yy := atoi(dateStr[0:4])
+			mm := atoi(dateStr[4:6])
+			dd2 := atoi(dateStr[6:8])
+			dayTime := time.Date(yy, time.Month(mm), dd2, 0, 0, 0, 0, time.Local)
+			if dayTime.Before(cutoff) {
+				dirPath := filepath.Join(m.cfg.RecordDir, deviceID, dayDir.Name())
+				if err := os.RemoveAll(dirPath); err != nil {
+					log.Printf("cleanup remove %s: %v", dirPath, err)
+				} else {
+					log.Printf("cleanup removed old recordings: %s", dirPath)
+				}
+			}
+		}
+	}
+
+	if _, err := m.st.DeleteEventsBefore(cutoff); err != nil {
+		log.Printf("cleanup delete events error: %v", err)
+	}
 }
 
 func withCreds(url, user, pass string) string {

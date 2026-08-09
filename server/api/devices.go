@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"simplenvr/server/models"
+	"simplenvr/server/pkg/ffmpeg"
 	"simplenvr/server/pkg/onvifx"
 )
 
@@ -85,6 +87,76 @@ func (s *Server) deleteDevice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (s *Server) updateDevice(c *gin.Context) {
+	id := c.Param("id")
+	d, err := s.st.GetDevice(id)
+	if err != nil || d == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+	var req deviceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if req.Name != "" {
+		d.Name = req.Name
+	}
+	if req.IP != "" {
+		d.IP = req.IP
+	}
+	if req.Port != 0 {
+		d.Port = req.Port
+	}
+	if req.Username != "" {
+		d.Username = req.Username
+	}
+	if req.Password != "" {
+		d.Password = req.Password
+	}
+	if req.RTSPURL != "" {
+		d.RTSPURL = req.RTSPURL
+	}
+	if err := s.st.UpdateDevice(*d); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	s.rec.Restart(d)
+	c.JSON(http.StatusOK, gin.H{"device": d})
+}
+
+func (s *Server) testDevice(c *gin.Context) {
+	var req struct {
+		IP       string `json:"ip"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		RTSPURL  string `json:"rtspUrl"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	url := req.RTSPURL
+	if url == "" {
+		port := req.Port
+		if port == 0 {
+			port = 554
+		}
+		if req.Username != "" {
+			url = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", req.Username, req.Password, req.IP, port)
+		} else {
+			url = fmt.Sprintf("rtsp://%s:%d/stream1", req.IP, port)
+		}
+	}
+	ok := ffmpeg.TestRTSP(s.cfg.Ffmpeg, url)
+	if ok {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "url": url})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "url": url, "error": "无法连接到 RTSP 地址"})
+	}
 }
 
 func (s *Server) discoverDevices(c *gin.Context) {

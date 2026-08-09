@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { EventItem } from '../types'
-import { deleteEvent, fetchEvents, isBackend } from '../api'
+import { deleteEvent, fetchEvents, isBackend, isDemoMode } from '../api'
+import { downloadEventSnapshotURL, downloadEventGIFURL } from '../api'
 import { useAuthStore } from '../stores/auth'
+import { useDeviceStore } from '../stores/devices'
 
 const route = useRoute()
 const auth = useAuthStore()
+const deviceStore = useDeviceStore()
 
 const deviceId = ref('')
+const dateStr = ref('')
 const events = ref<EventItem[]>([])
 const loading = ref(false)
 
@@ -21,10 +25,33 @@ const typeMap: Record<string, { text: string; cls: string; icon: string }> = {
   manual: { text: '手动', cls: 'manual', icon: 'records-o' },
 }
 
+const today = new Date()
+const p2 = (n: number) => String(n).padStart(2, '0')
+
+const filterOpen = ref('')
+const showDevicePicker = ref(false)
+const showDatePicker = ref(false)
+const datePickModel = ref([p2(today.getFullYear()), p2(today.getMonth() + 1), p2(today.getDate())])
+
+const deviceColumns = computed(() => [
+  { text: '全部设备', value: '' },
+  ...deviceStore.devices.map(d => ({ text: d.name || d.ip, value: d.id })),
+])
+
+function onDevicePick({ selectedValues }: any) {
+  deviceId.value = selectedValues[0] || ''
+  showDevicePicker.value = false
+}
+
+function onDatePick({ selectedValues }: any) {
+  dateStr.value = selectedValues.join('-')
+  showDatePicker.value = false
+}
+
 async function load() {
   loading.value = true
   try {
-    events.value = await fetchEvents(deviceId.value)
+    events.value = await fetchEvents(deviceId.value, dateStr.value)
   } finally {
     loading.value = false
   }
@@ -55,6 +82,8 @@ const imgBase = computed(() => {
   const base = (window as any).__NVR_BASE__ || ''
   return base
 })
+
+watch([deviceId, dateStr], () => load())
 
 onMounted(() => {
   deviceId.value = (route.query.device as string) || ''
@@ -95,18 +124,78 @@ onMounted(() => {
           <div class="time mono">{{ fmtTime(e.time) }}</div>
         </div>
         <van-icon
-          v-if="isBackend() && auth.canEdit"
+          v-if="(isBackend() || isDemoMode()) && auth.canEdit"
           name="delete-o"
           class="del"
           @click="onDelete(e)"
         />
+        <div class="dl-btns">
+          <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图">
+            <van-icon name="down" size="14" />
+          </a>
+          <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn" title="下载 GIF">
+            <van-icon name="down" size="14" />
+          </a>
+        </div>
       </div>
 
-      <div v-if="!loading && !events.length" class="empty">
-        <van-icon name="records-o" size="46" color="#3a4252" />
-        <p>暂无事件</p>
-      </div>
+    <div v-if="!loading && !events.length" class="empty">
+      <van-icon name="records-o" size="46" color="#3a4252" />
+      <p>暂无事件</p>
     </div>
+
+    <van-collapse v-if="!loading && events.length > 0" v-model="filterOpen" class="filter-collapse">
+      <van-collapse-item name="filter">
+        <template #title>
+          <van-icon name="filter-o" style="margin-right: 4px" />
+          筛选
+        </template>
+        <div class="filter-row">
+          <div class="filter-item">
+            <label>设备</label>
+            <van-field
+              v-model="deviceId"
+              is-link
+              readonly
+              placeholder="全部设备"
+              @click="showDevicePicker = true"
+            />
+          </div>
+          <div class="filter-item">
+            <label>日期</label>
+            <van-field
+              v-model="dateStr"
+              is-link
+              readonly
+              placeholder="全部日期"
+              @click="showDatePicker = true"
+            />
+          </div>
+          <van-button v-if="deviceId || dateStr" plain size="small" @click="deviceId = ''; dateStr = ''">
+            清除筛选
+          </van-button>
+        </div>
+      </van-collapse-item>
+    </van-collapse>
+
+    <van-popup v-model:show="showDevicePicker" position="bottom" round>
+      <van-picker
+        :columns="deviceColumns"
+        @confirm="onDevicePick"
+        @cancel="showDevicePicker = false"
+      />
+    </van-popup>
+
+    <van-popup v-model:show="showDatePicker" position="bottom" round>
+      <van-date-picker
+        v-model="datePickModel"
+        :min-date="new Date(2020, 0, 1)"
+        :max-date="new Date()"
+        @confirm="onDatePick"
+        @cancel="showDatePicker = false"
+      />
+    </van-popup>
+  </div>
   </div>
 </template>
 
@@ -205,6 +294,28 @@ onMounted(() => {
 .del:active {
   color: var(--nvr-red);
 }
+.dl-btns {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: flex;
+  gap: 6px;
+}
+.dl-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--nvr-bg-2);
+  border: 1px solid var(--nvr-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nvr-text-2);
+  text-decoration: none;
+}
+.dl-btn:active {
+  color: var(--nvr-accent);
+}
 .empty {
   text-align: center;
   padding: 60px 0;
@@ -212,5 +323,26 @@ onMounted(() => {
 }
 .empty p {
   font-size: 13px;
+}
+.filter-collapse {
+  margin: 0 12px 12px;
+  border-radius: var(--nvr-radius);
+  overflow: hidden;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.filter-item {
+  flex: 1;
+  min-width: 120px;
+}
+.filter-item label {
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  margin-bottom: 2px;
+  display: block;
 }
 </style>

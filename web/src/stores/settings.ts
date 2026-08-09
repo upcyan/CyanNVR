@@ -1,24 +1,73 @@
 import { defineStore } from 'pinia'
 import type { Settings } from '../types'
-import { saveSettings } from '../api/mock'
+import {
+  fetchAppSettings,
+  fetchStorageInfo,
+  isBackend,
+  isDemoMode,
+  saveAppSettings,
+  setDemoMode,
+  type AppSettings,
+} from '../api'
 import { defaultSettings } from '../mocks/generator'
 
-const SK = 'nvr_settings_v1'
+const SK = 'nvr_settings_local'
 
-function load(): Settings {
+interface LocalSettings {
+  theme: 'dark' | 'light'
+  fontSize: 'normal' | 'large' | 'xlarge'
+  careMode: boolean
+  demoMode: boolean
+}
+
+function loadLocal(): LocalSettings {
+  const def: LocalSettings = { theme: 'dark', fontSize: 'normal', careMode: false, demoMode: false }
   try {
     const raw = localStorage.getItem(SK)
-    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) }
+    if (raw) return { ...def, ...JSON.parse(raw) }
   } catch {
     /* ignore */
   }
-  return defaultSettings()
+  return def
+}
+
+function saveLocal(s: LocalSettings) {
+  localStorage.setItem(SK, JSON.stringify(s))
+}
+
+function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
+  return {
+    retentionDays: b.retentionDays ?? 30,
+    recordMode: (b.recordMode as Settings['recordMode']) ?? 'continuous',
+    scheduleStart: b.scheduleStart ?? '08:00',
+    scheduleEnd: b.scheduleEnd ?? '20:00',
+    motionPush: b.motionPush ?? true,
+    offlinePush: b.offlinePush ?? true,
+    https: b.https ?? false,
+    ai: b.ai ?? defaultSettings().ai,
+    ...local,
+  }
+}
+
+function settingsToBackend(s: Settings): AppSettings {
+  return {
+    retentionDays: s.retentionDays,
+    recordMode: s.recordMode,
+    scheduleStart: s.scheduleStart,
+    scheduleEnd: s.scheduleEnd,
+    motionPush: s.motionPush,
+    offlinePush: s.offlinePush,
+    https: s.https,
+    ai: s.ai,
+  }
 }
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
-    settings: load(),
+    settings: { ...defaultSettings(), ...loadLocal() } as Settings,
+    storage: { totalGB: 0, usedGB: 0 },
     saving: false,
+    loaded: false,
   }),
   getters: {
     theme: (s) => s.settings.theme,
@@ -26,12 +75,48 @@ export const useSettingsStore = defineStore('settings', {
   actions: {
     set(patch: Partial<Settings>) {
       this.settings = { ...this.settings, ...patch }
-      localStorage.setItem(SK, JSON.stringify(this.settings))
+      const local: LocalSettings = {
+        theme: this.settings.theme,
+        fontSize: this.settings.fontSize,
+        careMode: this.settings.careMode,
+        demoMode: this.settings.demoMode,
+      }
+      saveLocal(local)
+      setDemoMode(this.settings.demoMode)
+      if (isBackend()) {
+        saveAppSettings(settingsToBackend(this.settings)).catch(() => {})
+      }
+    },
+    async loadFromServer() {
+      if (!isBackend() || isDemoMode()) return
+      try {
+        const [remote, sto] = await Promise.all([fetchAppSettings(), fetchStorageInfo()])
+        const local = loadLocal()
+        this.settings = backendToSettings(remote, local)
+        this.storage = sto
+        this.loaded = true
+      } catch {
+        /* ignore */
+      }
     },
     async save() {
       this.saving = true
-      this.settings = await saveSettings(this.settings)
-      localStorage.setItem(SK, JSON.stringify(this.settings))
+      const local: LocalSettings = {
+        theme: this.settings.theme,
+        fontSize: this.settings.fontSize,
+        careMode: this.settings.careMode,
+        demoMode: this.settings.demoMode,
+      }
+      saveLocal(local)
+      setDemoMode(this.settings.demoMode)
+      if (isBackend()) {
+        try {
+          const saved = await saveAppSettings(settingsToBackend(this.settings))
+          this.settings = backendToSettings(saved, local)
+        } catch {
+          /* ignore */
+        }
+      }
       this.saving = false
     },
   },
