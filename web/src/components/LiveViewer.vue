@@ -56,7 +56,30 @@ function close() {
 }
 
 function snapshot() {
-  showToast('截图已保存')
+  const v = videoEl.value
+  if (!v || !v.videoWidth) {
+    showToast('无法截图')
+    return
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = v.videoWidth
+  canvas.height = v.videoHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.drawImage(v, 0, 0)
+  canvas.toBlob((blob) => {
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const now = new Date()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    const ts = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`
+    a.href = url
+    a.download = `screenshot_${props.device?.name || 'camera'}_${ts}.jpg`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('截图已保存')
+  }, 'image/jpeg', 0.95)
 }
 
 function goPlayback() {

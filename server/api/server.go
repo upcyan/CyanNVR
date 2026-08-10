@@ -21,6 +21,7 @@ type Server struct {
 	rec *recorder.Manager
 	hls *hls.Hls
 	am  *auth.Manager
+	hub *SSEHub
 
 	settingsMu sync.Mutex
 	settings   *AppSettings
@@ -48,10 +49,15 @@ type AppSettings struct {
 	AI            AIConfig  `json:"ai"`
 }
 
-func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager) *Server {
-	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am}
+func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
+	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am, hub: hub}
 	s.loadSettings()
 	s.applySettings()
+	s.rec.ShouldRecordFn = func() (string, string, string) {
+		s.settingsMu.Lock()
+		defer s.settingsMu.Unlock()
+		return s.settings.RecordMode, s.settings.ScheduleStart, s.settings.ScheduleEnd
+	}
 	return s
 }
 
@@ -120,6 +126,7 @@ func (s *Server) Router() http.Handler {
 
 	api := r.Group("/api")
 	api.GET("/health", s.health)
+	api.GET("/events/sse", s.sseHandler)
 
 	authGrp := api.Group("/auth")
 	authGrp.POST("/login", s.login)

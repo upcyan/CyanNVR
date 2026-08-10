@@ -21,10 +21,11 @@ import (
 )
 
 type Analyzer struct {
-	cfg  *config.Config
-	st   *store.Store
-	http *http.Client
-	dirs map[string]*DeviceState
+	cfg       *config.Config
+	st        *store.Store
+	http      *http.Client
+	dirs      map[string]*DeviceState
+	onEvent   func(eventType, deviceID, deviceName, eventID, label, desc, time string)
 }
 
 type DeviceState struct {
@@ -34,12 +35,15 @@ type DeviceState struct {
 	lock       chan struct{} // 1-buffered, serializes per-device analysis
 }
 
-func New(cfg *config.Config, st *store.Store) *Analyzer {
+func (ds *DeviceState) LastEventTime() time.Time { return ds.lastEvent }
+
+func New(cfg *config.Config, st *store.Store, onEvent func(string, string, string, string, string, string, string)) *Analyzer {
 	return &Analyzer{
-		cfg:  cfg,
-		st:   st,
-		http: &http.Client{Timeout: 30 * time.Second},
-		dirs: map[string]*DeviceState{},
+		cfg:     cfg,
+		st:      st,
+		http:    &http.Client{Timeout: 30 * time.Second},
+		dirs:    map[string]*DeviceState{},
+		onEvent: onEvent,
 	}
 }
 
@@ -160,6 +164,9 @@ func (a *Analyzer) emitEvent(device *models.Device, s *DeviceState, r result, sc
 		ev.VideoStart, ev.VideoEnd = vs, ve
 	}
 	_ = a.st.CreateEvent(ev)
+	if a.onEvent != nil {
+		a.onEvent(string(ev.Type), device.ID, device.Name, evID, label, desc, now.Format(time.RFC3339))
+	}
 }
 
 func (a *Analyzer) segmentRange(deviceID string, t time.Time) (*time.Time, *time.Time, bool) {

@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { createPlayback, fetchDaySegments, fetchMonthRecords, isBackend, isDemoMode } from '../api'
+import { createPlayback, downloadRecordingURL, fetchDaySegments, fetchMonthRecords, isBackend, isDemoMode } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -129,6 +129,19 @@ function onSelectSegment(s: RecordingSegment) {
   onSeek(s.start)
 }
 
+function downloadSegment(s: RecordingSegment) {
+  if (!deviceId.value) return
+  const d = new Date(s.start)
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  const date = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+  const time = `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
+  const url = downloadRecordingURL(deviceId.value, date, time)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${device.value?.name || 'recording'}_${date}_${time}.mp4`
+  a.click()
+}
+
 function onSelectDate(date: string) {
   dateStr.value = date
 }
@@ -241,11 +254,11 @@ onBeforeUnmount(() => {
           <span
             v-for="s in segments"
             :key="s.id"
-            class="chip mono"
+            class="seg-item"
             :class="{ on: currentTs >= s.start && currentTs <= s.end }"
-            @click="onSelectSegment(s)"
           >
-            {{ fmtRange(s.start, s.end) }}
+            <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
+            <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
           </span>
           <span v-if="!segments.length" class="none">当日无录制</span>
         </div>
@@ -319,7 +332,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 4px 14px 14px;
 }
-.chip {
+.seg-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 4px 10px;
   border-radius: 6px;
   background: var(--nvr-panel-2);
@@ -327,8 +343,20 @@ onBeforeUnmount(() => {
   font-size: 12px;
   cursor: pointer;
 }
-.chip.on {
+.seg-item.on {
   border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+}
+.seg-time {
+  cursor: pointer;
+}
+.seg-dl {
+  font-size: 14px;
+  color: var(--nvr-text-2);
+  cursor: pointer;
+  padding: 2px;
+}
+.seg-dl:active {
   color: var(--nvr-accent);
 }
 .none {

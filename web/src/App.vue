@@ -2,9 +2,11 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import { useDeviceStore } from './stores/devices'
+import { useNotifications, requestNotificationPermission } from './utils/notify'
 
 const settings = useSettingsStore()
 const devices = useDeviceStore()
+const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(false)
 
 let mq: MediaQueryList | null = null
@@ -24,6 +26,8 @@ onMounted(() => {
   onMqChange = (e) => (isDesktop.value = e.matches)
   mq.addEventListener('change', onMqChange)
   applyA11y()
+  connectSSE()
+  requestNotificationPermission()
 })
 
 watch(
@@ -40,6 +44,7 @@ watch(
 
 onBeforeUnmount(() => {
   devices.stopPolling()
+  disconnectSSE()
   if (mq && onMqChange) mq.removeEventListener('change', onMqChange)
 })
 </script>

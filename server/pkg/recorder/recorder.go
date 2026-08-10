@@ -20,14 +20,17 @@ import (
 )
 
 type Manager struct {
-	cfg *config.Config
-	st  *store.Store
-	ai  *ai.Analyzer
+	cfg     *config.Config
+	st      *store.Store
+	ai      *ai.Analyzer
+	onEvent func(eventType, deviceID, deviceName, eventID, label, desc, time string)
 
 	mu      sync.Mutex
 	workers map[string]*Worker
 	stopAll chan struct{}
 	once    sync.Once
+
+	ShouldRecordFn func() (mode, scheduleStart, scheduleEnd string)
 }
 
 type Worker struct {
@@ -46,8 +49,8 @@ type Worker struct {
 	stop     chan struct{}
 }
 
-func NewManager(cfg *config.Config, st *store.Store, a *ai.Analyzer) *Manager {
-	m := &Manager{cfg: cfg, st: st, ai: a, workers: map[string]*Worker{}, stopAll: make(chan struct{})}
+func NewManager(cfg *config.Config, st *store.Store, a *ai.Analyzer, onEvent func(string, string, string, string, string, string, string)) *Manager {
+	m := &Manager{cfg: cfg, st: st, ai: a, onEvent: onEvent, workers: map[string]*Worker{}, stopAll: make(chan struct{})}
 	for _, d := range []string{cfg.RecordDir, cfg.LiveDir, cfg.SnapDir, cfg.EventDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			log.Printf("mkdir %s: %v", d, err)
@@ -182,15 +185,21 @@ func (w *Worker) startProcs() error {
 	snapArgs := append(append([]string{}, in...),
 		"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
 
+	log.Printf("[%s] starting ffmpeg: record=%v", w.dev.Name, recArgs)
 	var err error
 	if w.recordProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, recArgs...); err != nil {
+		log.Printf("[%s] record start error: %v", w.dev.Name, err)
 		return err
 	}
+	log.Printf("[%s] starting ffmpeg: live=%v", w.dev.Name, liveArgs)
 	if w.liveProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, liveArgs...); err != nil {
+		log.Printf("[%s] live start error: %v", w.dev.Name, err)
 		w.recordProc.Kill()
 		return err
 	}
+	log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, snapArgs)
 	if w.snapProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...); err != nil {
+		log.Printf("[%s] snap start error: %v", w.dev.Name, err)
 		w.recordProc.Kill()
 		w.liveProc.Kill()
 		return err
@@ -216,13 +225,21 @@ func (w *Worker) Stop() {
 }
 
 func (w *Worker) supervise() {
-	defer w.mgr.st.SetDeviceOnline(w.dev.ID, false)
+	defer func() {
+		w.mgr.st.SetDeviceOnline(w.dev.ID, false)
+		w.mgr.broadcastEvent("offline", w.dev.ID, w.dev.Name, "", "设备离线", w.dev.Name+" 流已断开", time.Now().Format(time.RFC3339))
+	}()
 	backoff := time.Second
 	for {
 		select {
 		case <-w.stop:
 			return
 		default:
+		}
+		if !w.shouldRecordNow() {
+			w.killProcs()
+			time.Sleep(10 * time.Second)
+			continue
 		}
 		if err := w.startProcs(); err != nil {
 			log.Printf("[%s] start ffmpeg: %v", w.dev.Name, err)
@@ -232,9 +249,22 @@ func (w *Worker) supervise() {
 			continue
 		}
 		_ = w.mgr.st.SetDeviceOnline(w.dev.ID, true)
+		w.mgr.broadcastEvent("online", w.dev.ID, w.dev.Name, "", "设备在线", w.dev.Name+" 流已恢复", time.Now().Format(time.RFC3339))
 		w.restarts = 0
 		backoff = time.Second
 		go w.drainFrames()
+
+		// Check if processes are still alive after 2s
+		time.Sleep(2 * time.Second)
+		if w.recordProc != nil && !w.recordProc.Running() {
+			log.Printf("[%s] record process exited early, stderr: %s", w.dev.Name, w.recordProc.Log())
+		}
+		if w.liveProc != nil && !w.liveProc.Running() {
+			log.Printf("[%s] live process exited early, stderr: %s", w.dev.Name, w.liveProc.Log())
+		}
+		if w.snapProc != nil && !w.snapProc.Running() {
+			log.Printf("[%s] snap process exited early, stderr: %s", w.dev.Name, w.snapProc.Log())
+		}
 
 		waitExit([]*ffmpeg.Proc{w.recordProc, w.liveProc, w.snapProc}, w.stop)
 
@@ -244,6 +274,52 @@ func (w *Worker) supervise() {
 			return
 		}
 	}
+}
+
+func (w *Worker) shouldRecordNow() bool {
+	if w.mgr.ShouldRecordFn == nil {
+		return true
+	}
+	mode, start, end := w.mgr.ShouldRecordFn()
+	switch mode {
+	case "schedule":
+		return inScheduleRange(start, end)
+	case "motion":
+		return w.hasRecentActivity()
+	default:
+		return true
+	}
+}
+
+func inScheduleRange(start, end string) bool {
+	now := time.Now()
+	sh, sm := parseHHMM(start)
+	eh, em := parseHHMM(end)
+	nowMin := now.Hour()*60 + now.Minute()
+	startMin := sh*60 + sm
+	endMin := eh*60 + em
+	if startMin <= endMin {
+		return nowMin >= startMin && nowMin < endMin
+	}
+	return nowMin >= startMin || nowMin < endMin
+}
+
+func parseHHMM(s string) (int, int) {
+	if len(s) < 5 {
+		return 0, 0
+	}
+	return atoi(s[:2]), atoi(s[3:5])
+}
+
+func (w *Worker) hasRecentActivity() bool {
+	if w.mgr.ai == nil {
+		return true
+	}
+	state := w.mgr.ai.State(w.dev.ID)
+	if state == nil {
+		return true
+	}
+	return time.Since(state.LastEventTime()) < 2*time.Minute
 }
 
 // fail increments restart counter; returns true when worker should stop permanently.
@@ -508,4 +584,10 @@ func withCreds(url, user, pass string) string {
 		return url
 	}
 	return fmt.Sprintf("%s%s:%s@%s", scheme, user, pass, rest)
+}
+
+func (m *Manager) broadcastEvent(eventType, deviceID, deviceName, eventID, label, desc, t string) {
+	if m.onEvent != nil {
+		m.onEvent(eventType, deviceID, deviceName, eventID, label, desc, t)
+	}
 }

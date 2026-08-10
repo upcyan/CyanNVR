@@ -34,11 +34,25 @@ func main() {
 	seedAdmin(cfg, st)
 
 	am := auth.NewManager(cfg.JWTSecret)
-	analyzer := ai.New(cfg, st)
-	rec := recorder.NewManager(cfg, st, analyzer)
+	hub := api.NewSSEHub()
+
+	broadcast := func(eventType, deviceID, deviceName, eventID, label, desc, t string) {
+		hub.Broadcast(api.Notification{
+			Type:       eventType,
+			DeviceID:   deviceID,
+			DeviceName: deviceName,
+			EventID:    eventID,
+			Label:      label,
+			Desc:       desc,
+			Time:       t,
+		})
+	}
+
+	analyzer := ai.New(cfg, st, broadcast)
+	rec := recorder.NewManager(cfg, st, analyzer, broadcast)
 	hlsSvc := hls.New(cfg, st)
 
-	server := api.New(cfg, st, rec, hlsSvc, am)
+	server := api.New(cfg, st, rec, hlsSvc, am, hub)
 	rec.Start()
 	defer rec.Stop()
 
