@@ -171,6 +171,14 @@ func (s *Server) Router() http.Handler {
 
 	if s.cfg.WebDir != "" {
 		if _, err := os.Stat(s.cfg.WebDir + "/index.html"); err == nil {
+			r.Static("/assets", s.cfg.WebDir+"/assets")
+			r.StaticFile("/manifest.webmanifest", s.cfg.WebDir+"/manifest.webmanifest")
+			r.StaticFile("/manifest.json", s.cfg.WebDir+"/manifest.json")
+			r.StaticFile("/icon.svg", s.cfg.WebDir+"/icon.svg")
+			r.StaticFile("/favicon.svg", s.cfg.WebDir+"/favicon.svg")
+			r.StaticFile("/favicon.ico", s.cfg.WebDir+"/favicon.ico")
+			r.StaticFile("/registerSW.js", s.cfg.WebDir+"/registerSW.js")
+			r.StaticFile("/sw.js", s.cfg.WebDir+"/sw.js")
 			r.NoRoute(func(c *gin.Context) {
 				if c.Request.Method == http.MethodGet {
 					c.File(s.cfg.WebDir + "/index.html")

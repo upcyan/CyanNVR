@@ -17,6 +17,8 @@ function applyA11y() {
   const zoomMap = { normal: '1', large: '1.2', xlarge: '1.4' }
   document.documentElement.style.zoom = s.careMode ? '1.4' : zoomMap[s.fontSize]
   document.body.classList.toggle('care', s.careMode)
+  document.body.classList.toggle('light', s.theme === 'light')
+  document.body.classList.toggle('dark', s.theme === 'dark')
 }
 
 onMounted(() => {
@@ -31,8 +33,9 @@ onMounted(() => {
 })
 
 watch(
-  () => [settings.settings.fontSize, settings.settings.careMode],
+  () => [settings.settings.fontSize, settings.settings.careMode, settings.settings.theme],
   applyA11y,
+  { immediate: true },
 )
 
 watch(
@@ -53,7 +56,7 @@ onBeforeUnmount(() => {
   <van-config-provider :theme="settings.settings.theme">
     <div
       class="app-shell"
-      :class="[settings.settings.theme === 'light' ? 'light' : '', isDesktop ? 'desktop' : '']"
+      :class="[isDesktop ? 'desktop' : '']"
     >
       <aside v-if="isDesktop" class="sidebar">
         <div class="brand">

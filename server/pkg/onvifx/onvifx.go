@@ -22,29 +22,77 @@ type Found struct {
 }
 
 func Discover(ctx context.Context, iface string) ([]Found, error) {
-	devs, err := onvif.GetAvailableDevicesAtSpecificEthernetInterface(iface)
+	names, err := ifaceNames(iface)
 	if err != nil {
 		return nil, err
 	}
+	seen := map[string]Found{}
 	var out []Found
-	for _, d := range devs {
-		params := d.GetDeviceParams()
-		host, port := parseHostPort(params.Xaddr)
-		if host == "" {
+	for _, name := range names {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		devs, err := onvif.GetAvailableDevicesAtSpecificEthernetInterface(name)
+		if err != nil {
 			continue
 		}
-		f := Found{XAddr: params.Xaddr, IP: host, Port: port}
-		if info := d.GetDeviceInfo(); info.Model != "" {
-			f.Name = info.Model
-		} else {
-			f.Name = host
+		for _, d := range devs {
+			params := d.GetDeviceParams()
+			host, port := parseHostPort(params.Xaddr)
+			if host == "" {
+				continue
+			}
+			key := net.JoinHostPort(host, strconv.Itoa(port))
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			f := Found{XAddr: params.Xaddr, IP: host, Port: port}
+			if info := d.GetDeviceInfo(); info.Model != "" {
+				f.Name = info.Model
+			} else {
+				f.Name = host
+			}
+			seen[key] = f
+			out = append(out, f)
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			default:
+			}
 		}
-		select {
-		case <-ctx.Done():
-			return out, ctx.Err()
-		default:
+	}
+	return out, nil
+}
+
+// ifaceNames resolves the target interface(s) for discovery. When name is
+// empty, all non-loopback interfaces with an IPv4 address are used so that
+// WS-Discovery broadcasts go out on every active LAN adapter.
+func ifaceNames(name string) ([]string, error) {
+	if name != "" {
+		if _, err := net.InterfaceByName(name); err != nil {
+			return nil, err
 		}
-		out = append(out, f)
+		return []string{name}, nil
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, i := range ifaces {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+				out = append(out, i.Name)
+				break
+			}
+		}
 	}
 	return out, nil
 }

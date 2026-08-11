@@ -26,6 +26,7 @@ const form = reactive({
   port: 554,
   username: 'admin',
   password: '',
+  rtspUrl: '',
 })
 const selectedIp = ref('')
 
@@ -43,6 +44,7 @@ function reset() {
   form.port = 554
   form.username = 'admin'
   form.password = ''
+  form.rtspUrl = ''
   selectedIp.value = ''
 }
 
@@ -62,6 +64,7 @@ async function onTest() {
     })
     testResult.value = res.ok ? 'ok' : 'fail'
     if (res.ok) {
+      form.rtspUrl = res.url || ''
       showToast('连接成功')
     } else {
       showToast(res.error || '连接失败')
@@ -85,6 +88,7 @@ watch(
       form.port = d.port || 554
       form.username = d.username || 'admin'
       form.password = ''
+      form.rtspUrl = d.rtspUrl || ''
     }
   },
   { immediate: true },
@@ -102,6 +106,7 @@ function submitForm() {
     username: form.username.trim() || 'admin',
     source: 'rtsp',
   }
+  if (form.rtspUrl) input.rtspUrl = form.rtspUrl
   if (form.password) input.password = form.password
   emit('add', input)
   close()

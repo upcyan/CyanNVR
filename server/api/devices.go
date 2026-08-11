@@ -140,23 +140,51 @@ func (s *Server) testDevice(c *gin.Context) {
 		return
 	}
 	url := req.RTSPURL
-	if url == "" {
-		port := req.Port
-		if port == 0 {
-			port = 554
-		}
-		if req.Username != "" {
-			url = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", req.Username, req.Password, req.IP, port)
+	if url != "" {
+		ok, errMsg := ffmpeg.TestRTSPErr(s.cfg.Ffmpeg, url)
+		if ok {
+			c.JSON(http.StatusOK, gin.H{"ok": true, "url": url})
 		} else {
-			url = fmt.Sprintf("rtsp://%s:%d/stream1", req.IP, port)
+			c.JSON(http.StatusOK, gin.H{"ok": false, "url": url, "error": errMsg})
 		}
+		return
 	}
-	ok := ffmpeg.TestRTSP(s.cfg.Ffmpeg, url)
-	if ok {
-		c.JSON(http.StatusOK, gin.H{"ok": true, "url": url})
-	} else {
-		c.JSON(http.StatusOK, gin.H{"ok": false, "url": url, "error": "无法连接到 RTSP 地址"})
+	port := req.Port
+	if port == 0 {
+		port = 554
 	}
+	// Try common RTSP paths across camera brands. Remembers which one worked
+	// so the device can be stored with the correct URL.
+	var lastErr string
+	for _, path := range []string{
+		"/stream1",
+		"/ch1/main",
+		"/cam/realmonitor?channel=1&subtype=0",
+		"/Streaming/Channels/101",
+		"/live",
+		"/h264/ch1/main/av_stream",
+		"/main",
+	} {
+		u := buildRTSPURL(req.IP, port, req.Username, req.Password, path)
+		ok, errMsg := ffmpeg.TestRTSPErr(s.cfg.Ffmpeg, u)
+		if ok {
+			c.JSON(http.StatusOK, gin.H{"ok": true, "url": u})
+			return
+		}
+		lastErr = errMsg
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":    false,
+		"url":   buildRTSPURL(req.IP, port, req.Username, req.Password, "/stream1"),
+		"error": lastErr,
+	})
+}
+
+func buildRTSPURL(ip string, port int, user, pass, path string) string {
+	if user != "" {
+		return fmt.Sprintf("rtsp://%s:%s@%s:%d%s", user, pass, ip, port, path)
+	}
+	return fmt.Sprintf("rtsp://%s:%d%s", ip, port, path)
 }
 
 func (s *Server) discoverDevices(c *gin.Context) {
