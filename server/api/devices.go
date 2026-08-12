@@ -403,12 +403,47 @@ func (s *Server) createPlayback(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
 		return
 	}
-	sess, err := s.hls.CreatePlayback(id, req.Start, req.End, d.Source == models.SourceTest)
+	sess, err := s.hls.CreatePlayback(id, req.Start, req.End, s.playbackNeedsTranscode(d))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"url": "/api/stream/playback/" + sess.Name + "/index.m3u8", "session": sess.Name})
+}
+
+// playbackNeedsTranscode reports whether recorded segments must be re-encoded
+// to h264 so the browser can play them back (e.g. HEVC cameras).
+func (s *Server) playbackNeedsTranscode(d *models.Device) bool {
+	if d.Source == models.SourceTest {
+		return true
+	}
+	for _, url := range []string{s.recStreamURL(d), d.RTSPURL} {
+		if url == "" {
+			continue
+		}
+		codec := ffmpeg.ProbeVideoCodec(s.cfg.Ffmpeg, url)
+		if codec != "" && codec != "h264" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) recStreamURL(d *models.Device) string {
+	if d.RecordStream != "" {
+		for _, st := range d.Streams {
+			if st.ID == d.RecordStream && st.URL != "" {
+				return st.URL
+			}
+		}
+	}
+	if d.RTSPURL != "" {
+		return d.RTSPURL
+	}
+	if d.Username != "" {
+		return fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", d.Username, d.Password, d.IP, d.Port)
+	}
+	return fmt.Sprintf("rtsp://%s:%d/stream1", d.IP, d.Port)
 }
 
 func atoiStr(s string) int {

@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) downloadRecording(c *gin.Context) {
-	deviceID := c.Param("deviceId")
+	deviceID := c.Param("id")
 	dateStr := c.Param("date")
 	timeStr := c.Param("time")
 	if deviceID == "" || dateStr == "" || timeStr == "" {
@@ -25,10 +25,18 @@ func (s *Server) downloadRecording(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad time"})
 		return
 	}
-	fileName := timeStr[:4] + ".mp4"
-	dirPath := filepath.Join(s.cfg.RecordDir, deviceID, day.Format("20060102"))
-	fullPath := filepath.Join(dirPath, fileName)
-	if !fileExists(fullPath) {
+	// Segment files are named HHMMSS.mp4. Try the full 6-digit time first,
+	// then fall back to 4-digit HHMM for legacy callers.
+	var fullPath string
+	for _, name := range []string{timeStr + ".mp4", timeStr[:4] + ".mp4"} {
+		dirPath := filepath.Join(s.cfg.RecordDir, deviceID, day.Format("20060102"))
+		p := filepath.Join(dirPath, name)
+		if fileExists(p) {
+			fullPath = p
+			break
+		}
+	}
+	if fullPath == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
 		return
 	}

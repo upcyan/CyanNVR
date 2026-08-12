@@ -63,8 +63,12 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 	listPath := filepath.Join(dir, "input.txt")
 	var b strings.Builder
 	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			abs = f
+		}
 		b.WriteString("file '")
-		b.WriteString(filepath.ToSlash(f))
+		b.WriteString(filepath.ToSlash(abs))
 		b.WriteString("'\n")
 	}
 	if err := os.WriteFile(listPath, []byte(b.String()), 0o644); err != nil {
