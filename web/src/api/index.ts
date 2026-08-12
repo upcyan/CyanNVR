@@ -58,7 +58,7 @@ export async function fetchDevices(): Promise<Device[]> {
   if (isDemoMode()) return mock.fetchDevices()
   if (!backendOk) return []
   const { data } = await http.get('/api/devices')
-  return data.devices as Device[]
+  return (data.devices ?? []) as Device[]
 }
 
 export async function addDevice(input: Partial<Device>): Promise<Device> {

@@ -16,8 +16,12 @@ export const useDeviceStore = defineStore('devices', {
   actions: {
     async load() {
       this.loading = true
-      this.devices = await fetchDevices()
-      this.loading = false
+      try {
+        const list = await fetchDevices()
+        this.devices = Array.isArray(list) ? list : []
+      } finally {
+        this.loading = false
+      }
     },
     async add(input: Partial<Device>) {
       const d = await addDevice(input)
@@ -38,12 +42,17 @@ export const useDeviceStore = defineStore('devices', {
       return discoverDevices()
     },
     async refresh() {
-      const list = await fetchDevices()
-      const byId = new Map(list.map((d) => [d.id, d]))
-      this.devices = this.devices.map((d) => {
-        const fresh = byId.get(d.id)
-        return fresh ? { ...d, online: fresh.online, rtspUrl: fresh.rtspUrl ?? d.rtspUrl } : d
-      })
+      try {
+        const list = await fetchDevices()
+        if (!Array.isArray(list)) return
+        const byId = new Map(list.map((d) => [d.id, d]))
+        this.devices = this.devices.map((d) => {
+          const fresh = byId.get(d.id)
+          return fresh ? { ...d, online: fresh.online, rtspUrl: fresh.rtspUrl ?? d.rtspUrl } : d
+        })
+      } catch {
+        /* keep last known state on transient errors */
+      }
     },
     startPolling() {
       this.stopPolling()

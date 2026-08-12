@@ -140,7 +140,13 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 		d.Online = online == 1
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []models.Device{}
+	}
+	return out, nil
 }
 
 func (s *Store) GetDevice(id string) (*models.Device, error) {
