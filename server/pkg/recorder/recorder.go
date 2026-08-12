@@ -219,11 +219,9 @@ func (w *Worker) startProcs() error {
 		return err
 	}
 	log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, snapArgs)
-	if w.snapProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...); err != nil {
-		log.Printf("[%s] snap start error: %v", w.dev.Name, err)
-		w.recordProc.Kill()
-		w.liveProc.Kill()
-		return err
+	w.snapProc, _ = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+	if w.snapProc == nil {
+		log.Printf("[%s] snap start error (non-fatal)", w.dev.Name)
 	}
 	return nil
 }
@@ -284,10 +282,12 @@ func (w *Worker) supervise() {
 			log.Printf("[%s] live process exited early, stderr: %s", w.dev.Name, w.liveProc.Log())
 		}
 		if w.snapProc != nil && !w.snapProc.Running() {
-			log.Printf("[%s] snap process exited early, stderr: %s", w.dev.Name, w.snapProc.Log())
+			log.Printf("[%s] snap process exited early (non-fatal)", w.dev.Name)
 		}
 
-		waitExit([]*ffmpeg.Proc{w.recordProc, w.liveProc, w.snapProc}, w.stop)
+		go w.guardSnap()
+
+		waitExit([]*ffmpeg.Proc{w.recordProc, w.liveProc}, w.stop)
 
 		w.killProcs()
 		log.Printf("[%s] stream exited, restarting", w.dev.Name)
@@ -397,6 +397,30 @@ func waitExit(procs []*ffmpeg.Proc, stop chan struct{}) {
 	case <-ch:
 	case <-stop:
 	}
+}
+
+// guardSnap restarts the snapshot process if it exited, without disturbing
+// the record/live pipeline.
+func (w *Worker) guardSnap() {
+	if w.snapProc != nil && w.snapProc.Running() {
+		return
+	}
+	if w.recordProc == nil || !w.recordProc.Running() {
+		return
+	}
+	in := w.inputArgs()
+	snapArgs := append(append([]string{}, in...),
+		"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
+	p, err := ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+	if err != nil || p == nil {
+		log.Printf("[%s] snap restart error (non-fatal): %v", w.dev.Name, err)
+		return
+	}
+	if w.snapProc != nil {
+		w.snapProc.Kill()
+	}
+	w.snapProc = p
+	log.Printf("[%s] snap restarted", w.dev.Name)
 }
 
 // ---------- AI loop (redundant safety; per-device drain covers it) ----------

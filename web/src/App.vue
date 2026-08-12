@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import { useDeviceStore } from './stores/devices'
-import { useNotifications, requestNotificationPermission } from './utils/notify'
+import { useNotifications } from './utils/notify'
 
 const settings = useSettingsStore()
 const devices = useDeviceStore()
@@ -29,7 +29,6 @@ onMounted(() => {
   mq.addEventListener('change', onMqChange)
   applyA11y()
   connectSSE()
-  requestNotificationPermission()
 })
 
 watch(
