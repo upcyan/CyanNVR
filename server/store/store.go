@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -41,7 +42,7 @@ func (s *Store) migrate() error {
 			online INTEGER NOT NULL DEFAULT 0, rtsp_url TEXT, created DATETIME NOT NULL,
 			record_enabled INTEGER NOT NULL DEFAULT 1, record_mode TEXT NOT NULL DEFAULT 'continuous',
 			schedule_start TEXT NOT NULL DEFAULT '08:00', schedule_end TEXT NOT NULL DEFAULT '20:00',
-			ai_enabled INTEGER)`,
+			ai_enabled INTEGER, streams TEXT, preview_stream TEXT, record_stream TEXT)`,
 		`CREATE TABLE IF NOT EXISTS segments (
 			id TEXT PRIMARY KEY, device_id TEXT NOT NULL, start DATETIME NOT NULL,
 			end DATETIME NOT NULL, path TEXT NOT NULL)`,
@@ -67,6 +68,9 @@ func (s *Store) migrate() error {
 		`ALTER TABLE devices ADD COLUMN schedule_start TEXT NOT NULL DEFAULT '08:00'`,
 		`ALTER TABLE devices ADD COLUMN schedule_end TEXT NOT NULL DEFAULT '20:00'`,
 		`ALTER TABLE devices ADD COLUMN ai_enabled INTEGER`,
+		`ALTER TABLE devices ADD COLUMN streams TEXT`,
+		`ALTER TABLE devices ADD COLUMN preview_stream TEXT`,
+		`ALTER TABLE devices ADD COLUMN record_stream TEXT`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -143,7 +147,8 @@ func scanUser(row *sql.Row) (*models.User, error) {
 
 func (s *Store) ListDevices() ([]models.Device, error) {
 	rows, err := s.db.Query(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled FROM devices ORDER BY created`)
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream
+		FROM devices ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +172,8 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 
 func (s *Store) GetDevice(id string) (*models.Device, error) {
 	row := s.db.QueryRow(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled FROM devices WHERE id=?`, id)
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream
+		FROM devices WHERE id=?`, id)
 	d, err := scanDeviceRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -193,8 +199,11 @@ func scanDeviceRow(scanner interface {
 	var online int
 	var recEnabled int
 	var aiEnabled sql.NullInt64
+	var streamsJSON sql.NullString
+	var previewStream sql.NullString
+	var recordStream sql.NullString
 	err := scanner.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created,
-		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled)
+		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled, &streamsJSON, &previewStream, &recordStream)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +212,15 @@ func scanDeviceRow(scanner interface {
 	if aiEnabled.Valid {
 		v := aiEnabled.Int64 == 1
 		d.AIEnabled = &v
+	}
+	if streamsJSON.Valid && streamsJSON.String != "" {
+		_ = json.Unmarshal([]byte(streamsJSON.String), &d.Streams)
+	}
+	if previewStream.Valid {
+		d.PreviewStream = previewStream.String
+	}
+	if recordStream.Valid {
+		d.RecordStream = recordStream.String
 	}
 	return &d, nil
 }
@@ -216,11 +234,12 @@ func (s *Store) CreateDevice(d models.Device) error {
 	if !d.RecordEnabled {
 		recEnabled = 0
 	}
+	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`INSERT INTO devices(id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.Created,
-		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled))
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream)
 	return err
 }
 
@@ -233,10 +252,12 @@ func (s *Store) UpdateDevice(d models.Device) error {
 	if !d.RecordEnabled {
 		recEnabled = 0
 	}
+	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`UPDATE devices SET name=?, ip=?, port=?, username=?, password=?, source=?, model=?, online=?, rtsp_url=?,
-		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=? WHERE id=?`,
+		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=?, streams=?, preview_stream=?, record_stream=?
+		WHERE id=?`,
 		d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL,
-		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), d.ID)
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream, d.ID)
 	return err
 }
 

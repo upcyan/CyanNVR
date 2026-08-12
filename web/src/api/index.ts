@@ -1,7 +1,7 @@
 import { http } from './client'
 import { server } from './server'
 import * as mock from './mock'
-import type { DayRecord, Device, DiscoveredDevice, EventItem, RecordingSegment } from '../types'
+import type { DayRecord, Device, DiscoveredDevice, EventItem, RecordingSegment, Stream } from '../types'
 
 export let backendOk = false
 const DEMO_KEY = 'nvr_demo_mode'
@@ -82,6 +82,11 @@ export async function updateDevice(id: string, input: Partial<Device>): Promise<
 export async function testDevice(input: { ip: string; port: number; username?: string; password?: string; rtspUrl?: string }): Promise<{ ok: boolean; url?: string; error?: string }> {
   const { data } = await http.post('/api/devices/test', input)
   return data
+}
+
+export async function probeStreams(input: { ip: string; port: number; username?: string; password?: string }): Promise<Stream[]> {
+  const { data } = await http.post('/api/devices/streams', input)
+  return (data.streams ?? []) as Stream[]
 }
 
 export async function discoverDevices(): Promise<DiscoveredDevice[]> {

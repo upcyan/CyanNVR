@@ -148,7 +148,24 @@ func (w *Worker) inputArgs() []string {
 	return []string{"-rtsp_transport", "tcp", "-i", url}
 }
 
-func (w *Worker) inputURL() string {
+// streamURL resolves the RTSP URL for a given role ("preview" or "record"),
+// preferring the stream the user selected; falls back to the device RTSPURL,
+// then the constructed default URL.
+func (w *Worker) streamURL(role string) string {
+	if w.dev.Source == models.SourceTest {
+		return "lavfi"
+	}
+	sel := w.dev.PreviewStream
+	if role == "record" {
+		sel = w.dev.RecordStream
+	}
+	if sel != "" {
+		for _, s := range w.dev.Streams {
+			if s.ID == sel && s.URL != "" {
+				return s.URL
+			}
+		}
+	}
 	url := w.dev.RTSPURL
 	if url == "" {
 		url = fmt.Sprintf("rtsp://%s:%d/stream1", w.dev.IP, w.dev.Port)
@@ -159,18 +176,34 @@ func (w *Worker) inputURL() string {
 	return url
 }
 
+func (w *Worker) inputURL() string {
+	return w.streamURL("preview")
+}
+
+func (w *Worker) recordInputArgs() []string {
+	if w.dev.Source == models.SourceTest {
+		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
+	}
+	return []string{"-rtsp_transport", "tcp", "-i", w.streamURL("record")}
+}
+
 func transcodeArgs() []string {
 	return []string{"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-g", "30"}
 }
 
 func (w *Worker) startProcs() error {
 	in := w.inputArgs()
+	recIn := w.recordInputArgs()
 	transcode := w.dev.Source == models.SourceTest
 	if !transcode && w.dev.Source != models.SourceTest {
-		codec := ffmpeg.ProbeVideoCodec(w.mgr.cfg.Ffmpeg, w.inputURL())
-		if codec != "" && codec != "h264" {
-			log.Printf("[%s] input codec=%s, transcoding to h264 for browser compatibility", w.dev.Name, codec)
-			transcode = true
+		// Transcode if either the preview or the record stream is not h264.
+		for _, url := range []string{w.streamURL("preview"), w.streamURL("record")} {
+			codec := ffmpeg.ProbeVideoCodec(w.mgr.cfg.Ffmpeg, url)
+			if codec != "" && codec != "h264" {
+				log.Printf("[%s] input codec=%s, transcoding to h264 for browser compatibility", w.dev.Name, codec)
+				transcode = true
+				break
+			}
 		}
 	}
 	// Ensure the per-day recording subdirectory exists; ffmpeg's segment
@@ -187,7 +220,7 @@ func (w *Worker) startProcs() error {
 		codec = transcodeArgs()
 	}
 
-	recArgs := append(append([]string{}, in...), "-an")
+	recArgs := append(append([]string{}, recIn...), "-an")
 	recArgs = append(recArgs, codec...)
 	recArgs = append(recArgs,
 		"-f", "segment", "-segment_time", "300", "-reset_timestamps", "1", "-strftime", "1",

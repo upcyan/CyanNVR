@@ -48,6 +48,19 @@ type Device struct {
 
 	// Per-device AI analysis override (defaults to global AI setting when unset).
 	AIEnabled *bool `json:"aiEnabled,omitempty"`
+
+	// Multiple video streams (ONVIF profiles). PreviewStream / RecordStream
+	// select which stream is used for live view and storage respectively.
+	Streams       []Stream `json:"streams,omitempty"`
+	PreviewStream string   `json:"previewStream,omitempty"`
+	RecordStream  string   `json:"recordStream,omitempty"`
+}
+
+// Stream describes one video profile offered by a camera.
+type Stream struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 type RecordingSegment struct {

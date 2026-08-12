@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { showToast } from 'vant'
-import type { Device, DiscoveredDevice } from '../types'
-import { isBackend, testDevice } from '../api'
+import type { Device, DiscoveredDevice, Stream } from '../types'
+import { isBackend, probeStreams, testDevice } from '../api'
 
 const props = defineProps<{
   show: boolean
@@ -32,10 +32,16 @@ const form = reactive({
   scheduleStart: '08:00',
   scheduleEnd: '20:00',
   aiEnabled: true,
+  previewStream: '',
+  recordStream: '',
 })
 const selectedIp = ref('')
+const streams = ref<Stream[]>([])
+const streamsLoading = ref(false)
 const showModePicker = ref(false)
 const showSchedulePicker = ref(false)
+const showPreviewPicker = ref(false)
+const showRecordPicker = ref(false)
 const timePick = ref<string[]>(['08', '00', '20', '00'])
 
 const modeOptions = [
@@ -43,6 +49,21 @@ const modeOptions = [
   { text: '移动侦测', value: 'motion' },
   { text: '定时录制', value: 'schedule' },
 ]
+
+const streamColumns = computed(() => streams.value.map((s) => ({ text: s.name, value: s.id })))
+const streamNameOf = (id: string) => streams.value.find((s) => s.id === id)?.name || id
+const previewStreamName = computed(() => streamNameOf(form.previewStream))
+const recordStreamName = computed(() => streamNameOf(form.recordStream))
+
+function onPreviewConfirm({ selectedValues }: any) {
+  form.previewStream = selectedValues[0]
+  showPreviewPicker.value = false
+}
+
+function onRecordConfirm({ selectedValues }: any) {
+  form.recordStream = selectedValues[0]
+  showRecordPicker.value = false
+}
 
 const scheduleLabel = computed(() => `${form.scheduleStart} - ${form.scheduleEnd}`)
 
@@ -77,7 +98,38 @@ function reset() {
   form.scheduleStart = '08:00'
   form.scheduleEnd = '20:00'
   form.aiEnabled = true
+  form.previewStream = ''
+  form.recordStream = ''
+  streams.value = []
   selectedIp.value = ''
+}
+
+async function onFetchStreams() {
+  if (!form.ip.trim()) {
+    showToast('请先填写 IP 地址')
+    return
+  }
+  streamsLoading.value = true
+  try {
+    const list = await probeStreams({
+      ip: form.ip.trim(),
+      port: Number(form.port) || 554,
+      username: form.username.trim(),
+      password: form.password,
+    })
+    streams.value = list
+    if (list.length) {
+      if (!form.previewStream) form.previewStream = list[0].id
+      if (!form.recordStream) form.recordStream = list[0].id
+      showToast(`获取到 ${list.length} 路视频流`)
+    } else {
+      showToast('未发现视频流')
+    }
+  } catch {
+    showToast('获取视频流失败')
+  } finally {
+    streamsLoading.value = false
+  }
 }
 
 async function onTest() {
@@ -112,21 +164,7 @@ async function onTest() {
 watch(
   () => props.editDevice,
   (d) => {
-    if (d) {
-      isEdit.value = true
-      mode.value = 'form'
-      form.name = d.name
-      form.ip = d.ip
-      form.port = d.port || 554
-      form.username = d.username || 'admin'
-      form.password = ''
-      form.rtspUrl = d.rtspUrl || ''
-      form.recordEnabled = d.recordEnabled ?? true
-      form.recordMode = (d.recordMode || 'continuous') as 'continuous' | 'motion' | 'schedule'
-      form.scheduleStart = d.scheduleStart || '08:00'
-      form.scheduleEnd = d.scheduleEnd || '20:00'
-      form.aiEnabled = d.aiEnabled ?? true
-    }
+    if (d) applyDevice(d)
   },
   { immediate: true },
 )
@@ -150,6 +188,9 @@ function submitForm() {
   input.scheduleStart = form.scheduleStart
   input.scheduleEnd = form.scheduleEnd
   input.aiEnabled = form.aiEnabled
+  if (streams.value.length) input.streams = streams.value
+  if (form.previewStream) input.previewStream = form.previewStream
+  if (form.recordStream) input.recordStream = form.recordStream
   emit('add', input)
   close()
 }
@@ -181,8 +222,33 @@ function switchDiscover() {
 }
 
 function onOpen() {
+  if (props.editDevice) {
+    // Editing: re-apply the device (watch already ran, but onOpen fires after
+    // on some popup transitions — be safe).
+    applyDevice(props.editDevice)
+    return
+  }
   reset()
   mode.value = 'form'
+}
+
+function applyDevice(d: Device) {
+  isEdit.value = true
+  mode.value = 'form'
+  form.name = d.name
+  form.ip = d.ip
+  form.port = d.port || 554
+  form.username = d.username || 'admin'
+  form.password = ''
+  form.rtspUrl = d.rtspUrl || ''
+  form.recordEnabled = d.recordEnabled ?? true
+  form.recordMode = (d.recordMode || 'continuous') as 'continuous' | 'motion' | 'schedule'
+  form.scheduleStart = d.scheduleStart || '08:00'
+  form.scheduleEnd = d.scheduleEnd || '20:00'
+  form.aiEnabled = d.aiEnabled ?? true
+  streams.value = d.streams || []
+  form.previewStream = d.previewStream || streams.value[0]?.id || ''
+  form.recordStream = d.recordStream || streams.value[0]?.id || ''
 }
 </script>
 
@@ -245,6 +311,53 @@ function onOpen() {
               </template>
             </van-cell>
           </van-cell-group>
+
+          <van-cell-group inset title="视频流">
+            <van-cell title="获取可用视频流" label="读取摄像头 ONVIF 多码流列表">
+              <template #right-icon>
+                <van-button size="small" round :loading="streamsLoading" @click="onFetchStreams">
+                  获取
+                </van-button>
+              </template>
+            </van-cell>
+            <template v-if="streams.length">
+              <van-field
+                v-model="previewStreamName"
+                is-link
+                readonly
+                label="预览码流"
+                :placeholder="'共 ' + streams.length + ' 路'"
+                @click="showPreviewPicker = true"
+              />
+              <van-field
+                v-model="recordStreamName"
+                is-link
+                readonly
+                label="录像码流"
+                :placeholder="'共 ' + streams.length + ' 路'"
+                @click="showRecordPicker = true"
+              />
+            </template>
+          </van-cell-group>
+
+          <van-popup v-model:show="showPreviewPicker" position="bottom" round>
+            <van-picker
+              title="预览码流"
+              :columns="streamColumns"
+              :model-value="[form.previewStream]"
+              @confirm="onPreviewConfirm"
+              @cancel="showPreviewPicker = false"
+            />
+          </van-popup>
+          <van-popup v-model:show="showRecordPicker" position="bottom" round>
+            <van-picker
+              title="录像码流"
+              :columns="streamColumns"
+              :model-value="[form.recordStream]"
+              @confirm="onRecordConfirm"
+              @cancel="showRecordPicker = false"
+            />
+          </van-popup>
 
           <van-popup v-model:show="showModePicker" position="bottom" round>
             <van-picker

@@ -2,6 +2,7 @@ package onvifx
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,6 +13,8 @@ import (
 	onvif "github.com/use-go/onvif"
 	"github.com/use-go/onvif/media"
 	xsdonvif "github.com/use-go/onvif/xsd/onvif"
+
+	"simplenvr/server/models"
 )
 
 type Found struct {
@@ -99,6 +102,16 @@ func ifaceNames(name string) ([]string, error) {
 
 // GetStreamURI fetches the RTSP URL via ONVIF Media service (best effort).
 func GetStreamURI(host string, port int, user, pass string) string {
+	streams := GetStreams(host, port, user, pass)
+	if len(streams) > 0 {
+		return streams[0].URL
+	}
+	return ""
+}
+
+// GetStreams enumerates every ONVIF profile and its RTSP stream URI.
+func GetStreams(host string, port int, user, pass string) []models.Stream {
+	var out []models.Stream
 	if port == 0 {
 		port = 80
 	}
@@ -108,28 +121,44 @@ func GetStreamURI(host string, port int, user, pass string) string {
 		Password: pass,
 	})
 	if err != nil {
-		return ""
+		return out
 	}
 	resp, err := dev.CallMethod(media.GetProfiles{})
 	if err != nil {
-		return ""
+		return out
 	}
-	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(string(body)); err != nil {
-		return ""
+		return out
 	}
-	var token string
+	var tokens []string
 	for _, p := range doc.FindElements("./Envelope/Body/GetProfilesResponse/Profiles/Profile") {
-		if t := p.SelectAttrValue("token", ""); t != "" {
-			token = t
-			break
+		t := p.SelectAttrValue("token", "")
+		if t == "" {
+			continue
 		}
+		tokens = append(tokens, t)
+		name := ""
+		if n := p.FindElement("./Name"); n != nil {
+			name = strings.TrimSpace(n.Text())
+		}
+		// Try to fetch the URI for this profile now; fall back to guessing.
+		uri := streamURI(dev, t)
+		if uri == "" {
+			uri = guessStreamURL(host, user, pass, t)
+		}
+		label := name
+		if label == "" {
+			label = "Profile " + t
+		}
+		out = append(out, models.Stream{ID: t, Name: label, URL: uri})
 	}
-	if token == "" {
-		return ""
-	}
+	return out
+}
+
+func streamURI(dev *onvif.Device, token string) string {
 	resp2, err := dev.CallMethod(media.GetStreamUri{
 		StreamSetup: xsdonvif.StreamSetup{
 			Stream:    xsdonvif.StreamType("RTP-Unicast"),
@@ -153,6 +182,16 @@ func GetStreamURI(host string, port int, user, pass string) string {
 		}
 	}
 	return ""
+}
+
+// guessStreamURL builds a likely RTSP URL for brands that don't return a
+// usable GetStreamUri response. Used as a fallback only.
+func guessStreamURL(host, user, pass, token string) string {
+	u := fmt.Sprintf("rtsp://%s:%d/stream1", host, 554)
+	if user != "" {
+		u = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", user, pass, host, 554)
+	}
+	return u
 }
 
 func parseHostPort(xaddr string) (string, int) {

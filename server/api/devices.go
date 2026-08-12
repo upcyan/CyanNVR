@@ -34,11 +34,14 @@ type deviceReq struct {
 	Source   string `json:"source"` // rtsp | test
 	RTSPURL  string `json:"rtspUrl"`
 
-	RecordEnabled *bool   `json:"recordEnabled"`
-	RecordMode    string  `json:"recordMode"`
-	ScheduleStart string  `json:"scheduleStart"`
-	ScheduleEnd   string  `json:"scheduleEnd"`
-	AIEnabled     *bool   `json:"aiEnabled"`
+	RecordEnabled *bool           `json:"recordEnabled"`
+	RecordMode    string          `json:"recordMode"`
+	ScheduleStart string          `json:"scheduleStart"`
+	ScheduleEnd   string          `json:"scheduleEnd"`
+	AIEnabled     *bool           `json:"aiEnabled"`
+	Streams       []models.Stream `json:"streams"`
+	PreviewStream string          `json:"previewStream"`
+	RecordStream  string          `json:"recordStream"`
 }
 
 func (r *deviceReq) applyTo(d *models.Device) {
@@ -56,6 +59,15 @@ func (r *deviceReq) applyTo(d *models.Device) {
 	}
 	if r.AIEnabled != nil {
 		d.AIEnabled = r.AIEnabled
+	}
+	if r.Streams != nil {
+		d.Streams = r.Streams
+	}
+	if r.PreviewStream != "" {
+		d.PreviewStream = r.PreviewStream
+	}
+	if r.RecordStream != "" {
+		d.RecordStream = r.RecordStream
 	}
 }
 
@@ -239,7 +251,17 @@ func (s *Server) probeDevice(c *gin.Context) {
 	}
 	stream := ""
 	if d.Source != models.SourceTest {
-		stream = onvifx.GetStreamURI(d.IP, d.Port, d.Username, d.Password)
+		streams := onvifx.GetStreams(d.IP, d.Port, d.Username, d.Password)
+		if len(streams) > 0 {
+			d.Streams = streams
+			if d.PreviewStream == "" {
+				d.PreviewStream = streams[0].ID
+			}
+			if d.RecordStream == "" {
+				d.RecordStream = streams[0].ID
+			}
+			stream = streams[0].URL
+		}
 		if stream == "" {
 			stream = defaultRTSP(d)
 		}
@@ -248,6 +270,35 @@ func (s *Server) probeDevice(c *gin.Context) {
 		_ = s.st.UpdateDevice(*d)
 	}
 	c.JSON(http.StatusOK, gin.H{"device": d, "stream": stream})
+}
+
+// probeStreams fetches the list of video streams (ONVIF profiles) a camera
+// offers, given connection details from the add-device form.
+func (s *Server) probeStreams(c *gin.Context) {
+	var req struct {
+		IP       string `json:"ip"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	port := req.Port
+	if port == 0 {
+		port = 554
+	}
+	streams := onvifx.GetStreams(req.IP, port, req.Username, req.Password)
+	if len(streams) == 0 {
+		// Fall back to the default single stream so the UI still works.
+		url := fmt.Sprintf("rtsp://%s:%d/stream1", req.IP, 554)
+		if req.Username != "" {
+			url = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", req.Username, req.Password, req.IP, 554)
+		}
+		streams = []models.Stream{{ID: "main", Name: "主码流", URL: url}}
+	}
+	c.JSON(http.StatusOK, gin.H{"streams": streams})
 }
 
 func defaultRTSP(d *models.Device) string {

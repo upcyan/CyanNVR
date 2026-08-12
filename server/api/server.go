@@ -145,6 +145,7 @@ func (s *Server) Router() http.Handler {
 	protected.PUT("/devices/:id", s.requireOperator, s.updateDevice)
 	protected.DELETE("/devices/:id", s.requireAdmin, s.deleteDevice)
 	protected.POST("/devices/test", s.requireOperator, s.testDevice)
+	protected.POST("/devices/streams", s.requireOperator, s.probeStreams)
 	protected.POST("/devices/discover", s.requireOperator, s.discoverDevices)
 	protected.POST("/devices/:id/probe", s.requireOperator, s.probeDevice)
 	protected.GET("/devices/:id/snapshot", s.deviceSnapshot)

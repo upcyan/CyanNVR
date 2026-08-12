@@ -1,3 +1,9 @@
+export interface Stream {
+  id: string
+  name: string
+  url: string
+}
+
 export interface Device {
   id: string
   name: string
@@ -15,6 +21,9 @@ export interface Device {
   scheduleStart?: string
   scheduleEnd?: string
   aiEnabled?: boolean
+  streams?: Stream[]
+  previewStream?: string
+  recordStream?: string
 }
 
 export interface DiscoveredDevice {
