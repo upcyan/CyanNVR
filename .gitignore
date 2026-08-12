@@ -8,3 +8,5 @@ web/dist/
 web/node_modules/
 .DS_Store
 nvr-data/
+models/
+server/pkg/ai/models/

@@ -87,6 +87,7 @@ func StartLocalWorker(detectURL string) {
 		}
 	}
 	cmd := exec.Command(py, script, port)
+	cmd.Env = append(os.Environ(), "NVR_AI_MODEL_PATH="+modelPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -94,6 +95,20 @@ func StartLocalWorker(detectURL string) {
 		return
 	}
 	log.Printf("started AI detect worker (pid %d) at %s", cmd.Process.Pid, detectURL)
+}
+
+// modelPath returns the ONNX detection model location, preferring an env var
+// then the bundled models/ dir next to this source file.
+func modelPath() string {
+	if p := os.Getenv("NVR_AI_MODEL_PATH"); p != "" {
+		return p
+	}
+	_, file, _, _ := runtime.Caller(0)
+	dir := filepath.Join(filepath.Dir(file), "models", "yolov8n.onnx")
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	return "models/yolov8n.onnx"
 }
 
 func (a *Analyzer) Register(deviceID string) *DeviceState {
@@ -231,14 +246,31 @@ func (a *Analyzer) detectLocal(jpg []byte) (result, float64, error) {
 }
 
 var labelMap = map[string]string{
-	"person": "人员",
-	"car":    "车辆",
-	"truck":  "卡车",
-	"bus":    "客车",
-	"dog":    "犬只",
-	"cat":    "猫",
-	"bicycle": "自行车",
-	"motorcycle": "摩托车",
+	"person":       "人员",
+	"car":          "车辆",
+	"truck":        "卡车",
+	"bus":          "客车",
+	"dog":          "犬只",
+	"cat":          "猫",
+	"bicycle":      "自行车",
+	"motorcycle":   "摩托车",
+	"fire hydrant": "消防栓",
+	"stop sign":    "停车标志",
+	"airplane":     "飞机",
+	"boat":         "船只",
+	"bird":         "鸟类",
+	"traffic light": "红绿灯",
+	"backpack":     "背包",
+	"umbrella":     "雨伞",
+	"cell phone":   "手机",
+	"laptop":       "笔记本电脑",
+	"tv":           "电视",
+	"chair":        "椅子",
+	"couch":        "沙发",
+	"bottle":       "瓶子",
+	"cup":          "杯子",
+	"potted plant": "盆栽",
+	"bench":        "长椅",
 }
 
 func mapLabel(l string) string {
