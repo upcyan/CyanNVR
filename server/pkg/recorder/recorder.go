@@ -298,15 +298,34 @@ func (w *Worker) supervise() {
 }
 
 func (w *Worker) shouldRecordNow() bool {
-	if w.mgr.ShouldRecordFn == nil {
-		return true
+	// Per-device recording switch: if explicitly disabled, don't record.
+	if !w.dev.RecordEnabled {
+		return false
 	}
-	mode, start, end := w.mgr.ShouldRecordFn()
+	mode := w.dev.RecordMode
+	if mode == "" {
+		// Fall back to global strategy for devices configured before
+		// per-device settings were introduced.
+		if w.mgr.ShouldRecordFn == nil {
+			return true
+		}
+		gMode, gStart, gEnd := w.mgr.ShouldRecordFn()
+		mode, w.dev.ScheduleStart, w.dev.ScheduleEnd = gMode, gStart, gEnd
+	}
+	start, end := w.dev.ScheduleStart, w.dev.ScheduleEnd
+	if start == "" {
+		start = "08:00"
+	}
+	if end == "" {
+		end = "20:00"
+	}
 	switch mode {
 	case "schedule":
 		return inScheduleRange(start, end)
 	case "motion":
 		return w.hasRecentActivity()
+	case "continuous":
+		return true
 	default:
 		return true
 	}
@@ -360,6 +379,9 @@ func (w *Worker) fail(backoff *time.Duration) bool {
 // drainFrames copies current.jpg into the AI ring while procs are alive.
 func (w *Worker) drainFrames() {
 	if w.mgr.ai == nil || !w.mgr.cfg.AIEnabled {
+		return
+	}
+	if w.dev.AIEnabled != nil && !*w.dev.AIEnabled {
 		return
 	}
 	tick := time.NewTicker(time.Duration(w.mgr.cfg.SnapshotIntervalSec) * time.Second)

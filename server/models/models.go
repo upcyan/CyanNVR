@@ -38,6 +38,16 @@ type Device struct {
 	Online   bool         `json:"online"`
 	RTSPURL  string       `json:"rtspUrl,omitempty"`
 	Created  time.Time    `json:"created"`
+
+	// Per-device recording strategy. When RecordEnabled is false the device
+	// is only live-streamed, never recorded.
+	RecordEnabled bool   `json:"recordEnabled"`
+	RecordMode    string `json:"recordMode"` // continuous | motion | schedule
+	ScheduleStart string `json:"scheduleStart"`
+	ScheduleEnd   string `json:"scheduleEnd"`
+
+	// Per-device AI analysis override (defaults to global AI setting when unset).
+	AIEnabled *bool `json:"aiEnabled,omitempty"`
 }
 
 type RecordingSegment struct {

@@ -33,6 +33,30 @@ type deviceReq struct {
 	Password string `json:"password"`
 	Source   string `json:"source"` // rtsp | test
 	RTSPURL  string `json:"rtspUrl"`
+
+	RecordEnabled *bool   `json:"recordEnabled"`
+	RecordMode    string  `json:"recordMode"`
+	ScheduleStart string  `json:"scheduleStart"`
+	ScheduleEnd   string  `json:"scheduleEnd"`
+	AIEnabled     *bool   `json:"aiEnabled"`
+}
+
+func (r *deviceReq) applyTo(d *models.Device) {
+	if r.RecordEnabled != nil {
+		d.RecordEnabled = *r.RecordEnabled
+	}
+	if r.RecordMode != "" {
+		d.RecordMode = r.RecordMode
+	}
+	if r.ScheduleStart != "" {
+		d.ScheduleStart = r.ScheduleStart
+	}
+	if r.ScheduleEnd != "" {
+		d.ScheduleEnd = r.ScheduleEnd
+	}
+	if r.AIEnabled != nil {
+		d.AIEnabled = r.AIEnabled
+	}
 }
 
 func (s *Server) createDevice(c *gin.Context) {
@@ -57,20 +81,25 @@ func (s *Server) createDevice(c *gin.Context) {
 		name = req.IP
 	}
 	d := models.Device{
-		ID:       uuid.NewString(),
-		Name:     name,
-		IP:       req.IP,
-		Port:     req.Port,
-		Username: req.Username,
-		Password: req.Password,
-		Source:   src,
-		Model:    "RTSP Camera",
-		Created:  time.Now(),
+		ID:            uuid.NewString(),
+		Name:          name,
+		IP:            req.IP,
+		Port:          req.Port,
+		Username:      req.Username,
+		Password:      req.Password,
+		Source:        src,
+		Model:         "RTSP Camera",
+		RecordEnabled: true,
+		RecordMode:    "continuous",
+		ScheduleStart: "08:00",
+		ScheduleEnd:   "20:00",
+		Created:       time.Now(),
 	}
 	if req.RTSPURL != "" {
 		d.RTSPURL = req.RTSPURL
 		d.Model = "ONVIF/RTSP"
 	}
+	req.applyTo(&d)
 	if err := s.st.CreateDevice(d); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -119,6 +148,7 @@ func (s *Server) updateDevice(c *gin.Context) {
 	if req.RTSPURL != "" {
 		d.RTSPURL = req.RTSPURL
 	}
+	req.applyTo(d)
 	if err := s.st.UpdateDevice(*d); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

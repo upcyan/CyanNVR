@@ -71,6 +71,9 @@ func (a *Analyzer) MaybeAnalyze(device *models.Device) {
 	if !a.cfg.AIEnabled || a.cfg.AIBaseURL == "" {
 		return
 	}
+	if device.AIEnabled != nil && !*device.AIEnabled {
+		return
+	}
 	s := a.dirs[device.ID]
 	if s == nil {
 		return

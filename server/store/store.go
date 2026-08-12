@@ -38,7 +38,10 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS devices (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, ip TEXT, port INTEGER,
 			username TEXT, password TEXT, source TEXT NOT NULL, model TEXT,
-			online INTEGER NOT NULL DEFAULT 0, rtsp_url TEXT, created DATETIME NOT NULL)`,
+			online INTEGER NOT NULL DEFAULT 0, rtsp_url TEXT, created DATETIME NOT NULL,
+			record_enabled INTEGER NOT NULL DEFAULT 1, record_mode TEXT NOT NULL DEFAULT 'continuous',
+			schedule_start TEXT NOT NULL DEFAULT '08:00', schedule_end TEXT NOT NULL DEFAULT '20:00',
+			ai_enabled INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS segments (
 			id TEXT PRIMARY KEY, device_id TEXT NOT NULL, start DATETIME NOT NULL,
 			end DATETIME NOT NULL, path TEXT NOT NULL)`,
@@ -54,6 +57,20 @@ func (s *Store) migrate() error {
 	for _, st := range stmts {
 		if _, err := s.db.Exec(st); err != nil {
 			return err
+		}
+	}
+	// Add new device columns on existing databases (idempotent-ish: ignore
+	// "duplicate column" errors).
+	alters := []string{
+		`ALTER TABLE devices ADD COLUMN record_enabled INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE devices ADD COLUMN record_mode TEXT NOT NULL DEFAULT 'continuous'`,
+		`ALTER TABLE devices ADD COLUMN schedule_start TEXT NOT NULL DEFAULT '08:00'`,
+		`ALTER TABLE devices ADD COLUMN schedule_end TEXT NOT NULL DEFAULT '20:00'`,
+		`ALTER TABLE devices ADD COLUMN ai_enabled INTEGER`,
+	}
+	for _, a := range alters {
+		if _, err := s.db.Exec(a); err != nil {
+			// column already exists — fine
 		}
 	}
 	return nil
@@ -125,20 +142,19 @@ func scanUser(row *sql.Row) (*models.User, error) {
 // ---- devices ----
 
 func (s *Store) ListDevices() ([]models.Device, error) {
-	rows, err := s.db.Query(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created FROM devices ORDER BY created`)
+	rows, err := s.db.Query(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled FROM devices ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []models.Device
 	for rows.Next() {
-		d := models.Device{}
-		var online int
-		if err := rows.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created); err != nil {
+		d, err := scanDevice(rows)
+		if err != nil {
 			return nil, err
 		}
-		d.Online = online == 1
-		out = append(out, d)
+		out = append(out, *d)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -150,17 +166,44 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 }
 
 func (s *Store) GetDevice(id string) (*models.Device, error) {
-	row := s.db.QueryRow(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created FROM devices WHERE id=?`, id)
-	d := models.Device{}
-	var online int
-	err := row.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created)
+	row := s.db.QueryRow(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled FROM devices WHERE id=?`, id)
+	d, err := scanDeviceRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return d, nil
+}
+
+func scanDevice(rows *sql.Rows) (*models.Device, error) {
+	return scanDeviceRow(&rowAdapter{rows})
+}
+
+type rowAdapter struct{ *sql.Rows }
+
+func (r *rowAdapter) Scan(dest ...any) error { return r.Rows.Scan(dest...) }
+
+func scanDeviceRow(scanner interface {
+	Scan(dest ...any) error
+}) (*models.Device, error) {
+	d := models.Device{}
+	var online int
+	var recEnabled int
+	var aiEnabled sql.NullInt64
+	err := scanner.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created,
+		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled)
+	if err != nil {
+		return nil, err
+	}
 	d.Online = online == 1
+	d.RecordEnabled = recEnabled == 1
+	if aiEnabled.Valid {
+		v := aiEnabled.Int64 == 1
+		d.AIEnabled = &v
+	}
 	return &d, nil
 }
 
@@ -169,9 +212,15 @@ func (s *Store) CreateDevice(d models.Device) error {
 	if d.Online {
 		online = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO devices(id, name, ip, port, username, password, source, model, online, rtsp_url, created)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		d.ID, d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.Created)
+	recEnabled := 1
+	if !d.RecordEnabled {
+		recEnabled = 0
+	}
+	_, err := s.db.Exec(`INSERT INTO devices(id, name, ip, port, username, password, source, model, online, rtsp_url, created,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		d.ID, d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.Created,
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled))
 	return err
 }
 
@@ -180,9 +229,25 @@ func (s *Store) UpdateDevice(d models.Device) error {
 	if d.Online {
 		online = 1
 	}
-	_, err := s.db.Exec(`UPDATE devices SET name=?, ip=?, port=?, username=?, password=?, source=?, model=?, online=?, rtsp_url=? WHERE id=?`,
-		d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.ID)
+	recEnabled := 1
+	if !d.RecordEnabled {
+		recEnabled = 0
+	}
+	_, err := s.db.Exec(`UPDATE devices SET name=?, ip=?, port=?, username=?, password=?, source=?, model=?, online=?, rtsp_url=?,
+		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=? WHERE id=?`,
+		d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL,
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), d.ID)
 	return err
+}
+
+func aiNull(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	if *b {
+		return 1
+	}
+	return 0
 }
 
 func (s *Store) SetDeviceOnline(id string, online bool) error {

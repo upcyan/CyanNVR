@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { Device, DiscoveredDevice } from '../types'
 import { isBackend, testDevice } from '../api'
@@ -27,8 +27,35 @@ const form = reactive({
   username: 'admin',
   password: '',
   rtspUrl: '',
+  recordEnabled: true,
+  recordMode: 'continuous' as 'continuous' | 'motion' | 'schedule',
+  scheduleStart: '08:00',
+  scheduleEnd: '20:00',
+  aiEnabled: true,
 })
 const selectedIp = ref('')
+const showModePicker = ref(false)
+const showSchedulePicker = ref(false)
+const timePick = ref<string[]>(['08', '00', '20', '00'])
+
+const modeOptions = [
+  { text: '连续录制', value: 'continuous' },
+  { text: '移动侦测', value: 'motion' },
+  { text: '定时录制', value: 'schedule' },
+]
+
+const scheduleLabel = computed(() => `${form.scheduleStart} - ${form.scheduleEnd}`)
+
+function onModeConfirm({ selectedValues }: any) {
+  form.recordMode = selectedValues[0] as any
+  showModePicker.value = false
+}
+
+function onScheduleConfirm({ selectedValues }: any) {
+  form.scheduleStart = `${selectedValues[0]}:${selectedValues[1]}`
+  form.scheduleEnd = `${selectedValues[2]}:${selectedValues[3]}`
+  showSchedulePicker.value = false
+}
 
 function close() {
   emit('update:show', false)
@@ -45,6 +72,11 @@ function reset() {
   form.username = 'admin'
   form.password = ''
   form.rtspUrl = ''
+  form.recordEnabled = true
+  form.recordMode = 'continuous'
+  form.scheduleStart = '08:00'
+  form.scheduleEnd = '20:00'
+  form.aiEnabled = true
   selectedIp.value = ''
 }
 
@@ -89,6 +121,11 @@ watch(
       form.username = d.username || 'admin'
       form.password = ''
       form.rtspUrl = d.rtspUrl || ''
+      form.recordEnabled = d.recordEnabled ?? true
+      form.recordMode = (d.recordMode || 'continuous') as 'continuous' | 'motion' | 'schedule'
+      form.scheduleStart = d.scheduleStart || '08:00'
+      form.scheduleEnd = d.scheduleEnd || '20:00'
+      form.aiEnabled = d.aiEnabled ?? true
     }
   },
   { immediate: true },
@@ -108,6 +145,11 @@ function submitForm() {
   }
   if (form.rtspUrl) input.rtspUrl = form.rtspUrl
   if (form.password) input.password = form.password
+  input.recordEnabled = form.recordEnabled
+  input.recordMode = form.recordMode
+  input.scheduleStart = form.scheduleStart
+  input.scheduleEnd = form.scheduleEnd
+  input.aiEnabled = form.aiEnabled
   emit('add', input)
   close()
 }
@@ -174,6 +216,55 @@ function onOpen() {
               :placeholder="isEdit ? '留空则不修改' : '******'"
             />
           </van-cell-group>
+
+          <van-cell-group inset title="录像策略">
+            <van-cell title="启用录像" label="关闭后仅直播不录像">
+              <template #right-icon>
+                <van-switch v-model="form.recordEnabled" size="20" />
+              </template>
+            </van-cell>
+            <van-field
+              v-model="form.recordMode"
+              is-link
+              readonly
+              label="录像模式"
+              placeholder="连续录制"
+              @click="showModePicker = true"
+            />
+            <van-field
+              v-if="form.recordMode === 'schedule'"
+              v-model="scheduleLabel"
+              is-link
+              readonly
+              label="定时时段"
+              @click="showSchedulePicker = true"
+            />
+            <van-cell title="AI 智能识别" label="分析画面，识别人员/车辆/异常">
+              <template #right-icon>
+                <van-switch v-model="form.aiEnabled" size="20" />
+              </template>
+            </van-cell>
+          </van-cell-group>
+
+          <van-popup v-model:show="showModePicker" position="bottom" round>
+            <van-picker
+              title="录像模式"
+              :columns="modeOptions"
+              :model-value="[form.recordMode]"
+              @confirm="onModeConfirm"
+              @cancel="showModePicker = false"
+            />
+          </van-popup>
+          <van-popup v-model:show="showSchedulePicker" position="bottom" round>
+            <van-time-picker
+              v-model="timePick"
+              title="定时时段"
+              :min-hour="0"
+              :max-hour="23"
+              @confirm="onScheduleConfirm"
+              @cancel="showSchedulePicker = false"
+            />
+          </van-popup>
           <van-button
             v-if="isBackend() && !isEdit"
             plain

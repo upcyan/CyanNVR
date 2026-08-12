@@ -10,6 +10,11 @@ export interface Device {
   model?: string
   rtspUrl?: string
   created?: string
+  recordEnabled?: boolean
+  recordMode?: RecordMode
+  scheduleStart?: string
+  scheduleEnd?: string
+  aiEnabled?: boolean
 }
 
 export interface DiscoveredDevice {

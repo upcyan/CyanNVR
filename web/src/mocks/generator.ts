@@ -43,6 +43,11 @@ export function makeDevice(input: Partial<Device>): Device {
     source: input.source ?? 'rtsp',
     model: input.model ?? 'ONVIF Camera',
     rtspUrl: input.rtspUrl,
+    recordEnabled: input.recordEnabled ?? true,
+    recordMode: input.recordMode ?? 'continuous',
+    scheduleStart: input.scheduleStart ?? '08:00',
+    scheduleEnd: input.scheduleEnd ?? '20:00',
+    aiEnabled: input.aiEnabled,
   }
 }
 
