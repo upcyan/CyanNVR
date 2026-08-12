@@ -31,7 +31,7 @@ const form = reactive({
   recordMode: 'continuous' as 'continuous' | 'motion' | 'schedule',
   scheduleStart: '08:00',
   scheduleEnd: '20:00',
-  aiEnabled: true,
+  aiEnabled: 'default' as 'default' | 'on' | 'off',
   previewStream: '',
   recordStream: '',
 })
@@ -42,6 +42,7 @@ const showModePicker = ref(false)
 const showSchedulePicker = ref(false)
 const showPreviewPicker = ref(false)
 const showRecordPicker = ref(false)
+const showAIPicker = ref(false)
 const timePick = ref<string[]>(['08', '00', '20', '00'])
 
 const modeOptions = [
@@ -49,6 +50,21 @@ const modeOptions = [
   { text: '移动侦测', value: 'motion' },
   { text: '定时录制', value: 'schedule' },
 ]
+
+const aiModeOptions = [
+  { text: '跟随全局设置', value: 'default' },
+  { text: '启用', value: 'on' },
+  { text: '关闭', value: 'off' },
+]
+
+const aiModeLabel = computed(
+  () => aiModeOptions.find((o) => o.value === form.aiEnabled)?.text || '跟随全局设置',
+)
+
+function onAIConfirm({ selectedValues }: any) {
+  form.aiEnabled = selectedValues[0] as any
+  showAIPicker.value = false
+}
 
 const streamColumns = computed(() => streams.value.map((s) => ({ text: s.name, value: s.id })))
 const streamNameOf = (id: string) => streams.value.find((s) => s.id === id)?.name || id
@@ -97,7 +113,7 @@ function reset() {
   form.recordMode = 'continuous'
   form.scheduleStart = '08:00'
   form.scheduleEnd = '20:00'
-  form.aiEnabled = true
+  form.aiEnabled = 'default'
   form.previewStream = ''
   form.recordStream = ''
   streams.value = []
@@ -187,7 +203,7 @@ function submitForm() {
   input.recordMode = form.recordMode
   input.scheduleStart = form.scheduleStart
   input.scheduleEnd = form.scheduleEnd
-  input.aiEnabled = form.aiEnabled
+  input.aiEnabled = form.aiEnabled === 'default' ? undefined : form.aiEnabled === 'on'
   if (streams.value.length) input.streams = streams.value
   if (form.previewStream) input.previewStream = form.previewStream
   if (form.recordStream) input.recordStream = form.recordStream
@@ -245,7 +261,7 @@ function applyDevice(d: Device) {
   form.recordMode = (d.recordMode || 'continuous') as 'continuous' | 'motion' | 'schedule'
   form.scheduleStart = d.scheduleStart || '08:00'
   form.scheduleEnd = d.scheduleEnd || '20:00'
-  form.aiEnabled = d.aiEnabled ?? true
+  form.aiEnabled = d.aiEnabled === undefined ? 'default' : d.aiEnabled ? 'on' : 'off'
   streams.value = d.streams || []
   form.previewStream = d.previewStream || streams.value[0]?.id || ''
   form.recordStream = d.recordStream || streams.value[0]?.id || ''
@@ -305,12 +321,25 @@ function applyDevice(d: Device) {
               label="定时时段"
               @click="showSchedulePicker = true"
             />
-            <van-cell title="AI 智能识别" label="分析画面，识别人员/车辆/异常">
-              <template #right-icon>
-                <van-switch v-model="form.aiEnabled" size="20" />
-              </template>
-            </van-cell>
+            <van-field
+              v-model="aiModeLabel"
+              is-link
+              readonly
+              label="AI 智能识别"
+              placeholder="跟随全局"
+              @click="showAIPicker = true"
+            />
           </van-cell-group>
+
+          <van-popup v-model:show="showAIPicker" position="bottom" round>
+            <van-picker
+              title="AI 智能识别"
+              :columns="aiModeOptions"
+              :model-value="[form.aiEnabled]"
+              @confirm="onAIConfirm"
+              @cancel="showAIPicker = false"
+            />
+          </van-popup>
 
           <van-cell-group inset title="视频流">
             <van-cell title="获取可用视频流" label="读取摄像头 ONVIF 多码流列表">

@@ -21,7 +21,18 @@ const s = store.settings
 const saving = ref(false)
 const showStartPicker = ref(false)
 const showEndPicker = ref(false)
+const showAIModePicker = ref(false)
 const pwd = ref({ old: '', next: '', confirm: '' })
+
+const aiModeOptions = [
+  { text: '本地对象检测', value: 'local' },
+  { text: '云端视觉模型', value: 'openai' },
+]
+
+function onAIModeConfirm({ selectedValues }: any) {
+  store.set({ ai: { ...s.ai, mode: selectedValues[0] } })
+  showAIModePicker.value = false
+}
 
 const usedPct = computed(() => {
   const { totalGB, usedGB } = store.storage
@@ -306,15 +317,33 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
 
     <van-cell-group title="AI 画面识别">
-      <van-cell title="启用 AI 识别" label="对画面进行分析并记录事件与动图">
+      <van-cell title="启用 AI 识别" label="本地对象检测（默认），或切换云端视觉模型">
         <template #right-icon>
-          <van-switch v-model="s.ai.enabled" size="20" />
+          <van-switch :model-value="s.ai.enabled" size="20" @update:model-value="store.set({ ai: { ...s.ai, enabled: $event } })" />
         </template>
       </van-cell>
       <template v-if="s.ai.enabled">
-        <van-field v-model="s.ai.baseUrl" label="接口地址" placeholder="https://api.openai.com/v1" />
-        <van-field v-model="s.ai.model" label="模型" placeholder="gpt-4o-mini" />
-        <van-field v-model="s.ai.apiKey" label="API Key" placeholder="sk-..." />
+        <van-field
+          v-model="s.ai.mode"
+          is-link
+          readonly
+          label="识别引擎"
+          placeholder="本地检测"
+          @click="showAIModePicker = true"
+        />
+        <template v-if="s.ai.mode === 'local'">
+          <van-field v-model="s.ai.detectUrl" label="本地检测地址" placeholder="http://localhost:11435" />
+          <van-cell title="识别模型" label="本地 OpenCV HOG 行人检测（可扩展 YOLO/ONNX）">
+            <template #value>
+              <span class="mono" style="font-size: 12px">{{ s.ai.model || 'person-detection' }}</span>
+            </template>
+          </van-cell>
+        </template>
+        <template v-else>
+          <van-field v-model="s.ai.baseUrl" label="接口地址" placeholder="http://localhost:11434/v1（Ollama）" />
+          <van-field v-model="s.ai.model" label="模型" placeholder="llava（本地视觉模型）" />
+          <van-field v-model="s.ai.apiKey" label="API Key" placeholder="本地模型可留空" />
+        </template>
         <van-cell title="识别间隔(秒)" label="每隔多久分析一帧">
           <template #value>
             <van-stepper v-model="s.ai.interval" :min="5" :max="120" step="5" />
@@ -327,10 +356,11 @@ async function removeUser(u: ManagedUser) {
         </van-cell>
         <van-cell title="触发阈值" label="置信度达到该值才记录">
           <template #value>
-            <van-slider v-model="s.ai.threshold" :min="0.3" :max="1" :step="0.05" style="width: 120px" />
+            <van-slider v-model="s.ai.threshold" :min="0.1" :max="1" :step="0.05" style="width: 120px" />
           </template>
         </van-cell>
         <van-field
+          v-if="s.ai.mode === 'openai'"
           v-model="s.ai.prompt"
           type="textarea"
           rows="3"
@@ -339,7 +369,15 @@ async function removeUser(u: ManagedUser) {
           placeholder="分析画面并输出 JSON..."
         />
       </template>
-      <van-cell v-if="!isBackend()" title="演示模式" label="连接服务器后可配置 AI 识别" />
+      <van-popup v-model:show="showAIModePicker" position="bottom" round>
+        <van-picker
+          title="识别引擎"
+          :columns="aiModeOptions"
+          :model-value="[s.ai.mode]"
+          @confirm="onAIModeConfirm"
+          @cancel="showAIModePicker = false"
+        />
+      </van-popup>
     </van-cell-group>
 
     <van-cell-group title="账户安全">

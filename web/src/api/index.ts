@@ -206,7 +206,9 @@ export interface AppSettings {
   https: boolean
   ai: {
     enabled: boolean
+    mode: string
     baseUrl: string
+    detectUrl: string
     model: string
     apiKey: string
     prompt: string

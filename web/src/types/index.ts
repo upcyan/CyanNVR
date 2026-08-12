@@ -76,7 +76,9 @@ export interface EventItem {
 
 export interface AIConfig {
   enabled: boolean
+  mode: 'local' | 'openai'
   baseUrl: string
+  detectUrl: string
   model: string
   apiKey: string
   prompt: string

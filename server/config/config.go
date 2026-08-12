@@ -17,7 +17,9 @@ type Config struct {
 	SnapshotIntervalSec int
 
 	AIEnabled   bool
+	AIMode      string // "local" | "openai"
 	AIBaseURL   string
+	AIDetectURL string
 	AIModel     string
 	AIAPIKey    string
 	AIPrompt    string
@@ -49,8 +51,10 @@ func Load() *Config {
 		SnapshotIntervalSec: 10,
 
 		AIEnabled:   env("NVR_AI_ENABLED", "false") == "true",
-		AIBaseURL:   env("NVR_AI_BASE_URL", "https://api.openai.com/v1"),
-		AIModel:     env("NVR_AI_MODEL", "gpt-4o-mini"),
+		AIMode:      env("NVR_AI_MODE", "local"),
+		AIBaseURL:   env("NVR_AI_BASE_URL", "http://localhost:11434/v1"),
+		AIDetectURL: env("NVR_AI_DETECT_URL", "http://localhost:11435"),
+		AIModel:     env("NVR_AI_MODEL", "person-detection"),
 		AIAPIKey:    env("NVR_AI_API_KEY", ""),
 		AIPrompt:    env("NVR_AI_PROMPT", "你是安防监控分析助手。分析图中画面，仅输出JSON：{\"alert\":true/false,\"label\":\"事件类别\",\"description\":\"简短中文描述\"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。"),
 		AIMinSecs:   15,

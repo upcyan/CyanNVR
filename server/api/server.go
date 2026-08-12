@@ -28,14 +28,16 @@ type Server struct {
 }
 
 type AIConfig struct {
-	Enabled    bool    `json:"enabled"`
-	BaseURL    string  `json:"baseUrl"`
-	Model      string  `json:"model"`
-	APIKey     string  `json:"apiKey"`
-	Prompt     string  `json:"prompt"`
-	Interval   int     `json:"interval"`
-	Cooldown   int     `json:"cooldown"`
-	Threshold  float64 `json:"threshold"`
+	Enabled   bool    `json:"enabled"`
+	Mode      string  `json:"mode"` // "local" (on-device detect) | "openai" (vision API)
+	BaseURL   string  `json:"baseUrl"`
+	DetectURL string  `json:"detectUrl"`
+	Model     string  `json:"model"`
+	APIKey    string  `json:"apiKey"`
+	Prompt    string  `json:"prompt"`
+	Interval  int     `json:"interval"`
+	Cooldown  int     `json:"cooldown"`
+	Threshold float64 `json:"threshold"`
 }
 
 type AppSettings struct {
@@ -84,8 +86,10 @@ func defaultSettings() AppSettings {
 		HTTPS:         false,
 		AI: AIConfig{
 			Enabled:   false,
-			BaseURL:   "https://api.openai.com/v1",
-			Model:     "gpt-4o-mini",
+			Mode:      "local",
+			BaseURL:   "http://localhost:11434/v1",
+			DetectURL: "http://localhost:11435",
+			Model:     "person-detection",
 			APIKey:    "",
 			Prompt:    "你是安防监控分析助手。分析图中画面，仅输出JSON：{\"alert\":true/false,\"label\":\"事件类别\",\"description\":\"简短中文描述\"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。",
 			Interval:  10,
@@ -97,7 +101,9 @@ func defaultSettings() AppSettings {
 
 func (s *Server) applySettings() {
 	s.cfg.AIEnabled = s.settings.AI.Enabled
+	s.cfg.AIMode = s.settings.AI.Mode
 	s.cfg.AIBaseURL = s.settings.AI.BaseURL
+	s.cfg.AIDetectURL = s.settings.AI.DetectURL
 	s.cfg.AIModel = s.settings.AI.Model
 	s.cfg.AIAPIKey = s.settings.AI.APIKey
 	s.cfg.AIPrompt = s.settings.AI.Prompt

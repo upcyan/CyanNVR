@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -47,6 +51,51 @@ func New(cfg *config.Config, st *store.Store, onEvent func(string, string, strin
 	}
 }
 
+// StartLocalWorker launches the bundled Python detection worker if the detect
+// endpoint is not already reachable and a python interpreter is available.
+// Non-fatal: AI simply reports errors if the worker is missing.
+func StartLocalWorker(detectURL string) {
+	if detectURL == "" {
+		return
+	}
+	u := strings.TrimRight(detectURL, "/") + "/"
+	client := &http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Get(u); err == nil {
+		resp.Body.Close()
+		log.Printf("AI detect worker already running at %s", detectURL)
+		return
+	}
+	script := os.Getenv("NVR_AI_DETECT_SCRIPT")
+	if script == "" {
+		// Bundled script lives next to this package.
+		_, file, _, _ := runtime.Caller(0)
+		script = filepath.Join(filepath.Dir(file), "ai_detect.py")
+	}
+	if _, err := os.Stat(script); err != nil {
+		log.Printf("AI detect worker script not found: %s", script)
+		return
+	}
+	py := os.Getenv("PYTHON")
+	if py == "" {
+		py = "python"
+	}
+	port := "11435"
+	if i := strings.LastIndex(u, ":"); i >= 0 {
+		rest := strings.TrimSuffix(u[i+1:], "/")
+		if rest != "" {
+			port = rest
+		}
+	}
+	cmd := exec.Command(py, script, port)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		log.Printf("start AI detect worker: %v", err)
+		return
+	}
+	log.Printf("started AI detect worker (pid %d) at %s", cmd.Process.Pid, detectURL)
+}
+
 func (a *Analyzer) Register(deviceID string) *DeviceState {
 	st := &DeviceState{
 		ring: snapshot.NewRing(8),
@@ -68,10 +117,15 @@ func (a *Analyzer) PushImage(deviceID string, data []byte, t int64) {
 
 // MaybeAnalyze triggers analysis for a device if interval elapsed.
 func (a *Analyzer) MaybeAnalyze(device *models.Device) {
-	if !a.cfg.AIEnabled || a.cfg.AIBaseURL == "" {
+	// Device-level toggle wins; when unset, fall back to the global setting.
+	if device.AIEnabled != nil {
+		if !*device.AIEnabled {
+			return
+		}
+	} else if !a.cfg.AIEnabled {
 		return
 	}
-	if device.AIEnabled != nil && !*device.AIEnabled {
+	if a.cfg.AIBaseURL == "" {
 		return
 	}
 	s := a.dirs[device.ID]
@@ -108,13 +162,90 @@ func (a *Analyzer) analyze(device *models.Device, s *DeviceState) {
 	if len(frames) == 0 {
 		return
 	}
-	desc, score, err := a.describe(frames[0])
+	var desc result
+	var score float64
+	var err error
+	if a.cfg.AIMode == "local" {
+		desc, score, err = a.detectLocal(frames[0])
+	} else {
+		desc, score, err = a.describe(frames[0])
+	}
 	if err != nil {
 		return
 	}
 	if desc.Alert && score >= a.cfg.AIThreshold && desc.Label != "" {
 		a.emitEvent(device, s, desc, score)
 	}
+}
+
+// detectObject is the response item from the local detect worker.
+type detectObject struct {
+	Label      string  `json:"label"`
+	Confidence float64 `json:"confidence"`
+	Box        []int   `json:"box"`
+}
+
+// detectLocal runs on-device object detection (Frigate-style) by posting the
+// frame to a local OpenCV worker. Any detected object raises an alert; the
+// highest-confidence label becomes the event label.
+func (a *Analyzer) detectLocal(jpg []byte) (result, float64, error) {
+	if a.cfg.AIDetectURL == "" {
+		return result{}, 0, fmt.Errorf("no detect url")
+	}
+	payload := map[string]any{"image": base64.StdEncoding.EncodeToString(jpg)}
+	body, _ := json.Marshal(payload)
+	url := strings.TrimRight(a.cfg.AIDetectURL, "/") + "/"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return result{}, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return result{}, 0, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 {
+		return result{}, 0, fmt.Errorf("detect http %d", resp.StatusCode)
+	}
+	var out struct {
+		Objects []detectObject `json:"objects"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return result{}, 0, err
+	}
+	if len(out.Objects) == 0 {
+		return result{Alert: false}, 0, nil
+	}
+	// Pick the highest-confidence detection.
+	best := out.Objects[0]
+	for _, o := range out.Objects[1:] {
+		if o.Confidence > best.Confidence {
+			best = o
+		}
+	}
+	label := mapLabel(best.Label)
+	desc := fmt.Sprintf("检测到%s（置信度 %.0f%%）", label, best.Confidence*100)
+	return result{Alert: true, Label: label, Description: desc, Score: best.Confidence}, best.Confidence, nil
+}
+
+var labelMap = map[string]string{
+	"person": "人员",
+	"car":    "车辆",
+	"truck":  "卡车",
+	"bus":    "客车",
+	"dog":    "犬只",
+	"cat":    "猫",
+	"bicycle": "自行车",
+	"motorcycle": "摩托车",
+}
+
+func mapLabel(l string) string {
+	if v, ok := labelMap[l]; ok {
+		return v
+	}
+	return l
 }
 
 func (a *Analyzer) emitEvent(device *models.Device, s *DeviceState, r result, score float64) {

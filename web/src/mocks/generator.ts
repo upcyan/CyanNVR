@@ -168,8 +168,10 @@ export function defaultSettings(): Settings {
     https: false,
     ai: {
       enabled: false,
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      mode: 'local',
+      baseUrl: 'http://localhost:11434/v1',
+      detectUrl: 'http://localhost:11435',
+      model: 'person-detection',
       apiKey: '',
       prompt: '你是安防监控分析助手。分析图中画面，仅输出JSON：{"alert":true/false,"label":"事件类别","description":"简短中文描述"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。',
       interval: 10,

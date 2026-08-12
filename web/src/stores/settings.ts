@@ -44,7 +44,7 @@ function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
     motionPush: b.motionPush ?? true,
     offlinePush: b.offlinePush ?? true,
     https: b.https ?? false,
-    ai: b.ai ?? defaultSettings().ai,
+    ai: (b.ai ?? defaultSettings().ai) as Settings['ai'],
     ...local,
   }
 }

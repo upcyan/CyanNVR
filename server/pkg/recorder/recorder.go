@@ -411,10 +411,15 @@ func (w *Worker) fail(backoff *time.Duration) bool {
 
 // drainFrames copies current.jpg into the AI ring while procs are alive.
 func (w *Worker) drainFrames() {
-	if w.mgr.ai == nil || !w.mgr.cfg.AIEnabled {
+	if w.mgr.ai == nil {
 		return
 	}
-	if w.dev.AIEnabled != nil && !*w.dev.AIEnabled {
+	// Device-level toggle wins; when unset, fall back to the global setting.
+	if w.dev.AIEnabled != nil {
+		if !*w.dev.AIEnabled {
+			return
+		}
+	} else if !w.mgr.cfg.AIEnabled {
 		return
 	}
 	tick := time.NewTicker(time.Duration(w.mgr.cfg.SnapshotIntervalSec) * time.Second)

@@ -49,6 +49,7 @@ func main() {
 	}
 
 	analyzer := ai.New(cfg, st, broadcast)
+	ai.StartLocalWorker(cfg.AIDetectURL)
 	rec := recorder.NewManager(cfg, st, analyzer, broadcast)
 	hlsSvc := hls.New(cfg, st)
 
