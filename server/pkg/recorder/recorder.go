@@ -144,6 +144,11 @@ func (w *Worker) inputArgs() []string {
 	if w.dev.Source == models.SourceTest {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
+	url := w.inputURL()
+	return []string{"-rtsp_transport", "tcp", "-i", url}
+}
+
+func (w *Worker) inputURL() string {
 	url := w.dev.RTSPURL
 	if url == "" {
 		url = fmt.Sprintf("rtsp://%s:%d/stream1", w.dev.IP, w.dev.Port)
@@ -151,7 +156,7 @@ func (w *Worker) inputArgs() []string {
 	if w.dev.Username != "" && w.dev.RTSPURL == "" {
 		url = withCreds(url, w.dev.Username, w.dev.Password)
 	}
-	return []string{"-rtsp_transport", "tcp", "-i", url}
+	return url
 }
 
 func transcodeArgs() []string {
@@ -161,6 +166,22 @@ func transcodeArgs() []string {
 func (w *Worker) startProcs() error {
 	in := w.inputArgs()
 	transcode := w.dev.Source == models.SourceTest
+	if !transcode && w.dev.Source != models.SourceTest {
+		codec := ffmpeg.ProbeVideoCodec(w.mgr.cfg.Ffmpeg, w.inputURL())
+		if codec != "" && codec != "h264" {
+			log.Printf("[%s] input codec=%s, transcoding to h264 for browser compatibility", w.dev.Name, codec)
+			transcode = true
+		}
+	}
+	// Ensure the per-day recording subdirectory exists; ffmpeg's segment
+	// muxer cannot create nested directories itself. Pre-create today and
+	// tomorrow so segments never fail across midnight.
+	for _, off := range []int{0, 1, 2} {
+		day := time.Now().AddDate(0, 0, off).Format("20060102")
+		if err := os.MkdirAll(filepath.Join(w.recordDir, day), 0o755); err != nil {
+			log.Printf("[%s] mkdir record day %s: %v", w.dev.Name, day, err)
+		}
+	}
 	codec := []string{"-c", "copy"}
 	if transcode {
 		codec = transcodeArgs()

@@ -119,15 +119,18 @@ function submitDiscover() {
   }
   const d = props.devices.find((x) => x.ip === selectedIp.value)
   if (d) {
-    emit('add', {
-      name: d.name,
-      ip: d.ip,
-      port: d.port,
-      username: 'admin',
-      source: 'rtsp',
-    })
+    // Pre-fill the form with the discovered device (RTSP port normalized to
+    // 554 unless an explicit RTSP port was reported) so the user can enter
+    // credentials before saving.
+    form.name = d.name === d.ip ? '' : d.name
+    form.ip = d.ip
+    form.port = d.port === 80 || d.port === 8080 || d.port === 2020 ? 554 : d.port
+    form.username = 'admin'
+    form.password = ''
+    form.rtspUrl = ''
+    mode.value = 'form'
+    showToast('请填写摄像头密码后保存')
   }
-  close()
 }
 
 function switchDiscover() {

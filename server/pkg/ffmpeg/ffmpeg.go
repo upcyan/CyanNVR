@@ -96,6 +96,33 @@ func TestRTSPErr(bin, url string) (bool, string) {
 	return false, "无法连接：" + firstLine(msg)
 }
 
+// ProbeVideoCodec detects the video codec of an RTSP (or file) input by
+// reading ffmpeg's stream info. Returns "h264", "hevc" or "" on failure.
+func ProbeVideoCodec(bin, url string) string {
+	var out bytes.Buffer
+	cmd := exec.Command(bin, "-hide_banner", "-rtsp_transport", "tcp", "-i", url, "-t", "1", "-f", "null", "-")
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	_ = cmd.Run()
+	msg := out.String()
+	// Match the "Stream #0:0: Video: hevc (Main)..." line
+	for _, line := range strings.Split(msg, "\n") {
+		if !strings.Contains(line, "Video:") {
+			continue
+		}
+		lower := strings.ToLower(line)
+		for _, codec := range []string{"hevc", "h264", "mpeg4", "h265"} {
+			if strings.Contains(lower, "video: "+codec) || strings.Contains(lower, "video: "+codec+" ") {
+				if codec == "h265" {
+					return "hevc"
+				}
+				return codec
+			}
+		}
+	}
+	return ""
+}
+
 func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }

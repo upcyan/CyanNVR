@@ -44,12 +44,15 @@ func (s *Server) liveStream(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	if filepath.Ext(p) == ".m3u8" {
+	switch filepath.Ext(p) {
+	case ".m3u8":
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
-		c.Header("Cache-Control", "no-cache")
-	} else {
-		c.Header("Cache-Control", "no-cache")
+	case ".ts":
+		c.Header("Content-Type", "video/MP2T")
+	default:
+		c.Header("Content-Type", "application/octet-stream")
 	}
+	c.Header("Cache-Control", "no-cache")
 	c.File(p)
 }
 
@@ -62,12 +65,15 @@ func (s *Server) playbackStream(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	if filepath.Ext(p) == ".m3u8" {
+	switch filepath.Ext(p) {
+	case ".m3u8":
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
-		c.Header("Cache-Control", "no-cache")
-	} else {
-		c.Header("Cache-Control", "no-cache")
+	case ".ts":
+		c.Header("Content-Type", "video/MP2T")
+	default:
+		c.Header("Content-Type", "application/octet-stream")
 	}
+	c.Header("Cache-Control", "no-cache")
 	c.File(p)
 }
 
