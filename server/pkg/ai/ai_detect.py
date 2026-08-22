@@ -41,14 +41,29 @@ LABEL_ZH = {
     "person": "人员", "bicycle": "自行车", "car": "车辆", "motorcycle": "摩托车",
     "bus": "客车", "truck": "卡车", "dog": "犬只", "cat": "猫",
     "fire hydrant": "消防栓", "stop sign": "停车标志",
+    "airplane": "飞机", "bus": "客车", "train": "火车", "boat": "船只",
+    "traffic light": "红绿灯", "stop sign": "停车标志",
+    "backpack": "背包", "umbrella": "雨伞", "handbag": "手提包",
+    "suitcase": "行李箱", "bottle": "瓶子", "cup": "杯子",
+    "chair": "椅子", "couch": "沙发", "potted plant": "盆栽",
+    "bed": "床", "dining table": "餐桌", "toilet": "马桶",
+    "tv": "电视", "laptop": "笔记本", "mouse": "鼠标", "remote": "遥控器",
+    "keyboard": "键盘", "cell phone": "手机", "microwave": "微波炉",
+    "oven": "烤箱", "toaster": "烤面包机", "sink": "水槽", "refrigerator": "冰箱",
 }
 
+# Detection config
 CONF_THRESHOLD = float(os.environ.get("NVR_AI_CONF", "0.20"))
 NMS_THRESHOLD = 0.45
 MODEL_PATH = os.environ.get("NVR_AI_MODEL_PATH", "models/yolov8n.onnx")
+# Categories to detect (empty = all COCO classes). Set via NVR_AI_CLASSES env (comma-separated).
+FILTER_CLASSES = [c.strip().lower() for c in os.environ.get("NVR_AI_CLASSES", "").split(",") if c.strip()]
 
 _sess = None
 _engine = "opencv-hog"
+# Cache for resized images to avoid redundant resize operations
+_resize_cache = {}
+_resize_cache_max = 8
 
 
 def _load_yolo():
@@ -71,9 +86,24 @@ def _load_yolo():
     print("YOLO model not found, falling back to OpenCV HOG", flush=True)
 
 
+def _get_resized(img):
+    """Get cached resized image or compute and cache it."""
+    h, w = img.shape[:2]
+    cache_key = (id(img), 640, 640)  # Use image id as cache key
+    if cache_key in _resize_cache:
+        return _resize_cache[cache_key]
+    resized = cv2.resize(img, (640, 640))
+    if len(_resize_cache) >= _resize_cache_max:
+        # Remove oldest entry (simple FIFO)
+        oldest = next(iter(_resize_cache))
+        del _resize_cache[oldest]
+    _resize_cache[cache_key] = resized
+    return resized
+
+
 def _yolo_detect(img):
     h, w = img.shape[:2]
-    resized = cv2.resize(img, (640, 640))
+    resized = _get_resized(img)
     blob = resized[:, :, ::-1].astype(np.float32) / 255.0
     blob = blob.transpose(2, 0, 1)[None, ...]
     out = _sess.run(None, {"images": blob})[0][0]  # [84, 8400]
@@ -109,8 +139,11 @@ def _yolo_detect(img):
             picked.append(d)
     out_list = []
     for ci, c, box in picked:
+        # Filter by class if FILTER_CLASSES is configured
         label = COCO_LABELS[ci] if ci < len(COCO_LABELS) else f"class{ci}"
-        out_list.append({"label": label, "confidence": c, "box": box})
+        if FILTER_CLASSES and label.lower() not in FILTER_CLASSES:
+            continue
+        out_list.append({"label": label, "confidence": float(c), "box": box})
     return out_list
 
 
@@ -163,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(500, {"error": str(e)})
 
     def do_GET(self):
+        if self.path == "/health":
+            self._reply(200, {"ok": True, "engine": _engine, "model_loaded": _sess is not None})
+            return
         self._reply(200, {"ok": True, "engine": _engine, "labels": sorted(set(LABEL_ZH) | {"person", "car", "truck"})})
 
     def _reply(self, code, payload):
