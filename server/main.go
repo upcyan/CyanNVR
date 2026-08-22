@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"simplenvr/server/api"
@@ -24,6 +27,12 @@ func main() {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		log.Fatalf("mkdir data dir: %v", err)
 	}
+
+	jwtSecret, err := loadOrCreateJWTSecret(cfg)
+	if err != nil {
+		log.Fatalf("load jwt secret: %v", err)
+	}
+	cfg.JWTSecret = jwtSecret
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "nvr.db"))
 	if err != nil {
@@ -107,4 +116,27 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 		return
 	}
 	log.Printf("seeded admin user (default password: %s)", pw)
+}
+
+// loadOrCreateJWTSecret returns the configured secret, or auto-generates a
+// random one persisted to DataDir/jwt_secret so tokens survive restarts while
+// never falling back to a guessable default.
+func loadOrCreateJWTSecret(cfg *config.Config) (string, error) {
+	if cfg.JWTSecret != "" {
+		return cfg.JWTSecret, nil
+	}
+	path := filepath.Join(cfg.DataDir, "jwt_secret")
+	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) >= 32 {
+		return strings.TrimSpace(string(data)), nil
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	secret := base64.RawURLEncoding.EncodeToString(buf)
+	if err := os.WriteFile(path, []byte(secret), 0o600); err != nil {
+		return "", err
+	}
+	log.Printf("generated new JWT secret at %s", path)
+	return secret, nil
 }

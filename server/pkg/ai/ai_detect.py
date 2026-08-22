@@ -61,9 +61,6 @@ FILTER_CLASSES = [c.strip().lower() for c in os.environ.get("NVR_AI_CLASSES", ""
 
 _sess = None
 _engine = "opencv-hog"
-# Cache for resized images to avoid redundant resize operations
-_resize_cache = {}
-_resize_cache_max = 8
 
 
 def _load_yolo():
@@ -86,24 +83,9 @@ def _load_yolo():
     print("YOLO model not found, falling back to OpenCV HOG", flush=True)
 
 
-def _get_resized(img):
-    """Get cached resized image or compute and cache it."""
-    h, w = img.shape[:2]
-    cache_key = (id(img), 640, 640)  # Use image id as cache key
-    if cache_key in _resize_cache:
-        return _resize_cache[cache_key]
-    resized = cv2.resize(img, (640, 640))
-    if len(_resize_cache) >= _resize_cache_max:
-        # Remove oldest entry (simple FIFO)
-        oldest = next(iter(_resize_cache))
-        del _resize_cache[oldest]
-    _resize_cache[cache_key] = resized
-    return resized
-
-
 def _yolo_detect(img):
     h, w = img.shape[:2]
-    resized = _get_resized(img)
+    resized = cv2.resize(img, (640, 640))
     blob = resized[:, :, ::-1].astype(np.float32) / 255.0
     blob = blob.transpose(2, 0, 1)[None, ...]
     out = _sess.run(None, {"images": blob})[0][0]  # [84, 8400]

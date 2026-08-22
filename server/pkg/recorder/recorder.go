@@ -1,8 +1,9 @@
 package recorder
 
 import (
-	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -150,7 +151,7 @@ func (w *Worker) inputArgs() []string {
 
 // streamURL resolves the RTSP URL for a given role ("preview" or "record"),
 // preferring the stream the user selected; falls back to the device RTSPURL,
-// then the constructed default URL.
+// then the constructed default URL. Credentials are NOT embedded here.
 func (w *Worker) streamURL(role string) string {
 	if w.dev.Source == models.SourceTest {
 		return "lavfi"
@@ -166,25 +167,36 @@ func (w *Worker) streamURL(role string) string {
 			}
 		}
 	}
-	url := w.dev.RTSPURL
-	if url == "" {
-		url = fmt.Sprintf("rtsp://%s:%d/stream1", w.dev.IP, w.dev.Port)
+	raw := w.dev.RTSPURL
+	if raw == "" {
+		u := url.URL{Scheme: "rtsp", Host: net.JoinHostPort(w.dev.IP, strconv.Itoa(w.dev.Port)), Path: "/stream1"}
+		return u.String()
 	}
-	if w.dev.Username != "" && w.dev.RTSPURL == "" {
-		url = withCreds(url, w.dev.Username, w.dev.Password)
+	return raw
+}
+
+// withCreds embeds RTSP credentials into the URL userinfo, properly escaped.
+func (w *Worker) withCreds(rawURL string) string {
+	if w.dev.Username == "" || strings.Contains(rawURL, "@") {
+		return rawURL
 	}
-	return url
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.User = url.UserPassword(w.dev.Username, w.dev.Password)
+	return u.String()
 }
 
 func (w *Worker) inputURL() string {
-	return w.streamURL("preview")
+	return w.withCreds(w.streamURL("preview"))
 }
 
 func (w *Worker) recordInputArgs() []string {
 	if w.dev.Source == models.SourceTest {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
-	return []string{"-rtsp_transport", "tcp", "-i", w.streamURL("record")}
+	return []string{"-rtsp_transport", "tcp", "-i", w.withCreds(w.streamURL("record"))}
 }
 
 func transcodeArgs() []string {
@@ -239,24 +251,56 @@ func (w *Worker) startProcs() error {
 	snapArgs := append(append([]string{}, in...),
 		"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
 
-	log.Printf("[%s] starting ffmpeg: record=%v", w.dev.Name, recArgs)
+	log.Printf("[%s] starting ffmpeg: record=%v", w.dev.Name, sanitizeArgs(recArgs))
 	var err error
 	if w.recordProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, recArgs...); err != nil {
 		log.Printf("[%s] record start error: %v", w.dev.Name, err)
 		return err
 	}
-	log.Printf("[%s] starting ffmpeg: live=%v", w.dev.Name, liveArgs)
+	log.Printf("[%s] starting ffmpeg: live=%v", w.dev.Name, sanitizeArgs(liveArgs))
 	if w.liveProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, liveArgs...); err != nil {
 		log.Printf("[%s] live start error: %v", w.dev.Name, err)
 		w.recordProc.Kill()
 		return err
 	}
-	log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, snapArgs)
+	log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, sanitizeArgs(snapArgs))
 	w.snapProc, _ = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
 	if w.snapProc == nil {
 		log.Printf("[%s] snap start error (non-fatal)", w.dev.Name)
 	}
 	return nil
+}
+
+// sanitizeArgs masks credentials in RTSP URLs before logging.
+func sanitizeArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if u, err := url.Parse(a); err == nil && u.User != nil && u.User.Username() != "" {
+			u.User = url.UserPassword(u.User.Username(), "****")
+			out[i] = u.String()
+			continue
+		}
+		if strings.HasPrefix(a, "rtsp://") || strings.HasPrefix(a, "http://") {
+			out[i] = redactURL(a)
+			continue
+		}
+		out[i] = a
+	}
+	return out
+}
+
+func redactURL(raw string) string {
+	i := strings.Index(raw, "://")
+	j := strings.Index(raw[i+3:], "@")
+	if i >= 0 && j >= 0 {
+		head := raw[:i+3]
+		tail := raw[i+3+j:]
+		mid := raw[i+3 : i+3+j]
+		if c := strings.Index(mid, ":"); c >= 0 {
+			return head + mid[:c] + ":****" + tail
+		}
+	}
+	return raw
 }
 
 func (w *Worker) killProcs() {
@@ -676,19 +720,6 @@ func (m *Manager) cleanupOldRecordings() {
 	if _, err := m.st.DeleteEventsBefore(cutoff); err != nil {
 		log.Printf("cleanup delete events error: %v", err)
 	}
-}
-
-func withCreds(url, user, pass string) string {
-	idx := strings.Index(url, "://")
-	if idx < 0 {
-		return url
-	}
-	scheme := url[:idx+3]
-	rest := url[idx+3:]
-	if strings.Contains(rest, "@") {
-		return url
-	}
-	return fmt.Sprintf("%s%s:%s@%s", scheme, user, pass, rest)
 }
 
 func (m *Manager) broadcastEvent(eventType, deviceID, deviceName, eventID, label, desc, t string) {

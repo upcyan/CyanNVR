@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,7 +17,44 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
+// loginRateLimiter is a simple per-IP sliding-window limiter for the login
+// endpoint: max 10 attempts per minute per IP.
+type loginRateLimiter struct {
+	mu      sync.Mutex
+	attempts map[string][]time.Time
+}
+
+var loginLimiter = &loginRateLimiter{attempts: map[string][]time.Time{}}
+
+const (
+	loginMaxAttempts  = 10
+	loginWindowPeriod = time.Minute
+)
+
+func (l *loginRateLimiter) allow(ip string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	recent := l.attempts[ip][:0]
+	for _, t := range l.attempts[ip] {
+		if now.Sub(t) < loginWindowPeriod {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) >= loginMaxAttempts {
+		l.attempts[ip] = recent
+		return false
+	}
+	l.attempts[ip] = append(recent, now)
+	return true
+}
+
 func (s *Server) login(c *gin.Context) {
+	ip := c.ClientIP()
+	if !loginLimiter.allow(ip) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "尝试过于频繁，请稍后再试"})
+		return
+	}
 	var req loginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})

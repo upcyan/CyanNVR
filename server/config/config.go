@@ -46,7 +46,7 @@ func Load() *Config {
 		EventDir:            env("NVR_EVENTS", dataDir+"/events"),
 		WebDir:              env("NVR_WEB", "./dist"),
 		Ffmpeg:              env("FFMPEG", "ffmpeg"),
-		JWTSecret:           env("NVR_JWT_SECRET", "simplenvr-dev-secret-change-me"),
+		JWTSecret:           env("NVR_JWT_SECRET", ""),
 		RetentionDays:       30,
 		SnapshotIntervalSec: 10,
 

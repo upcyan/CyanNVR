@@ -2,7 +2,9 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -223,10 +225,11 @@ func (s *Server) testDevice(c *gin.Context) {
 }
 
 func buildRTSPURL(ip string, port int, user, pass, path string) string {
+	u := url.URL{Scheme: "rtsp", Host: net.JoinHostPort(ip, strconv.Itoa(port)), Path: path}
 	if user != "" {
-		return fmt.Sprintf("rtsp://%s:%s@%s:%d%s", user, pass, ip, port, path)
+		u.User = url.UserPassword(user, pass)
 	}
-	return fmt.Sprintf("rtsp://%s:%d%s", ip, port, path)
+	return u.String()
 }
 
 func (s *Server) discoverDevices(c *gin.Context) {
@@ -292,11 +295,11 @@ func (s *Server) probeStreams(c *gin.Context) {
 	streams := onvifx.GetStreams(req.IP, port, req.Username, req.Password)
 	if len(streams) == 0 {
 		// Fall back to the default single stream so the UI still works.
-		url := fmt.Sprintf("rtsp://%s:%d/stream1", req.IP, 554)
+		u := url.URL{Scheme: "rtsp", Host: net.JoinHostPort(req.IP, "554"), Path: "/stream1"}
 		if req.Username != "" {
-			url = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", req.Username, req.Password, req.IP, 554)
+			u.User = url.UserPassword(req.Username, req.Password)
 		}
-		streams = []models.Stream{{ID: "main", Name: "主码流", URL: url}}
+		streams = []models.Stream{{ID: "main", Name: "主码流", URL: u.String()}}
 	}
 	c.JSON(http.StatusOK, gin.H{"streams": streams})
 }
@@ -309,10 +312,11 @@ func defaultRTSP(d *models.Device) string {
 	if port == 0 {
 		port = 554
 	}
+	u := url.URL{Scheme: "rtsp", Host: net.JoinHostPort(d.IP, strconv.Itoa(port)), Path: "/stream1"}
 	if d.Username != "" {
-		return "rtsp://" + d.Username + ":" + d.Password + "@" + d.IP + ":" + strconv.Itoa(port) + "/stream1"
+		u.User = url.UserPassword(d.Username, d.Password)
 	}
-	return "rtsp://" + d.IP + ":" + strconv.Itoa(port) + "/stream1"
+	return u.String()
 }
 
 func (s *Server) deviceSnapshot(c *gin.Context) {
