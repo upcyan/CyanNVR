@@ -5,8 +5,14 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	sseMaxClients      = 64
+	sseHeartbeatPeriod = 25 * time.Second
 )
 
 type SSEHub struct {
@@ -18,19 +24,25 @@ func NewSSEHub() *SSEHub {
 	return &SSEHub{clients: make(map[chan []byte]struct{})}
 }
 
+// Subscribe registers a new client. Returns nil when the hub is full.
 func (h *SSEHub) Subscribe() chan []byte {
-	ch := make(chan []byte, 16)
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.clients) >= sseMaxClients {
+		return nil
+	}
+	ch := make(chan []byte, 16)
 	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
 	return ch
 }
 
 func (h *SSEHub) Unsubscribe(ch chan []byte) {
 	h.mu.Lock()
-	delete(h.clients, ch)
+	if _, ok := h.clients[ch]; ok {
+		delete(h.clients, ch)
+		close(ch)
+	}
 	h.mu.Unlock()
-	close(ch)
 }
 
 type Notification struct {
@@ -48,14 +60,23 @@ func (h *SSEHub) Broadcast(n Notification) {
 	if err != nil {
 		return
 	}
-	data = append([]byte("data: "), data...)
-	data = append(data, '\n', '\n')
+	frame := append([]byte("data: "), data...)
+	frame = append(frame, '\n', '\n')
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.clients {
 		select {
-		case ch <- data:
+		case ch <- frame:
 		default:
+			// Slow client: drop its buffered frames rather than block.
+			for {
+				select {
+				case <-ch:
+					continue
+				default:
+				}
+				break
+			}
 		}
 	}
 }
@@ -66,37 +87,58 @@ func (s *Server) sseHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
 		return
 	}
+
+	token := c.Query("token")
+	if token == "" {
+		token = c.GetHeader("Authorization")
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+	}
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+		return
+	}
+	if _, err := s.am.Parse(token); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+
+	ch := s.hub.Subscribe()
+	if ch == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "too many connections"})
+		return
+	}
+	defer s.hub.Unsubscribe(ch)
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
-	flusher.Flush()
-
-	token := c.Query("token")
-	if token == "" {
-		return
-	}
-	if _, err := s.am.Parse(token); err != nil {
-		return
-	}
-
-	ch := s.hub.Subscribe()
-	defer s.hub.Unsubscribe(ch)
 
 	c.SSEvent("connected", map[string]string{"status": "ok"})
 	flusher.Flush()
 
 	notify := c.Request.Context().Done()
+	heartbeat := time.NewTicker(sseHeartbeatPeriod)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-notify:
 			return
+		case <-heartbeat.C:
+			if _, err := c.Writer.WriteString(": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case data, ok := <-ch:
 			if !ok {
 				return
 			}
-			c.Writer.Write(data)
+			if _, err := c.Writer.Write(data); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}

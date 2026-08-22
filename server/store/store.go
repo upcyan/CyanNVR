@@ -357,12 +357,16 @@ func (s *Store) CreateEvent(e models.Event) error {
 	return err
 }
 
-func (s *Store) ListEvents(deviceID string, dayStart, dayEnd *time.Time, limit int) ([]models.Event, error) {
+func (s *Store) ListEvents(deviceID, eventType string, dayStart, dayEnd *time.Time, limit, offset int) ([]models.Event, error) {
 	q := `SELECT id, device_id, device_name, type, label, description, time, snapshot, gif, video_start, video_end FROM events WHERE 1=1`
 	var args []any
 	if deviceID != "" {
 		q += ` AND device_id=?`
 		args = append(args, deviceID)
+	}
+	if eventType != "" {
+		q += ` AND type=?`
+		args = append(args, eventType)
 	}
 	if dayStart != nil {
 		q += ` AND time >= ?`
@@ -372,14 +376,42 @@ func (s *Store) ListEvents(deviceID string, dayStart, dayEnd *time.Time, limit i
 		q += ` AND time < ?`
 		args = append(args, *dayEnd)
 	}
-	q += ` ORDER BY time DESC LIMIT ?`
-	args = append(args, limit)
+	if limit <= 0 {
+		limit = 100
+	}
+	q += ` ORDER BY time DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanEvents(rows)
+}
+
+// CountEvents returns the total number of matching events (same filters as ListEvents).
+func (s *Store) CountEvents(deviceID, eventType string, dayStart, dayEnd *time.Time) (int, error) {
+	q := `SELECT COUNT(*) FROM events WHERE 1=1`
+	var args []any
+	if deviceID != "" {
+		q += ` AND device_id=?`
+		args = append(args, deviceID)
+	}
+	if eventType != "" {
+		q += ` AND type=?`
+		args = append(args, eventType)
+	}
+	if dayStart != nil {
+		q += ` AND time >= ?`
+		args = append(args, *dayStart)
+	}
+	if dayEnd != nil {
+		q += ` AND time < ?`
+		args = append(args, *dayEnd)
+	}
+	var n int
+	err := s.db.QueryRow(q, args...).Scan(&n)
+	return n, err
 }
 
 func scanEvents(rows *sql.Rows) ([]models.Event, error) {

@@ -143,10 +143,10 @@ export async function createPlayback(
 
 // ---- events ----
 
-export async function fetchEvents(deviceId = '', date = ''): Promise<EventItem[]> {
+export async function fetchEvents(deviceId = '', date = '', type = '', offset = 0, limit = 50): Promise<{ events: EventItem[]; total: number }> {
   if (isDemoMode()) {
     const devs = await mock.fetchDevices()
-    return mock.recentEvents(devs).map((e) => ({
+    const all = mock.recentEvents(devs).map((e) => ({
       id: e.id,
       deviceId: '',
       deviceName: e.deviceName,
@@ -155,10 +155,12 @@ export async function fetchEvents(deviceId = '', date = ''): Promise<EventItem[]
       description: e.text,
       time: e.time,
     }))
+    const filtered = type ? all.filter((e) => e.type === type) : all
+    return { events: filtered.slice(offset, offset + limit), total: filtered.length }
   }
-  if (!backendOk) return []
-  const { data } = await http.get('/api/events', { params: { deviceId, date } })
-  return data.events as EventItem[]
+  if (!backendOk) return { events: [], total: 0 }
+  const { data } = await http.get('/api/events', { params: { deviceId, date, type, offset, limit } })
+  return { events: data.events as EventItem[], total: Number(data.total ?? 0) }
 }
 
 export async function deleteEvent(id: string): Promise<void> {

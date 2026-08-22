@@ -182,8 +182,9 @@ func (s *Server) Router() http.Handler {
 			r.StaticFile("/manifest.webmanifest", s.cfg.WebDir+"/manifest.webmanifest")
 			r.StaticFile("/manifest.json", s.cfg.WebDir+"/manifest.json")
 			r.StaticFile("/icon.svg", s.cfg.WebDir+"/icon.svg")
-			r.StaticFile("/favicon.svg", s.cfg.WebDir+"/favicon.svg")
-			r.StaticFile("/favicon.ico", s.cfg.WebDir+"/favicon.ico")
+			r.StaticFile("/icon-192.png", s.cfg.WebDir+"/icon-192.png")
+			r.StaticFile("/icon-512.png", s.cfg.WebDir+"/icon-512.png")
+			r.StaticFile("/icon-maskable-512.png", s.cfg.WebDir+"/icon-maskable-512.png")
 			r.StaticFile("/registerSW.js", s.cfg.WebDir+"/registerSW.js")
 			r.StaticFile("/sw.js", s.cfg.WebDir+"/sw.js")
 			r.NoRoute(func(c *gin.Context) {

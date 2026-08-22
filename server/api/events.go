@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,8 +13,10 @@ import (
 
 func (s *Server) listEvents(c *gin.Context) {
 	deviceID := c.Query("deviceId")
+	eventType := c.Query("type")
 	dateStr := c.Query("date")
-	limit := 100
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	var dayStart, dayEnd *time.Time
 	if dateStr != "" {
 		day, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
@@ -23,12 +26,17 @@ func (s *Server) listEvents(c *gin.Context) {
 			dayStart, dayEnd = &ds, &de
 		}
 	}
-	events, err := s.st.ListEvents(deviceID, dayStart, dayEnd, limit)
+	total, err := s.st.CountEvents(deviceID, eventType, dayStart, dayEnd)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"events": events})
+	events, err := s.st.ListEvents(deviceID, eventType, dayStart, dayEnd, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"events": events, "total": total})
 }
 
 func (s *Server) eventSnapshot(c *gin.Context) {

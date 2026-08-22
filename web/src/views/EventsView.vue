@@ -14,8 +14,12 @@ const deviceStore = useDeviceStore()
 
 const deviceId = ref('')
 const dateStr = ref('')
+const typeFilter = ref('')
 const events = ref<EventItem[]>([])
+const total = ref(0)
 const loading = ref(false)
+const loadingMore = ref(false)
+const PAGE_SIZE = 50
 
 const typeMap: Record<string, { text: string; cls: string; icon: string }> = {
   motion: { text: '移动', cls: 'motion', icon: 'aim' },
@@ -23,6 +27,15 @@ const typeMap: Record<string, { text: string; cls: string; icon: string }> = {
   offline: { text: '离线', cls: 'offline', icon: 'close' },
   online: { text: '上线', cls: 'online', icon: 'success' },
   manual: { text: '手动', cls: 'manual', icon: 'records-o' },
+}
+
+const typeChips = computed(() => [
+  { value: '', text: '全部' },
+  ...Object.entries(typeMap).map(([value, m]) => ({ value, text: m.text })),
+])
+
+function toggleType(v: string) {
+  typeFilter.value = typeFilter.value === v ? '' : v
 }
 
 const today = new Date()
@@ -51,9 +64,23 @@ function onDatePick({ selectedValues }: any) {
 async function load() {
   loading.value = true
   try {
-    events.value = await fetchEvents(deviceId.value, dateStr.value)
+    const res = await fetchEvents(deviceId.value, dateStr.value, typeFilter.value, 0, PAGE_SIZE)
+    events.value = res.events
+    total.value = res.total
   } finally {
     loading.value = false
+  }
+}
+
+async function loadMore() {
+  if (loadingMore.value || events.value.length >= total.value) return
+  loadingMore.value = true
+  try {
+    const res = await fetchEvents(deviceId.value, dateStr.value, typeFilter.value, events.value.length, PAGE_SIZE)
+    events.value = [...events.value, ...res.events]
+    total.value = res.total
+  } finally {
+    loadingMore.value = false
   }
 }
 
@@ -83,7 +110,7 @@ const imgBase = computed(() => {
   return base
 })
 
-watch([deviceId, dateStr], () => load())
+watch([deviceId, dateStr, typeFilter], () => load())
 
 onMounted(() => {
   deviceId.value = (route.query.device as string) || ''
@@ -98,6 +125,18 @@ onMounted(() => {
         <span class="reload" @click="load">刷新</span>
       </template>
     </van-nav-bar>
+
+    <div class="type-chips">
+      <button
+        v-for="t in typeChips"
+        :key="t.value"
+        class="chip"
+        :class="{ on: typeFilter === t.value }"
+        @click="toggleType(t.value)"
+      >
+        {{ t.text }}
+      </button>
+    </div>
 
     <van-loading v-if="loading" class="loading" />
 
@@ -142,6 +181,13 @@ onMounted(() => {
     <div v-if="!loading && !events.length" class="empty">
       <van-icon name="records-o" size="46" color="#3a4252" />
       <p>暂无事件</p>
+    </div>
+
+    <div v-if="!loading && events.length" class="load-more">
+      <span v-if="events.length >= total" class="all-loaded">共 {{ total }} 条</span>
+      <van-button v-else size="small" plain round :loading="loadingMore" @click="loadMore">
+        加载更多（{{ events.length }}/{{ total }}）
+      </van-button>
     </div>
 
     <van-collapse v-if="!loading && events.length > 0" v-model="filterOpen" class="filter-collapse">
@@ -204,6 +250,35 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   padding: 60px 0;
+}
+.type-chips {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 0;
+  overflow-x: auto;
+}
+.type-chips .chip {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel);
+  color: var(--nvr-text-2);
+  font-size: 12px;
+}
+.type-chips .chip.on {
+  background: rgba(46, 168, 255, 0.15);
+  border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+}
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 16px;
+}
+.all-loaded {
+  font-size: 12px;
+  color: var(--nvr-text-2);
 }
 .reload {
   font-size: 13px;
