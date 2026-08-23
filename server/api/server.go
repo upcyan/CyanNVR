@@ -33,6 +33,7 @@ type AIConfig struct {
 	BaseURL   string  `json:"baseUrl"`
 	DetectURL string  `json:"detectUrl"`
 	Model     string  `json:"model"`
+	ModelPath string  `json:"modelPath"`
 	APIKey    string  `json:"apiKey"`
 	Prompt    string  `json:"prompt"`
 	Interval  int     `json:"interval"`
@@ -90,6 +91,7 @@ func defaultSettings() AppSettings {
 			BaseURL:   "http://localhost:11434/v1",
 			DetectURL: "http://localhost:11435",
 			Model:     "person-detection",
+			ModelPath: "",
 			APIKey:    "",
 			Prompt:    "你是安防监控分析助手。分析图中画面，仅输出JSON：{\"alert\":true/false,\"label\":\"事件类别\",\"description\":\"简短中文描述\"}。出现人员、车辆、异常闯入、火焰烟雾等视为 alert=true。",
 			Interval:  10,
@@ -105,6 +107,8 @@ func (s *Server) applySettings() {
 	s.cfg.AIBaseURL = s.settings.AI.BaseURL
 	s.cfg.AIDetectURL = s.settings.AI.DetectURL
 	s.cfg.AIModel = s.settings.AI.Model
+	s.cfg.AIModelPath = s.settings.AI.ModelPath
+	s.cfg.AIModelPath = s.settings.AI.ModelPath
 	s.cfg.AIAPIKey = s.settings.AI.APIKey
 	s.cfg.AIPrompt = s.settings.AI.Prompt
 	if s.settings.AI.Interval > 0 {
@@ -170,6 +174,8 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)
 	protected.GET("/storage", s.storageInfo)
+	protected.GET("/ai/models", s.requireOperator, s.listAIModels)
+	protected.POST("/ai/load", s.requireOperator, s.loadAIModel)
 
 	stream := r.Group("/api/stream")
 	stream.Use(s.streamAuth())

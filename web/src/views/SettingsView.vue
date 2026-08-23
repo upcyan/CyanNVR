@@ -119,6 +119,39 @@ function setDemoMode(v: boolean) {
   store.set({ demoMode: v })
 }
 
+
+// ---- AI model hot-swap ----
+const aiModels = ref<string[]>([])
+async function loadAIModels() {
+  try {
+    const r = await fetch('/api/ai/models', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('nvr_token') || '') } })
+    const j = await r.json()
+    aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
+    if (!s.ai.modelPath && aiModels.value.length) {
+      const def = aiModels.value.find(m => m.includes('yolov8n')) || aiModels.value[0]
+      store.set({ ai: { ...s.ai, modelPath: def } })
+    }
+  } catch { /* worker unreachable */ }
+}
+onMounted(loadAIModels)
+const showAIModelPicker = ref(false)
+const aiModelColumns = computed(() => aiModels.value.map(m => ({ text: m, value: m })))
+async function onAIModelConfirm({ selectedValues }: any) {
+  const m = selectedValues[0] as string
+  store.set({ ai: { ...s.ai, modelPath: m } })
+  showAIModelPicker.value = false
+  try {
+    await fetch('/api/ai/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('nvr_token') || '') },
+      body: JSON.stringify({ path: aiModels.value.find(x => x.endsWith('/' + m) || x === m) }),
+    })
+    showToast('模型已切换：' + m)
+  } catch {
+    showToast('切换请求失败')
+  }
+}
+
 // ---- user management ----
 
 const users = ref<ManagedUser[]>([])
@@ -333,11 +366,17 @@ async function removeUser(u: ManagedUser) {
         />
         <template v-if="s.ai.mode === 'local'">
           <van-field v-model="s.ai.detectUrl" label="本地检测地址" placeholder="http://localhost:11435" />
-          <van-cell title="识别模型" label="本地 OpenCV HOG 行人检测（可扩展 YOLO/ONNX）">
-            <template #value>
-              <span class="mono" style="font-size: 12px">{{ s.ai.model || 'person-detection' }}</span>
-            </template>
-          </van-cell>
+          <van-field
+            v-model="s.ai.modelPath"
+            is-link
+            readonly
+            label="检测模型"
+            placeholder="yolov8n.onnx"
+            @click="showAIModelPicker = true"
+          />
+          <van-popup v-model:show="showAIModelPicker" position="bottom" round>
+            <van-picker title="检测模型" :columns="aiModelColumns" :model-value="[s.ai.modelPath || '' ]" @confirm="onAIModelConfirm" @cancel="showAIModelPicker = false" />
+          </van-popup>
         </template>
         <template v-else>
           <van-field v-model="s.ai.baseUrl" label="接口地址" placeholder="http://localhost:11434/v1（Ollama）" />

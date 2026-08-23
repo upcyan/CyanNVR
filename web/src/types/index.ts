@@ -80,6 +80,7 @@ export interface AIConfig {
   baseUrl: string
   detectUrl: string
   model: string
+  modelPath?: string
   apiKey: string
   prompt: string
   interval: number

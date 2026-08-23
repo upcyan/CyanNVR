@@ -10,3 +10,9 @@ web/node_modules/
 nvr-data/
 models/
 server/pkg/ai/models/
+
+.gocache/
+.gopath/
+docker/payload.json
+docker/test_*.py
+docker/check_devs.py
