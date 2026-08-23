@@ -1,0 +1,9 @@
+server/data/
+server/simplenvr.exe*
+web/node_modules/
+web/dist/
+models/
+data/
+.git/
+*.log
+*.md

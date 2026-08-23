@@ -147,8 +147,13 @@ def _hog_detect(img):
     return out
 
 
-HOG = cv2.HOGDescriptor()
-HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+_has_hog = hasattr(cv2, "HOGDescriptor")
+if _has_hog:
+    HOG = cv2.HOGDescriptor()
+    HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+else:
+    HOG = None
+    print("HOGDescriptor unavailable in this OpenCV build; YOLO-only mode", flush=True)
 _load_yolo()
 
 
@@ -157,8 +162,10 @@ def detect(img):
         try:
             return _yolo_detect(img)
         except Exception as e:  # noqa: BLE001
-            print(f"yolo detect error, falling back to HOG: {e}", flush=True)
-    return _hog_detect(img)
+            print(f"yolo detect error: {e}", flush=True)
+    if _has_hog and HOG is not None:
+        return _hog_detect(img)
+    return []
 
 
 class Handler(BaseHTTPRequestHandler):

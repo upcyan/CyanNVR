@@ -1,0 +1,4 @@
+./doc.go
+./error.go
+./errortypes.go
+./functions.go

@@ -22,8 +22,15 @@ services:
       - NVR_AI_CONF=${NVR_AI_CONF:-0.20}
       - NVR_AI_CLASSES=${NVR_AI_CLASSES:-person,car,truck,bicycle,motorcycle,bus,dog,cat}
     volumes:
-      - ./data:/data
+      - ./server/data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # 局域网 ONVIF 发现需网卡多播，如需使用请打开 network_mode: host（Linux）
     # network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

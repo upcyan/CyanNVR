@@ -386,7 +386,14 @@ func (s *Store) ListEvents(deviceID, eventType string, dayStart, dayEnd *time.Ti
 		return nil, err
 	}
 	defer rows.Close()
-	return scanEvents(rows)
+	evs, err := scanEvents(rows)
+	if err != nil {
+		return nil, err
+	}
+	if evs == nil {
+		evs = []models.Event{}
+	}
+	return evs, nil
 }
 
 // CountEvents returns the total number of matching events (same filters as ListEvents).

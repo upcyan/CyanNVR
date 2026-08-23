@@ -1,13 +1,13 @@
 # ---- Stage 1: build frontend ----
-FROM node:20-alpine AS web
+FROM hub.rat.dev/library/node:20-alpine AS web
 WORKDIR /app/web
 COPY web/package*.json ./
-RUN npm install --registry=https://registry.npmmirror.com
+RUN npm config set registry https://registry.npmmirror.com && npm install
 COPY web/ ./
 RUN npm run build
 
 # ---- Stage 2: build server ----
-FROM golang:1.25-alpine AS build
+FROM hub.rat.dev/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go env -w GOPROXY=https://goproxy.cn,direct && go mod download
@@ -15,18 +15,18 @@ COPY server/ ./
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/simplenvr .
 
 # ---- Stage 3: runtime ----
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg python3 python3-pip ca-certificates tzdata \
+FROM hub.rat.dev/library/debian:bookworm-slim
+RUN sed -i 's@deb.debian.org@mirrors.aliyun.com@g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates tzdata wget \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 break-system-packages --no-cache-dir install \
-        -i https://mirrors.aliyun.com/pypi/simple \
+    && pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple \
         onnxruntime opencv-python-headless numpy \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
-# AI 检测模型（国内镜像；构建时可被 ARG 覆盖）
+# AI 检测模型（构建时自动从 hf-mirror 下载）
 ARG YOLO_MODEL_URL=https://hf-mirror.com/salim4n/yolov8n-detect-onnx/resolve/main/yolov8n-onnx-web/yolov8n.onnx
-ADD $YOLO_MODEL_URL /models/yolov8n.onnx
+ADD ${YOLO_MODEL_URL} /models/yolov8n.onnx
 
 WORKDIR /app
 COPY --from=build /out/simplenvr /app/simplenvr
