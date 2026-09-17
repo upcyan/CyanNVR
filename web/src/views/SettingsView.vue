@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
@@ -16,6 +17,13 @@ import {
 
 const store = useSettingsStore()
 const auth = useAuthStore()
+const router = useRouter()
+
+// entering from the tabbar there may be no history to go back to
+function goBack() {
+  if (window.history.state.back == null) router.replace('/live')
+  else router.back()
+}
 const s = store.settings
 
 const saving = ref(false)
@@ -230,7 +238,7 @@ async function removeUser(u: ManagedUser) {
 
 <template>
   <div class="page settings-page">
-    <van-nav-bar title="设置" left-arrow @click-left="$router.back()" />
+    <van-nav-bar title="设置" left-arrow @click-left="goBack" />
 
     <van-cell-group title="存储管理">
       <van-cell

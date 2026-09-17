@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { EventItem } from '../types'
 import { deleteEvent, fetchEvents, isBackend, isDemoMode } from '../api'
@@ -9,8 +9,15 @@ import { useAuthStore } from '../stores/auth'
 import { useDeviceStore } from '../stores/devices'
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const deviceStore = useDeviceStore()
+
+// entering from the tabbar there may be no history to go back to
+function goBack() {
+  if (window.history.state.back == null) router.replace('/live')
+  else router.back()
+}
 
 const deviceId = ref('')
 const dateStr = ref('')
@@ -120,7 +127,7 @@ onMounted(() => {
 
 <template>
   <div class="page events-page">
-    <van-nav-bar title="事件记录" left-arrow @click-left="$router.back()">
+    <van-nav-bar title="事件记录" left-arrow @click-left="goBack">
       <template #right>
         <span class="reload" @click="load">刷新</span>
       </template>

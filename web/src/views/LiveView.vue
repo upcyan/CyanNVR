@@ -17,6 +17,13 @@ const showAdd = ref(false)
 const discovering = ref(false)
 const foundDevices = ref<DiscoveredDevice[]>([])
 const showMulti = ref(false)
+const gridCols = ref(0) // 0 = auto square layout
+const layoutOptions = [
+  { label: '自适应', value: 0 },
+  { label: '1', value: 1 },
+  { label: '4', value: 4 },
+  { label: '9', value: 9 },
+]
 const viewerDevice = ref<Device | null>(null)
 const showViewer = ref(false)
 const showActions = ref(false)
@@ -105,9 +112,9 @@ function onViewerPlayback(d: Device) {
     <header class="hd">
       <h1>监控中心</h1>
       <div class="hd-actions">
-        <button class="icon-btn" @click="showAdd = true"><van-icon name="plus" size="22" /></button>
-        <button class="icon-btn" @click="router.push('/settings')"><van-icon name="setting-o" size="20" /></button>
-        <button class="icon-btn" @click="showMulti = true"><van-icon name="apps-o" size="20" /></button>
+        <button class="icon-btn" title="添加摄像机" @click="showAdd = true"><van-icon name="plus" size="22" /></button>
+        <button class="icon-btn" title="设置" @click="router.push('/settings')"><van-icon name="setting-o" size="20" /></button>
+        <button class="icon-btn" title="多画面预览" @click="showMulti = true"><van-icon name="apps-o" size="20" /></button>
       </div>
     </header>
 
@@ -168,9 +175,20 @@ function onViewerPlayback(d: Device) {
       <div class="multi">
         <div class="mhd">
           <span>多画面</span>
-          <van-icon name="cross" size="20" @click="showMulti = false" />
+          <div class="mhd-right">
+            <div class="layout-switch">
+              <button
+                v-for="opt in layoutOptions"
+                :key="opt.value"
+                class="layout-btn"
+                :class="{ on: gridCols === opt.value }"
+                @click="gridCols = opt.value"
+              >{{ opt.label }}</button>
+            </div>
+            <van-icon name="cross" size="20" @click="showMulti = false" />
+          </div>
         </div>
-        <VideoGrid :devices="onlineDevices" :stream-url-for="streamUrlFor" @cell="openViewer" />
+        <VideoGrid :devices="onlineDevices" :cols="gridCols" :stream-url-for="streamUrlFor" @cell="openViewer" />
       </div>
     </van-popup>
   </div>
@@ -262,6 +280,31 @@ function onViewerPlayback(d: Device) {
   color: #fff;
   font-size: 16px;
   font-weight: 600;
+}
+.mhd-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.layout-switch {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 2px;
+}
+.layout-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.layout-btn.on {
+  background: rgba(46, 168, 255, 0.9);
+  color: #fff;
 }
 
 @media (min-width: 900px) {
