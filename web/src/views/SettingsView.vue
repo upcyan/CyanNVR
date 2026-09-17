@@ -5,6 +5,7 @@ import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
+import { http } from '../api/client'
 import {
   changeOwnPassword,
   createUser,
@@ -95,9 +96,7 @@ async function save() {
 }
 
 function logout() {
-  const auth = localStorage
-  auth.removeItem('nvr_token')
-  auth.removeItem('nvr_user')
+  auth.logout()
   location.hash = '#/login'
 }
 
@@ -132,8 +131,7 @@ function setDemoMode(v: boolean) {
 const aiModels = ref<string[]>([])
 async function loadAIModels() {
   try {
-    const r = await fetch('/api/ai/models', { headers: { Authorization: 'Bearer ' + (localStorage.getItem('nvr_token') || '') } })
-    const j = await r.json()
+    const { data: j } = await http.get('/api/ai/models')
     aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
     if (!s.ai.modelPath && aiModels.value.length) {
       const def = aiModels.value.find(m => m.includes('yolov8n')) || aiModels.value[0]
@@ -149,11 +147,7 @@ async function onAIModelConfirm({ selectedValues }: any) {
   store.set({ ai: { ...s.ai, modelPath: m } })
   showAIModelPicker.value = false
   try {
-    await fetch('/api/ai/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('nvr_token') || '') },
-      body: JSON.stringify({ path: aiModels.value.find(x => x.endsWith('/' + m) || x === m) }),
-    })
+    await http.post('/api/ai/load', { path: aiModels.value.find(x => x.endsWith('/' + m) || x === m) })
     showToast('模型已切换：' + m)
   } catch {
     showToast('切换请求失败')

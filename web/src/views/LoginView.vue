@@ -9,8 +9,8 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const username = ref('admin')
-const password = ref('admin123')
+const username = ref('')
+const password = ref('')
 const loading = ref(false)
 
 async function submit() {
@@ -21,7 +21,9 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(username.value.trim(), password.value)
-    const redirect = (route.query.redirect as string) || '/live'
+    const raw = (route.query.redirect as string) || '/live'
+    // Prevent open redirect: only allow relative paths starting with /
+    const redirect = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('://') ? raw : '/live'
     router.replace(redirect)
   } catch (e: any) {
     showToast(e?.response?.data?.error || '登录失败')

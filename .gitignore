@@ -8,7 +8,7 @@ web/dist/
 web/node_modules/
 .DS_Store
 nvr-data/
-models/
+/models/
 server/pkg/ai/models/
 
 .gocache/

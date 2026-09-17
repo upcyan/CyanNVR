@@ -47,11 +47,6 @@ async function detect(): Promise<boolean> {
   }
 }
 
-function authHeader() {
-  const token = localStorage.getItem('nvr_token')
-  return token ? { Authorization: `Bearer ${token}` } : undefined
-}
-
 // ---- devices ----
 
 export async function fetchDevices(): Promise<Device[]> {
@@ -170,17 +165,17 @@ export async function deleteEvent(id: string): Promise<void> {
 
 export function downloadRecordingURL(deviceId: string, date: string, time: string): string {
   const token = localStorage.getItem('nvr_token') || ''
-  return `/api/devices/${deviceId}/recordings/${date}/${time}/download?token=${token}`
+  return `${server.base}/api/devices/${deviceId}/recordings/${date}/${time}/download?token=${token}`
 }
 
 export function downloadEventSnapshotURL(eventId: string): string {
   const token = localStorage.getItem('nvr_token') || ''
-  return `/api/events/${eventId}/snapshot/download?token=${token}`
+  return `${server.base}/api/events/${eventId}/snapshot/download?token=${token}`
 }
 
 export function downloadEventGIFURL(eventId: string): string {
   const token = localStorage.getItem('nvr_token') || ''
-  return `/api/events/${eventId}/gif/download?token=${token}`
+  return `${server.base}/api/events/${eventId}/gif/download?token=${token}`
 }
 
 // ---- auth ----
@@ -222,12 +217,12 @@ export interface AppSettings {
 }
 
 export async function fetchAppSettings(): Promise<AppSettings> {
-  const { data } = await http.get('/api/settings', { headers: authHeader() })
+  const { data } = await http.get('/api/settings')
   return data.settings as AppSettings
 }
 
 export async function saveAppSettings(s: AppSettings): Promise<AppSettings> {
-  const { data } = await http.put('/api/settings', s, { headers: authHeader() })
+  const { data } = await http.put('/api/settings', s)
   return data.settings as AppSettings
 }
 

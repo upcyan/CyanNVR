@@ -14,6 +14,8 @@ export interface PushNotification {
 const notifications = ref<PushNotification[]>([])
 let evtSource: EventSource | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let retryDelay = 1000
+const maxRetryDelay = 30000
 
 export function useNotifications() {
   function connect() {
@@ -29,6 +31,7 @@ export function useNotifications() {
         const n: PushNotification = JSON.parse(ev.data)
         notifications.value = [n, ...notifications.value].slice(0, 50)
         showBrowserNotification(n)
+        retryDelay = 1000 // Reset backoff on successful message
       } catch {
         /* ignore parse errors */
       }
@@ -37,7 +40,8 @@ export function useNotifications() {
     evtSource.onerror = () => {
       evtSource?.close()
       evtSource = null
-      reconnectTimer = setTimeout(connect, 5000)
+      reconnectTimer = setTimeout(connect, retryDelay)
+      retryDelay = Math.min(retryDelay * 2, maxRetryDelay)
     }
   }
 

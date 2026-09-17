@@ -16,4 +16,9 @@ async function bootstrap() {
   app.mount('#app')
 }
 
-bootstrap()
+bootstrap().catch((err) => {
+  console.error('App bootstrap failed:', err)
+  document.body.innerHTML =
+    '<div style="padding:2rem;color:#fff;text-align:center;background:#171a21;min-height:100vh;display:flex;align-items:center;justify-content:center">' +
+    '<div>应用启动失败，请检查网络连接后刷新重试。</div></div>'
+})
