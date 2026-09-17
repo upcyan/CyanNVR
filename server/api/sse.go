@@ -82,6 +82,10 @@ func (h *SSEHub) Broadcast(n Notification) {
 }
 
 func (s *Server) sseHandler(c *gin.Context) {
+	if _, err := s.am.Parse(c.Query("token")); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
@@ -116,6 +120,7 @@ func (s *Server) sseHandler(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
+	flusher.Flush()
 
 	c.SSEvent("connected", map[string]string{"status": "ok"})
 	flusher.Flush()

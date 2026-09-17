@@ -42,14 +42,14 @@ type AIConfig struct {
 }
 
 type AppSettings struct {
-	RetentionDays int       `json:"retentionDays"`
-	RecordMode    string    `json:"recordMode"`
-	ScheduleStart string    `json:"scheduleStart"`
-	ScheduleEnd   string    `json:"scheduleEnd"`
-	MotionPush    bool      `json:"motionPush"`
-	OfflinePush   bool      `json:"offlinePush"`
-	HTTPS         bool      `json:"https"`
-	AI            AIConfig  `json:"ai"`
+	RetentionDays int      `json:"retentionDays"`
+	RecordMode    string   `json:"recordMode"`
+	ScheduleStart string   `json:"scheduleStart"`
+	ScheduleEnd   string   `json:"scheduleEnd"`
+	MotionPush    bool     `json:"motionPush"`
+	OfflinePush   bool     `json:"offlinePush"`
+	HTTPS         bool     `json:"https"`
+	AI            AIConfig `json:"ai"`
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
@@ -102,24 +102,26 @@ func defaultSettings() AppSettings {
 }
 
 func (s *Server) applySettings() {
-	s.cfg.AIEnabled = s.settings.AI.Enabled
-	s.cfg.AIMode = s.settings.AI.Mode
-	s.cfg.AIBaseURL = s.settings.AI.BaseURL
-	s.cfg.AIDetectURL = s.settings.AI.DetectURL
-	s.cfg.AIModel = s.settings.AI.Model
-	s.cfg.AIModelPath = s.settings.AI.ModelPath
-	s.cfg.AIModelPath = s.settings.AI.ModelPath
-	s.cfg.AIAPIKey = s.settings.AI.APIKey
-	s.cfg.AIPrompt = s.settings.AI.Prompt
-	if s.settings.AI.Interval > 0 {
-		s.cfg.SnapshotIntervalSec = s.settings.AI.Interval
+	s.settingsMu.Lock()
+	set := *s.settings
+	s.settingsMu.Unlock()
+	s.cfg.AIEnabled = set.AI.Enabled
+	s.cfg.AIMode = set.AI.Mode
+	s.cfg.AIBaseURL = set.AI.BaseURL
+	s.cfg.AIDetectURL = set.AI.DetectURL
+	s.cfg.AIModel = set.AI.Model
+	s.cfg.AIModelPath = set.AI.ModelPath
+	s.cfg.AIAPIKey = set.AI.APIKey
+	s.cfg.AIPrompt = set.AI.Prompt
+	if set.AI.Interval > 0 {
+		s.cfg.SnapshotIntervalSec = set.AI.Interval
 	}
-	if s.settings.AI.Cooldown > 0 {
-		s.cfg.AICooldown = s.settings.AI.Cooldown
+	if set.AI.Cooldown > 0 {
+		s.cfg.AICooldown = set.AI.Cooldown
 	}
-	s.cfg.AIThreshold = s.settings.AI.Threshold
-	if s.settings.RetentionDays > 0 {
-		s.cfg.RetentionDays = s.settings.RetentionDays
+	s.cfg.AIThreshold = set.AI.Threshold
+	if set.RetentionDays > 0 {
+		s.cfg.RetentionDays = set.RetentionDays
 	}
 }
 

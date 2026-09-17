@@ -23,7 +23,9 @@ func (s *Server) health(c *gin.Context) {
 }
 
 func (s *Server) getSettings(c *gin.Context) {
+	s.settingsMu.Lock()
 	out := *s.settings
+	s.settingsMu.Unlock()
 	u := auth.CurrentUser(c)
 	if u == nil || u.Role != models.RoleAdmin {
 		out.AI.APIKey = maskKey(out.AI.APIKey)
@@ -44,13 +46,27 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
+	validModes := map[string]bool{"continuous": true, "schedule": true, "motion": true}
+	if !validModes[in.RecordMode] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "recordMode must be continuous/schedule/motion"})
+		return
+	}
+	if in.RetentionDays < 1 || in.RetentionDays > 3650 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "retentionDays must be 1-3650"})
+		return
+	}
+	s.settingsMu.Lock()
 	if in.AI.APIKey != "" && len(in.AI.APIKey) < 20 && s.settings.AI.APIKey != "" {
 		in.AI.APIKey = s.settings.AI.APIKey
 	}
 	s.settings = &in
+	s.settingsMu.Unlock()
 	s.saveSettings()
 	s.applySettings()
-	c.JSON(http.StatusOK, gin.H{"settings": *s.settings})
+	s.settingsMu.Lock()
+	out := *s.settings
+	s.settingsMu.Unlock()
+	c.JSON(http.StatusOK, gin.H{"settings": out})
 }
 
 func mathRound(f float64) float64 {

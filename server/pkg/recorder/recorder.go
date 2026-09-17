@@ -66,6 +66,7 @@ func (m *Manager) Start() {
 	}
 	go m.indexerLoop()
 	go m.cleanupLoop()
+	go m.retryLoop()
 	devs, err := m.st.ListDevices()
 	if err != nil {
 		log.Printf("list devices: %v", err)
@@ -130,6 +131,12 @@ func (m *Manager) StopWorker(id string) {
 func (m *Manager) Restart(d *models.Device) {
 	m.StopWorker(d.ID)
 	m.StartWorker(d)
+}
+
+func (m *Manager) removeWorker(id string) {
+	m.mu.Lock()
+	delete(m.workers, id)
+	m.mu.Unlock()
 }
 
 func (m *Manager) IsRunning(id string) bool {
@@ -311,6 +318,15 @@ func (w *Worker) killProcs() {
 	}
 }
 
+// killRecordProc stops only the recording process; live HLS and snapshots keep
+// running so live viewing and AI motion analysis continue outside the schedule.
+func (w *Worker) killRecordProc() {
+	if w.recordProc != nil {
+		w.recordProc.Kill()
+		w.recordProc = nil
+	}
+}
+
 func (w *Worker) Stop() {
 	select {
 	case <-w.stop:
@@ -322,6 +338,7 @@ func (w *Worker) Stop() {
 
 func (w *Worker) supervise() {
 	defer func() {
+		w.mgr.removeWorker(w.dev.ID)
 		w.mgr.st.SetDeviceOnline(w.dev.ID, false)
 		w.mgr.broadcastEvent("offline", w.dev.ID, w.dev.Name, "", "设备离线", w.dev.Name+" 流已断开", time.Now().Format(time.RFC3339))
 	}()
@@ -333,8 +350,13 @@ func (w *Worker) supervise() {
 		default:
 		}
 		if !w.shouldRecordNow() {
-			w.killProcs()
-			time.Sleep(10 * time.Second)
+			w.killRecordProc()
+			select {
+			case <-w.stop:
+				w.killProcs()
+				return
+			case <-time.After(10 * time.Second):
+			}
 			continue
 		}
 		if err := w.startProcs(); err != nil {
@@ -572,6 +594,29 @@ func (m *Manager) indexerLoop() {
 			return
 		case <-tick.C:
 			m.indexSegments()
+		}
+	}
+}
+
+// retryLoop periodically restarts workers for devices that are not running
+// (e.g. after repeated failures or added while ffmpeg was missing).
+func (m *Manager) retryLoop() {
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-m.stopAll:
+			return
+		case <-tick.C:
+			devs, err := m.st.ListDevices()
+			if err != nil {
+				continue
+			}
+			for _, d := range devs {
+				if !m.IsRunning(d.ID) {
+					m.StartWorker(&d)
+				}
+			}
 		}
 	}
 }

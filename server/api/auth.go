@@ -114,8 +114,8 @@ func (s *Server) listUsers(c *gin.Context) {
 }
 
 type userReq struct {
-	Username string     `json:"username"`
-	Password string     `json:"password"`
+	Username string      `json:"username"`
+	Password string      `json:"password"`
 	Role     models.Role `json:"role"`
 }
 
@@ -154,7 +154,7 @@ func (s *Server) createUser(c *gin.Context) {
 func (s *Server) updateUser(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Password string     `json:"password"`
+		Password string      `json:"password"`
 		Role     models.Role `json:"role"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -175,6 +175,13 @@ func (s *Server) updateUser(c *gin.Context) {
 		_ = s.st.UpdateUserPassword(id, hash)
 	}
 	if req.Role != "" {
+		if req.Role != models.RoleAdmin && u.Role == models.RoleAdmin {
+			n, err := s.st.CountAdmins()
+			if err == nil && n <= 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "不能降级最后一个管理员"})
+				return
+			}
+		}
 		_ = s.st.UpdateUserRole(id, req.Role)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -186,6 +193,18 @@ func (s *Server) deleteUser(c *gin.Context) {
 	if au.ID == id {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除自己"})
 		return
+	}
+	target, _ := s.st.GetUserByID(id)
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if target.Role == models.RoleAdmin {
+		n, err := s.st.CountAdmins()
+		if err == nil && n <= 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "不能删除最后一个管理员"})
+			return
+		}
 	}
 	if err := s.st.DeleteUser(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

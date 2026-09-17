@@ -23,6 +23,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if cfg.JWTSecret == "simplenvr-dev-secret-change-me" {
+		log.Printf("WARNING: using default JWT secret; set NVR_JWT_SECRET in production")
+	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		log.Fatalf("mkdir data dir: %v", err)

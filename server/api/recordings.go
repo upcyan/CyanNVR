@@ -21,49 +21,55 @@ func (s *Server) downloadRecording(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad date"})
 		return
 	}
-	if len(timeStr) < 4 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad time"})
+	if len(timeStr) != 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad time (HHMMSS)"})
 		return
 	}
-	// Segment files are named HHMMSS.mp4. Try the full 6-digit time first,
-	// then fall back to 4-digit HHMM for legacy callers.
-	var fullPath string
-	for _, name := range []string{timeStr + ".mp4", timeStr[:4] + ".mp4"} {
-		dirPath := filepath.Join(s.cfg.RecordDir, deviceID, day.Format("20060102"))
-		p := filepath.Join(dirPath, name)
-		if fileExists(p) {
-			fullPath = p
-			break
+	for _, ch := range timeStr {
+		if ch < '0' || ch > '9' {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad time (HHMMSS)"})
+			return
 		}
 	}
-	if fullPath == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
-		return
+	dirPath := filepath.Join(s.cfg.RecordDir, deviceID, day.Format("20060102"))
+	fullPath := filepath.Join(dirPath, timeStr+".mp4")
+	if !fileExists(fullPath) {
+		// fall back to the segment starting within the same minute
+		matches, _ := filepath.Glob(filepath.Join(dirPath, timeStr[:4]+"*.mp4"))
+		if len(matches) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
+			return
+		}
+		fullPath = matches[0]
 	}
 	c.Header("Content-Disposition", "attachment; filename="+dateStr+"_"+timeStr+".mp4")
 	c.File(fullPath)
 }
 
 func (s *Server) downloadEventSnapshot(c *gin.Context) {
-	id := c.Param("id")
-	deviceID := c.Param("deviceId")
-	p := filepath.Join(s.cfg.EventDir, deviceID, id, "snapshot.jpg")
+	e, ok := s.getEvent(c)
+	if !ok {
+		return
+	}
+	p := filepath.Join(s.cfg.EventDir, e.DeviceID, e.ID, "snapshot.jpg")
 	if !fileExists(p) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
 		return
 	}
-	c.Header("Content-Disposition", "attachment; filename="+id+".jpg")
+	c.Header("Content-Disposition", "attachment; filename="+e.ID+".jpg")
 	c.File(p)
 }
 
 func (s *Server) downloadEventGIF(c *gin.Context) {
-	id := c.Param("id")
-	deviceID := c.Param("deviceId")
-	p := filepath.Join(s.cfg.EventDir, deviceID, id, "animation.gif")
+	e, ok := s.getEvent(c)
+	if !ok {
+		return
+	}
+	p := filepath.Join(s.cfg.EventDir, e.DeviceID, e.ID, "animation.gif")
 	if !fileExists(p) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "gif not found"})
 		return
 	}
-	c.Header("Content-Disposition", "attachment; filename="+id+".gif")
+	c.Header("Content-Disposition", "attachment; filename="+e.ID+".gif")
 	c.File(p)
 }

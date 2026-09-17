@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,18 +26,19 @@ import (
 )
 
 type Analyzer struct {
-	cfg       *config.Config
-	st        *store.Store
-	http      *http.Client
-	dirs      map[string]*DeviceState
-	onEvent   func(eventType, deviceID, deviceName, eventID, label, desc, time string)
+	cfg     *config.Config
+	st      *store.Store
+	http    *http.Client
+	mu      sync.RWMutex
+	dirs    map[string]*DeviceState
+	onEvent func(eventType, deviceID, deviceName, eventID, label, desc, time string)
 }
 
 type DeviceState struct {
-	ring       *snapshot.Ring
-	lastEvent  time.Time
-	lastCheck  time.Time
-	lock       chan struct{} // 1-buffered, serializes per-device analysis
+	ring      *snapshot.Ring
+	lastEvent time.Time
+	lastCheck time.Time
+	lock      chan struct{} // 1-buffered, serializes per-device analysis
 }
 
 func (ds *DeviceState) LastEventTime() time.Time { return ds.lastEvent }
@@ -112,6 +114,11 @@ func modelPath() string {
 }
 
 func (a *Analyzer) Register(deviceID string) *DeviceState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if st, ok := a.dirs[deviceID]; ok {
+		return st
+	}
 	st := &DeviceState{
 		ring: snapshot.NewRing(8),
 		lock: make(chan struct{}, 1),
@@ -121,11 +128,15 @@ func (a *Analyzer) Register(deviceID string) *DeviceState {
 	return st
 }
 
-func (a *Analyzer) State(deviceID string) *DeviceState { return a.dirs[deviceID] }
+func (a *Analyzer) State(deviceID string) *DeviceState {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.dirs[deviceID]
+}
 
 // PushImage feeds a frame captured at time t into the device's ring.
 func (a *Analyzer) PushImage(deviceID string, data []byte, t int64) {
-	if s, ok := a.dirs[deviceID]; ok {
+	if s := a.State(deviceID); s != nil {
 		s.ring.Push(data, t)
 	}
 }
@@ -143,7 +154,7 @@ func (a *Analyzer) MaybeAnalyze(device *models.Device) {
 	if a.cfg.AIBaseURL == "" {
 		return
 	}
-	s := a.dirs[device.ID]
+	s := a.State(device.ID)
 	if s == nil {
 		return
 	}
@@ -435,5 +446,5 @@ func extractJSON(s string) string {
 	return s[start : end+1]
 }
 
-func mkdirAll(p string) error    { return os.MkdirAll(p, 0o755) }
+func mkdirAll(p string) error            { return os.MkdirAll(p, 0o755) }
 func writeFile(p string, b []byte) error { return os.WriteFile(p, b, 0o644) }

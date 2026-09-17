@@ -131,6 +131,12 @@ func (s *Store) DeleteUser(id string) error {
 	return err
 }
 
+func (s *Store) CountAdmins() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role=?`, string(models.RoleAdmin)).Scan(&n)
+	return n, err
+}
+
 func scanUser(row *sql.Row) (*models.User, error) {
 	u := models.User{}
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt)
