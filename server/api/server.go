@@ -129,7 +129,7 @@ func (s *Server) saveSettings() {
 	s.settingsMu.Lock()
 	data, _ := json.MarshalIndent(s.settings, "", "  ")
 	s.settingsMu.Unlock()
-	_ = os.WriteFile(s.settingsPath(), data, 0o644)
+	_ = os.WriteFile(s.settingsPath(), data, 0o600)
 }
 
 func (s *Server) Router() http.Handler {

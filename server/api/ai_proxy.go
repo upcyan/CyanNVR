@@ -30,7 +30,7 @@ func (s *Server) aiProxy(method, path string, body io.Reader) ([]byte, int, erro
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	return data, resp.StatusCode, err
 }
 

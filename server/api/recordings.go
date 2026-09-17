@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) downloadRecording(c *gin.Context) {
-	deviceID := c.Param("id")
+	deviceID := safePathID(c.Param("id"))
 	dateStr := c.Param("date")
 	timeStr := c.Param("time")
 	if deviceID == "" || dateStr == "" || timeStr == "" {

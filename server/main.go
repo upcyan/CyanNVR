@@ -78,10 +78,12 @@ func main() {
 		}
 	}
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      server.Router(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 0,
+		Addr:              addr,
+		Handler:           server.Router(),
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
@@ -118,7 +120,7 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 		log.Printf("seed admin: %v", err)
 		return
 	}
-	log.Printf("seeded admin user (default password: %s)", pw)
+	log.Printf("seeded admin user (password set via NVR_ADMIN_PASSWORD)")
 }
 
 // loadOrCreateJWTSecret returns the configured secret, or auto-generates a
@@ -126,6 +128,10 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 // never falling back to a guessable default.
 func loadOrCreateJWTSecret(cfg *config.Config) (string, error) {
 	if cfg.JWTSecret != "" {
+		// Reject known weak/default secrets.
+		if cfg.JWTSecret == "simplenvr-dev-secret-change-me" || len(cfg.JWTSecret) < 16 {
+			log.Fatal("REFUSING weak JWT secret — set NVR_JWT_SECRET to a strong random value (>= 16 chars)")
+		}
 		return cfg.JWTSecret, nil
 	}
 	path := filepath.Join(cfg.DataDir, "jwt_secret")

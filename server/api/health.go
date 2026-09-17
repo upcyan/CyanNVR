@@ -8,17 +8,14 @@ import (
 
 	"simplenvr/server/auth"
 	"simplenvr/server/models"
-	"simplenvr/server/pkg/ffmpeg"
 )
 
 func (s *Server) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status":    "ok",
-		"name":      "SimpleNVR",
-		"time":      time.Now().Format(time.RFC3339),
-		"ffmpeg":    ffmpeg.Exists(s.cfg.Ffmpeg),
-		"aiEnabled": s.cfg.AIEnabled,
-		"auth":      true,
+		"status": "ok",
+		"name":   "SimpleNVR",
+		"time":   time.Now().Format(time.RFC3339),
+		"auth":   true,
 	})
 }
 
@@ -66,6 +63,7 @@ func (s *Server) putSettings(c *gin.Context) {
 	s.settingsMu.Lock()
 	out := *s.settings
 	s.settingsMu.Unlock()
+	out.AI.APIKey = maskKey(out.AI.APIKey)
 	c.JSON(http.StatusOK, gin.H{"settings": out})
 }
 

@@ -82,16 +82,13 @@ func (h *SSEHub) Broadcast(n Notification) {
 }
 
 func (s *Server) sseHandler(c *gin.Context) {
-	if _, err := s.am.Parse(c.Query("token")); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-		return
-	}
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
 		return
 	}
 
+	// Extract token from query param or Authorization header.
 	token := c.Query("token")
 	if token == "" {
 		token = c.GetHeader("Authorization")

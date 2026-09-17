@@ -35,6 +35,21 @@ func (l *loginRateLimiter) allow(ip string) bool {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// Periodically clean up stale entries to prevent memory leak.
+	if len(l.attempts) > 1000 {
+		for k, ts := range l.attempts {
+			allStale := true
+			for _, t := range ts {
+				if now.Sub(t) < loginWindowPeriod {
+					allStale = false
+					break
+				}
+			}
+			if allStale {
+				delete(l.attempts, k)
+			}
+		}
+	}
 	recent := l.attempts[ip][:0]
 	for _, t := range l.attempts[ip] {
 		if now.Sub(t) < loginWindowPeriod {
@@ -129,8 +144,20 @@ func (s *Server) createUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "username/password required"})
 		return
 	}
+	if len(req.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "密码至少需要8个字符"})
+		return
+	}
 	if req.Role == "" {
 		req.Role = models.RoleUser
+	}
+	validRoles := map[models.Role]bool{
+		models.RoleAdmin: true, models.RoleUser: true,
+		models.RoleViewer: true, models.RoleOperator: true,
+	}
+	if !validRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role"})
+		return
 	}
 	hash, err := s.am.HashPassword(req.Password)
 	if err != nil {
@@ -167,14 +194,26 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 	if req.Password != "" {
+		if len(req.Password) < 8 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "密码至少需要8个字符"})
+			return
+		}
 		hash, err := s.am.HashPassword(req.Password)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
 		_ = s.st.UpdateUserPassword(id, hash)
 	}
 	if req.Role != "" {
+		validRoles := map[models.Role]bool{
+			models.RoleAdmin: true, models.RoleUser: true,
+			models.RoleViewer: true, models.RoleOperator: true,
+		}
+		if !validRoles[req.Role] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role"})
+			return
+		}
 		if req.Role != models.RoleAdmin && u.Role == models.RoleAdmin {
 			n, err := s.st.CountAdmins()
 			if err == nil && n <= 1 {

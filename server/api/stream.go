@@ -71,7 +71,11 @@ func servePlaylist(c *gin.Context, p string) {
 }
 
 func (s *Server) liveStream(c *gin.Context) {
-	id := c.Param("id")
+	id := safePathID(c.Param("id"))
+	if id == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
 	file := c.Param("file")
 	root := filepath.Join(s.cfg.LiveDir, id)
 	p, ok := s.hls.ResolveFile(root, file)
@@ -93,7 +97,11 @@ func (s *Server) liveStream(c *gin.Context) {
 }
 
 func (s *Server) playbackStream(c *gin.Context) {
-	session := c.Param("session")
+	session := safePathID(c.Param("session"))
+	if session == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
 	file := c.Param("file")
 	root := filepath.Join(s.cfg.LiveDir, "playback", session)
 	p, ok := s.hls.ResolveFile(root, file)

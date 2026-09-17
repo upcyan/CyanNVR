@@ -21,10 +21,16 @@ import (
 func (s *Server) listDevices(c *gin.Context) {
 	devs, err := s.st.ListDevices()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"devices": devs})
+	// Strip passwords from API response.
+	safe := make([]models.Device, len(devs))
+	copy(safe, devs)
+	for i := range safe {
+		safe[i].Password = ""
+	}
+	c.JSON(http.StatusOK, gin.H{"devices": safe})
 }
 
 type deviceReq struct {
@@ -115,10 +121,11 @@ func (s *Server) createDevice(c *gin.Context) {
 	}
 	req.applyTo(&d)
 	if err := s.st.CreateDevice(d); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	s.rec.StartWorker(&d)
+	d.Password = "" // Do not return password in response
 	c.JSON(http.StatusOK, gin.H{"device": d})
 }
 
@@ -164,10 +171,11 @@ func (s *Server) updateDevice(c *gin.Context) {
 	}
 	req.applyTo(d)
 	if err := s.st.UpdateDevice(*d); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	s.rec.Restart(d)
+	d.Password = "" // Do not return password in response
 	c.JSON(http.StatusOK, gin.H{"device": d})
 }
 
@@ -320,7 +328,11 @@ func defaultRTSP(d *models.Device) string {
 }
 
 func (s *Server) deviceSnapshot(c *gin.Context) {
-	id := c.Param("id")
+	id := safePathID(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
 	path := filepath.Join(s.cfg.SnapDir, id, "current.jpg")
 	if !fileExists(path) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no snapshot"})
@@ -464,4 +476,18 @@ func atoiStr(s string) int {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// safePathID validates that a user-supplied ID contains only safe characters
+// and cannot be used for path traversal. Returns the cleaned ID or empty string.
+func safePathID(id string) string {
+	if id == "" || len(id) > 128 {
+		return ""
+	}
+	for _, c := range id {
+		if c == '/' || c == '\\' || c == '.' || c == '\x00' {
+			return ""
+		}
+	}
+	return id
 }

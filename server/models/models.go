@@ -32,7 +32,7 @@ type Device struct {
 	IP       string       `json:"ip"`
 	Port     int          `json:"port"`
 	Username string       `json:"username"`
-	Password string       `json:"password"`
+	Password string       `json:"password,omitempty"` // Hidden by default, only set via dedicated field
 	Source   DeviceSource `json:"source"`
 	Model    string       `json:"model"`
 	Online   bool         `json:"online"`

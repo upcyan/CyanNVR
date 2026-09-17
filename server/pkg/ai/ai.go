@@ -231,7 +231,7 @@ func (a *Analyzer) detectLocal(jpg []byte) (result, float64, error) {
 		return result{}, 0, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB limit
 	if err != nil || resp.StatusCode != 200 {
 		return result{}, 0, fmt.Errorf("detect http %d", resp.StatusCode)
 	}
@@ -404,7 +404,7 @@ func (a *Analyzer) describe(jpg []byte) (result, float64, error) {
 		return result{}, 0, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB limit
 	if err != nil || resp.StatusCode != 200 {
 		return result{}, 0, fmt.Errorf("ai http %d", resp.StatusCode)
 	}
