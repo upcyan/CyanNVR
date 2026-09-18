@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- 背景 -->
+  <rect width="100" height="100" rx="20" fill="#0f1115"/>
+  
+  <!-- AI 眼睛 -->
+  <g transform="translate(50,45)">
+    <!-- 外圈 -->
+    <circle cx="0" cy="0" r="30" fill="none" stroke="#2ea8ff" stroke-width="3"/>
+    <!-- 内圈 -->
+    <circle cx="0" cy="0" r="22" fill="none" stroke="#2ea8ff" stroke-width="2"/>
+    <!-- 瞳孔 -->
+    <circle cx="0" cy="0" r="12" fill="#2ea8ff"/>
+    <!-- AI 扫描线 -->
+    <line x1="-25" y1="0" x2="25" y2="0" stroke="#00ff88" stroke-width="2" stroke-dasharray="5,3"/>
+    <line x1="0" y1="-25" x2="0" y2="25" stroke="#00ff88" stroke-width="2" stroke-dasharray="5,3"/>
+    <!-- AI 识别点 -->
+    <circle cx="-15" cy="-15" r="3" fill="#00ff88"/>
+    <circle cx="15" cy="-15" r="3" fill="#00ff88"/>
+    <circle cx="-15" cy="15" r="3" fill="#00ff88"/>
+    <circle cx="15" cy="15" r="3" fill="#00ff88"/>
+  </g>
+  
+  <!-- 录像指示灯 -->
+  <circle cx="75" cy="25" r="4" fill="#ff4444"/>
+  
+  <!-- 底部文字 -->
+  <text x="50" y="88" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">SimpleNVR</text>
+</svg>

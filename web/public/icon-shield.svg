@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- 背景 -->
+  <rect width="100" height="100" rx="20" fill="#0f1115"/>
+  
+  <!-- 盾牌 -->
+  <path d="M50 15 L80 30 L80 55 L50 85 L20 55 L20 30 Z" fill="none" stroke="#2ea8ff" stroke-width="4" stroke-linejoin="round"/>
+  
+  <!-- 监控摄像头 -->
+  <g transform="translate(50,45)">
+    <!-- 摄像头主体 -->
+    <rect x="-15" y="-10" width="30" height="20" rx="4" fill="none" stroke="#2ea8ff" stroke-width="2"/>
+    <!-- 镜头 -->
+    <circle cx="0" cy="0" r="8" fill="none" stroke="#2ea8ff" stroke-width="2"/>
+    <circle cx="0" cy="0" r="4" fill="#2ea8ff"/>
+    <!-- 镜头反光 -->
+    <circle cx="-2" cy="-2" r="1.5" fill="#ffffff" opacity="0.6"/>
+  </g>
+  
+  <!-- AI 扫描线 -->
+  <line x1="30" y1="45" x2="70" y2="45" stroke="#00ff88" stroke-width="2" stroke-dasharray="3,2"/>
+  
+  <!-- 录像指示灯 -->
+  <circle cx="75" cy="25" r="4" fill="#ff4444"/>
+  
+  <!-- 底部文字 -->
+  <text x="50" y="88" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">SimpleNVR</text>
+</svg>
