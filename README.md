@@ -10,17 +10,17 @@
 - **AI 画面识别**：OpenAI 兼容视觉接口，识别异常画面并生成事件记录 + 动图快照（GIF）
 - **事件记录**：事件列表（动图/快照/描述/时间），按类型着色
 - **认证与权限**：JWT 登录，角色 admin / operator / user / viewer 分级
-- **服务器地址**：App 端可配置局域网/公网地址并自动探测，自动选择可达的连接方式
-- **适老化**：大字体三档缩放 + 关怀模式（高对比、大触控热区）
+- **PWA 支持**：可安装为原生应用，支持离线访问
+- **关怀模式**：大字体三档缩放 + 关怀模式（高对比、大触控热区）
 
 ## 目录结构
 
 ```
 ├── server/          Go 后端（Gin + SQLite + ffmpeg）
-│   ├── api/          REST API
-│   ├── pkg/          ffmpeg/hls/gif/ai/onvif/snapshot/recorder
-│   ├── auth/         JWT 认证
-│   └── store/        SQLite 存储
+│   ├── api/         REST API
+│   ├── pkg/         ffmpeg/hls/gif/ai/onvif/snapshot/recorder
+│   ├── auth/        JWT 认证
+│   └── store/       SQLite 存储
 ├── web/             Vue3 + Vant4 + hls.js 前端（PWA）
 ├── docker/          备用 Dockerfile
 ├── Dockerfile       多阶段构建（含 ffmpeg）
@@ -83,7 +83,7 @@ npm run build          # 产物在 web/dist
 ### 3. 添加测试源（无需真实摄像头）
 
 ```bash
-curl -X POST http://localhost:8080/api/devices -H "Authorization: Bearer <token>" \
+curl -X POST http://localhost:8080/api/devices -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"测试源","source":"test"}'
 ```
@@ -95,7 +95,6 @@ curl -X POST http://localhost:8080/api/devices -H "Authorization: Bearer <token>
 - 浏览器打开 http://localhost:8080 → 登录 → 添加测试源 → 实时预览看到动态画面
 - 切换到「录像管理」→ 日历选择今天 → 时间轴显示录像段 → 拖拽跳转、倍速播放
 - 事件页：配置 AI 后，识别异常会生成事件卡片（动图）
-- 登录页「服务器设置」：填写局域网/公网地址 → 测试连通性 → 自动选择连接方式
 
 ### 5. AI 识别（可选）
 
@@ -117,3 +116,11 @@ NVR_AI_ENABLED=true NVR_AI_API_KEY=sk-xxx NVR_AI_MODEL=gpt-4o-mini go run .
 | NVR_AI_BASE_URL | OpenAI 兼容接口 | https://api.openai.com/v1 |
 | NVR_AI_MODEL | 视觉模型 | gpt-4o-mini |
 | NVR_AI_API_KEY | API Key | 空 |
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 许可证
+
+MIT License
