@@ -16,3 +16,9 @@ server/pkg/ai/models/
 docker/payload.json
 docker/test_*.py
 docker/check_devs.py
+
+# 部署脚本和文档
+scripts/
+docs/
+*.sh
+!web/src/**/*.sh
