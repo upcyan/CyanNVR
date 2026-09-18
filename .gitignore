@@ -17,8 +17,10 @@ docker/payload.json
 docker/test_*.py
 docker/check_devs.py
 
-# 部署脚本和文档
+# 部署脚本
 scripts/
-docs/
 *.sh
 !web/src/**/*.sh
+
+# 保留文档目录
+!docs/
