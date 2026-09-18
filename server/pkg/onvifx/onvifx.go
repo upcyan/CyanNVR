@@ -121,17 +121,20 @@ func GetStreams(host string, port int, user, pass string) []models.Stream {
 		Password: pass,
 	})
 	if err != nil {
-		return out
+		// ONVIF 连接失败，尝试常见路径
+		return guessStreams(host, user, pass)
 	}
 	resp, err := dev.CallMethod(media.GetProfiles{})
 	if err != nil {
-		return out
+		// ONVIF 获取配置失败，尝试常见路径
+		return guessStreams(host, user, pass)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(string(body)); err != nil {
-		return out
+		// XML 解析失败，尝试常见路径
+		return guessStreams(host, user, pass)
 	}
 	var tokens []string
 	for _, p := range doc.FindElements("./Envelope/Body/GetProfilesResponse/Profiles/Profile") {
@@ -155,6 +158,39 @@ func GetStreams(host string, port int, user, pass string) []models.Stream {
 		}
 		out = append(out, models.Stream{ID: t, Name: label, URL: uri})
 	}
+	
+	// 如果没有从 ONVIF 获取到流，尝试常见路径
+	if len(out) == 0 {
+		return guessStreams(host, user, pass)
+	}
+	
+	return out
+}
+
+// guessStreams tries common RTSP paths for both main and sub streams.
+func guessStreams(host, user, pass string) []models.Stream {
+	var out []models.Stream
+	
+	// 尝试主码流
+	mainURL := guessStreamURL(host, user, pass, "")
+	if mainURL != "" {
+		out = append(out, models.Stream{
+			ID:   "main",
+			Name: "主码流",
+			URL:  mainURL,
+		})
+	}
+	
+	// 尝试子码流
+	subURL := guessSubStreamURL(host, user, pass, "")
+	if subURL != "" {
+		out = append(out, models.Stream{
+			ID:   "sub",
+			Name: "子码流",
+			URL:  subURL,
+		})
+	}
+	
 	return out
 }
 
@@ -187,11 +223,53 @@ func streamURI(dev *onvif.Device, token string) string {
 // guessStreamURL builds a likely RTSP URL for brands that don't return a
 // usable GetStreamUri response. Used as a fallback only.
 func guessStreamURL(host, user, pass, token string) string {
+	// 尝试常见的 RTSP 路径，包括主码流和子码流
+	paths := []string{
+		"/stream1",           // 主码流 (常见)
+		"/stream2",           // 子码流 (常见)
+		"/ch1/main",          // 主码流 (海康威视)
+		"/ch1/sub",           // 子码流 (海康威视)
+		"/cam/realmonitor?channel=1&subtype=0", // 主码流 (大华)
+		"/cam/realmonitor?channel=1&subtype=1", // 子码流 (大华)
+		"/Streaming/Channels/101", // 主码流 (华为)
+		"/Streaming/Channels/102", // 子码流 (华为)
+	}
+	
+	for _, path := range paths {
+		u := fmt.Sprintf("rtsp://%s:%d%s", host, 554, path)
+		if user != "" {
+			u = fmt.Sprintf("rtsp://%s:%s@%s:%d%s", user, pass, host, 554, path)
+		}
+		return u // 返回第一个路径作为主码流
+	}
+	
+	// 默认返回 stream1
 	u := fmt.Sprintf("rtsp://%s:%d/stream1", host, 554)
 	if user != "" {
 		u = fmt.Sprintf("rtsp://%s:%s@%s:%d/stream1", user, pass, host, 554)
 	}
 	return u
+}
+
+// guessSubStreamURL attempts to find a sub-stream URL by trying common paths.
+func guessSubStreamURL(host, user, pass, token string) string {
+	subPaths := []string{
+		"/stream2",           // 子码流 (常见)
+		"/ch1/sub",           // 子码流 (海康威视)
+		"/cam/realmonitor?channel=1&subtype=1", // 子码流 (大华)
+		"/Streaming/Channels/102", // 子码流 (华为)
+	}
+	
+	for _, path := range subPaths {
+		u := fmt.Sprintf("rtsp://%s:%d%s", host, 554, path)
+		if user != "" {
+			u = fmt.Sprintf("rtsp://%s:%s@%s:%d%s", user, pass, host, 554, path)
+		}
+		return u
+	}
+	
+	// 如果没有找到子码流，返回空字符串
+	return ""
 }
 
 func parseHostPort(xaddr string) (string, int) {

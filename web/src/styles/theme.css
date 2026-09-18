@@ -228,3 +228,147 @@ body.care .vname {
 body.care .vbtn {
   font-size: 14px;
 }
+
+/* 关怀模式 - 设置页面优化 */
+body.care .settings-page .van-cell-group {
+  margin-bottom: 16px;
+}
+body.care .settings-page .van-cell {
+  min-height: 60px;
+}
+body.care .settings-page .van-cell__title {
+  font-size: 18px;
+  line-height: 1.4;
+}
+body.care .settings-page .van-cell__label {
+  font-size: 15px;
+  margin-top: 4px;
+}
+body.care .settings-page .van-radio-group .van-cell {
+  padding: 16px;
+}
+body.care .settings-page .van-switch {
+  width: 52px;
+  height: 28px;
+}
+
+/* 关怀模式 - 更大的触摸区域 */
+body.care .van-button--normal {
+  min-height: 56px;
+  font-size: 18px;
+}
+body.care .van-field__control {
+  font-size: 18px;
+  min-height: 44px;
+}
+
+/* 关怀模式 - 更高的对比度 */
+body.care {
+  --nvr-text: #ffffff;
+  --nvr-text-2: #d1d9e6;
+  --nvr-border: rgba(255, 255, 255, 0.3);
+  --nvr-panel: #1e2532;
+  --nvr-panel-2: #2a3445;
+}
+
+/* 关怀模式 - 图标和按钮 */
+body.care .icon-btn {
+  width: 48px;
+  height: 48px;
+}
+body.care .van-icon {
+  font-size: 24px;
+}
+
+/* 关怀模式 - 底部导航栏 */
+body.care .van-tabbar {
+  height: 64px;
+}
+body.care .van-tabbar-item__icon {
+  font-size: 24px;
+}
+body.care .van-tabbar-item__text {
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* 关怀模式 - 标题栏 */
+body.care .van-nav-bar {
+  height: 56px;
+}
+body.care .van-nav-bar__title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* 关怀模式 - 摄像机卡片 */
+body.care .cam-card {
+  padding: 16px;
+  border-radius: 12px;
+}
+body.care .cam-card .name {
+  font-size: 20px;
+  font-weight: 600;
+}
+body.care .cam-card .enter {
+  padding: 10px 20px;
+  font-size: 16px;
+  border-radius: 8px;
+}
+
+/* 关怀模式 - 表单输入 */
+body.care .van-field {
+  padding: 12px 16px;
+}
+body.care .van-field__label {
+  font-size: 16px;
+  min-width: 100px;
+}
+
+/* 关怀模式 - 弹窗和对话框 */
+body.care .van-dialog {
+  border-radius: 12px;
+}
+body.care .van-dialog__header {
+  font-size: 20px;
+  padding: 20px;
+}
+body.care .van-dialog__message {
+  font-size: 16px;
+  padding: 0 20px 20px;
+}
+
+/* 关怀模式 - 选择器 */
+body.care .van-picker {
+  height: 280px;
+}
+body.care .van-picker__toolbar {
+  height: 50px;
+}
+body.care .van-picker__confirm {
+  font-size: 18px;
+  padding: 0 20px;
+}
+
+/* 关怀模式 - 开关和滑块 */
+body.care .van-switch--on {
+  background-color: #1989fa;
+}
+body.care .van-slider {
+  height: 6px;
+}
+
+/* 关怀模式 - 标签和徽章 */
+body.care .van-tag {
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+/* 关怀模式 - 加载和空状态 */
+body.care .van-loading {
+  font-size: 18px;
+}
+body.care .van-empty__description {
+  font-size: 16px;
+}

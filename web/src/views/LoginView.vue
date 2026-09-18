@@ -76,6 +76,10 @@ async function submit() {
 .login {
   align-items: center;
   padding-top: 12vh;
+  padding-left: 16px;
+  padding-right: 16px;
+  box-sizing: border-box;
+  min-height: 100vh;
 }
 .brand {
   text-align: center;
@@ -110,5 +114,32 @@ async function submit() {
   margin-top: 24px;
   font-size: 12px;
   color: var(--nvr-amber);
+  text-align: center;
+}
+
+/* 移动端适配 */
+@media (max-width: 375px) {
+  .login {
+    padding-top: 8vh;
+  }
+  .brand h1 {
+    font-size: 22px;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+  }
+}
+
+@media (max-width: 320px) {
+  .login {
+    padding-top: 6vh;
+  }
+  .brand h1 {
+    font-size: 20px;
+  }
+  .brand p {
+    font-size: 12px;
+  }
 }
 </style>

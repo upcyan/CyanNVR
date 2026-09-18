@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -120,6 +120,10 @@ function setFontSize(v: 'normal' | 'large' | 'xlarge') {
 
 function setCareMode(v: boolean) {
   store.set({ careMode: v })
+  // 强制重新应用样式
+  nextTick(() => {
+    document.body.classList.toggle('care', v)
+  })
 }
 
 function setDemoMode(v: boolean) {
@@ -332,12 +336,12 @@ async function removeUser(u: ManagedUser) {
       </van-cell>
       <van-cell title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
         <template #right-icon>
-          <van-switch :model-value="s.careMode" size="20" @update:model-value="setCareMode" />
+          <van-switch v-model="s.careMode" size="20" @change="setCareMode(s.careMode)" />
         </template>
       </van-cell>
       <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
         <template #right-icon>
-          <van-switch :model-value="s.demoMode" size="20" @update:model-value="setDemoMode" />
+          <van-switch v-model="s.demoMode" size="20" @change="setDemoMode(s.demoMode)" />
         </template>
       </van-cell>
     </van-cell-group>

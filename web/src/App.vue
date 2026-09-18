@@ -104,7 +104,7 @@ onBeforeUnmount(() => {
       <van-tabbar v-if="!isDesktop" route fixed placeholder safe-area-inset-bottom>
         <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
         <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
-        <van-tabbar-item replace to="/events" icon="bell-o">事件</van-tabbar-item>
+        <van-tabbar-item replace to="/events" icon="bell">事件</van-tabbar-item>
         <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
       </van-tabbar>
     </div>
