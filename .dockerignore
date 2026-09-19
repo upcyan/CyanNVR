@@ -1,5 +1,5 @@
 server/data/
-server/simplenvr.exe*
+server/cyannvr.exe*
 web/node_modules/
 web/dist/
 models/

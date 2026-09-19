@@ -12,13 +12,13 @@ WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/simplenvr .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/cyannvr .
 
 # ---- Stage 3: runtime ----
 FROM alpine:3.20
 RUN apk add --no-cache ffmpeg tzdata ca-certificates && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 WORKDIR /app
-COPY --from=build /out/simplenvr /app/simplenvr
+COPY --from=build /out/cyannvr /app/cyannvr
 COPY --from=web /app/web/dist /app/dist
 ENV NVR_PORT=8080 \
     NVR_DATA=/data \
@@ -26,4 +26,4 @@ ENV NVR_PORT=8080 \
     GIN_MODE=release
 VOLUME ["/data"]
 EXPOSE 8080
-ENTRYPOINT ["/app/simplenvr"]
+ENTRYPOINT ["/app/cyannvr"]

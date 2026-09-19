@@ -17,7 +17,7 @@ import (
 	wsdiscovery "github.com/use-go/onvif/ws-discovery"
 	xsdonvif "github.com/use-go/onvif/xsd/onvif"
 
-	"simplenvr/server/models"
+	"cyannvr/server/models"
 )
 
 type Found struct {

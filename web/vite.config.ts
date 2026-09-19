@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'SimpleNVR',
+        name: 'CyanNVR',
         short_name: 'NVR',
         description: 'Simple Network Video Recorder',
         start_url: '.',

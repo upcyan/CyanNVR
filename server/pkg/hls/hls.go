@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"simplenvr/server/config"
-	"simplenvr/server/pkg/ffmpeg"
-	"simplenvr/server/store"
+	"cyannvr/server/config"
+	"cyannvr/server/pkg/ffmpeg"
+	"cyannvr/server/store"
 )
 
 // 回放会话目录的回收策略。

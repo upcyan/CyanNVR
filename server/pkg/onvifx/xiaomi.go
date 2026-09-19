@@ -190,7 +190,7 @@ func rtspRequest(ctx context.Context, ip string, port int, method, target, user,
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s %s RTSP/1.0\r\n", method, target)
 	fmt.Fprintf(&sb, "CSeq: 1\r\n")
-	fmt.Fprintf(&sb, "User-Agent: SimpleNVR\r\n")
+	fmt.Fprintf(&sb, "User-Agent: CyanNVR\r\n")
 	if user != "" {
 		fmt.Fprintf(&sb, "Authorization: Basic %s\r\n", basicAuth(user, pass))
 	}

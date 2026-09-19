@@ -20,11 +20,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"simplenvr/server/config"
-	"simplenvr/server/models"
-	"simplenvr/server/pkg/gif"
-	"simplenvr/server/pkg/snapshot"
-	"simplenvr/server/store"
+	"cyannvr/server/config"
+	"cyannvr/server/models"
+	"cyannvr/server/pkg/gif"
+	"cyannvr/server/pkg/snapshot"
+	"cyannvr/server/store"
 )
 
 type Analyzer struct {

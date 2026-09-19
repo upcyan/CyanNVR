@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
             </g>
             <circle cx="41" cy="51" r="9" fill="#2ea8ff" />
           </svg>
-          <span>SimpleNVR</span>
+          <span>CyanNVR</span>
         </div>
         <nav class="nav">
           <router-link to="/live" class="nav-item" active-class="on">

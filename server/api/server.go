@@ -10,11 +10,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"simplenvr/server/auth"
-	"simplenvr/server/config"
-	"simplenvr/server/pkg/hls"
-	"simplenvr/server/pkg/recorder"
-	"simplenvr/server/store"
+	"cyannvr/server/auth"
+	"cyannvr/server/config"
+	"cyannvr/server/pkg/hls"
+	"cyannvr/server/pkg/recorder"
+	"cyannvr/server/store"
 )
 
 type Server struct {
@@ -83,7 +83,7 @@ func (s *Server) loadSettings() {
 	if isLegacyDetectURL(s.settings.AI.DetectURL) {
 		target := s.cfg.AIDetectURL
 		if target == "" {
-			target = "unix:/tmp/simplenvr-ai.sock"
+			target = "unix:/tmp/cyannvr-ai.sock"
 		}
 		log.Printf("migrating AI detect url %q -> %q", s.settings.AI.DetectURL, target)
 		s.settings.AI.DetectURL = target

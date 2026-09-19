@@ -34,7 +34,7 @@ export async function probe(base: string): Promise<boolean> {
     clearTimeout(t)
     if (!res.ok) return false
     const j = await res.json()
-    return j && j.name === 'SimpleNVR'
+    return j && j.name === 'CyanNVR'
   } catch {
     return false
   }

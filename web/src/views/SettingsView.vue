@@ -440,7 +440,7 @@ async function removeUser(u: ManagedUser) {
           <van-field
             v-model="s.ai.detectUrl"
             label="检测服务地址"
-            placeholder="unix:/tmp/simplenvr-ai.sock"
+            placeholder="unix:/tmp/cyannvr-ai.sock"
           />
           <van-cell title="通信方式" :label="aiTransportHint" />
           <!-- 推理后端：让用户一眼看出当前是 CPU 还是 GPU 在推理 -->

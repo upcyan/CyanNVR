@@ -1,4 +1,4 @@
-# SimpleNVR
+# CyanNVR
 
 基于 ONVIF / RTSP 的轻量网络录像机。Go 后端 + Vue3 移动端优先前端（PWA），支持手机网页、Android WebView 壳、PC 浏览器。
 

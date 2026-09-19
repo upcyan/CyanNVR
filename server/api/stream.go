@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"simplenvr/server/auth"
-	"simplenvr/server/models"
+	"cyannvr/server/auth"
+	"cyannvr/server/models"
 )
 
 // streamAuth allows token via header or query (for <video>/hls native playback).

@@ -12,7 +12,7 @@ WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go env -w GOPROXY=https://goproxy.cn,direct && go mod download
 COPY server/ ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/simplenvr .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/cyannvr .
 
 # ---- Stage 3: runtime ----
 FROM hub.rat.dev/library/debian:bookworm-slim
@@ -58,7 +58,7 @@ ARG YOLO_MODEL_URL=https://github.com/ultralytics/assets/releases/download/v8.4.
 ADD ${YOLO_MODEL_URL} /models/yolov8n.onnx
 
 WORKDIR /app
-COPY --from=build /out/simplenvr /app/simplenvr
+COPY --from=build /out/cyannvr /app/cyannvr
 COPY --from=web /app/web/dist /app/dist
 COPY server/pkg/ai/ai_detect.py /app/ai_detect.py
 
@@ -66,7 +66,7 @@ ENV NVR_PORT=8080 \
     NVR_DATA=/data \
     NVR_WEB=/app/dist \
     NVR_AI_DETECT_SCRIPT=/app/ai_detect.py \
-    NVR_AI_DETECT_URL=unix:/tmp/simplenvr-ai.sock \
+    NVR_AI_DETECT_URL=unix:/tmp/cyannvr-ai.sock \
     NVR_AI_MODEL_PATH=/models/yolov8n.onnx \
     NVR_AI_MODELS_DIR=/data/models \
     PYTHON=python3 \
@@ -75,4 +75,4 @@ VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD ["wget", "-qO-", "http://127.0.0.1:8080/api/health"]
-ENTRYPOINT ["/app/simplenvr"]
+ENTRYPOINT ["/app/cyannvr"]

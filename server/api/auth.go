@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"simplenvr/server/auth"
-	"simplenvr/server/models"
+	"cyannvr/server/auth"
+	"cyannvr/server/models"
 )
 
 type loginReq struct {

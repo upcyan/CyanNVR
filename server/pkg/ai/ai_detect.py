@@ -400,7 +400,7 @@ def _initial_load():
     here = os.path.dirname(os.path.abspath(__file__))
     cands = [MODEL_PATH,
              os.path.join(here, "models", "yolov8n.onnx"),
-             os.path.join(here, "..", "..", "..", "..", "SimpleNVR", "models", "yolov8n.onnx")]
+             os.path.join(here, "..", "..", "..", "..", "CyanNVR", "models", "yolov8n.onnx")]
     # prefer larger (s/m) models if present
     for pat in ("yolov8m*.onnx", "yolov8s*.onnx", "*rtdetr*.onnx"):
         cands += sorted(glob.glob(os.path.join(MODELS_DIR or os.path.join(here, "models"), pat)))

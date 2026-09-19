@@ -8,7 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"simplenvr/server/models"
+	"cyannvr/server/models"
 )
 
 type Store struct {

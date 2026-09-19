@@ -14,9 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"simplenvr/server/models"
-	"simplenvr/server/pkg/ffmpeg"
-	"simplenvr/server/pkg/onvifx"
+	"cyannvr/server/models"
+	"cyannvr/server/pkg/ffmpeg"
+	"cyannvr/server/pkg/onvifx"
 )
 
 func (s *Server) listDevices(c *gin.Context) {

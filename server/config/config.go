@@ -56,7 +56,7 @@ func Load() *Config {
 		AIBaseURL:   env("NVR_AI_BASE_URL", "http://localhost:11434/v1"),
 		// 默认使用 Unix Domain Socket 与内置检测进程通信：
 		// 不经网络协议栈、不占端口、不对外暴露（此前默认绑 0.0.0.0 存在暴露风险）
-		AIDetectURL: env("NVR_AI_DETECT_URL", "unix:/tmp/simplenvr-ai.sock"),
+		AIDetectURL: env("NVR_AI_DETECT_URL", "unix:/tmp/cyannvr-ai.sock"),
 		AIModel:     env("NVR_AI_MODEL", "person-detection"),
 		AIModelPath: env("NVR_AI_MODEL_PATH", ""),
 		AIAPIKey:    env("NVR_AI_API_KEY", ""),

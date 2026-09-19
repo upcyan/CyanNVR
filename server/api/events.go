@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"simplenvr/server/models"
+	"cyannvr/server/models"
 )
 
 func (s *Server) listEvents(c *gin.Context) {

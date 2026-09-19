@@ -1,4 +1,4 @@
-module simplenvr/server
+module cyannvr/server
 
 go 1.25.0
 

@@ -1,7 +1,7 @@
 services:
-  simplenvr:
-    image: ${REGISTRY:-your-dockerhub-username}/simplenvr:${TAG:-latest}
-    container_name: simplenvr
+  cyannvr:
+    image: ${REGISTRY:-your-dockerhub-username}/cyannvr:${TAG:-latest}
+    container_name: cyannvr
     restart: unless-stopped
     ports:
       - "8080:8080"

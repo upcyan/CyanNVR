@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"simplenvr/server/config"
+	"cyannvr/server/config"
 )
 
 // newTestHls 构造一个只依赖临时目录的 Hls 实例（不启动 janitor）。

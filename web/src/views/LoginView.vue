@@ -44,7 +44,7 @@ async function submit() {
         </g>
         <circle cx="41" cy="51" r="9" fill="#2ea8ff" />
       </svg>
-      <h1>SimpleNVR</h1>
+      <h1>CyanNVR</h1>
       <p>网络视频录像机</p>
     </div>
 

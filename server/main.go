@@ -10,20 +10,20 @@ import (
 	"strings"
 	"time"
 
-	"simplenvr/server/api"
-	"simplenvr/server/auth"
-	"simplenvr/server/config"
-	"simplenvr/server/models"
-	"simplenvr/server/pkg/ai"
-	"simplenvr/server/pkg/ffmpeg"
-	"simplenvr/server/pkg/hls"
-	"simplenvr/server/pkg/recorder"
-	"simplenvr/server/store"
+	"cyannvr/server/api"
+	"cyannvr/server/auth"
+	"cyannvr/server/config"
+	"cyannvr/server/models"
+	"cyannvr/server/pkg/ai"
+	"cyannvr/server/pkg/ffmpeg"
+	"cyannvr/server/pkg/hls"
+	"cyannvr/server/pkg/recorder"
+	"cyannvr/server/store"
 )
 
 func main() {
 	cfg := config.Load()
-	if cfg.JWTSecret == "simplenvr-dev-secret-change-me" {
+	if cfg.JWTSecret == "cyannvr-dev-secret-change-me" {
 		log.Printf("WARNING: using default JWT secret; set NVR_JWT_SECRET in production")
 	}
 
@@ -70,7 +70,7 @@ func main() {
 	defer rec.Stop()
 
 	addr := ":" + cfg.Port
-	log.Printf("SimpleNVR listening on %s", addr)
+	log.Printf("CyanNVR listening on %s", addr)
 	log.Printf("ffmpeg available: %v", ffmpeg.Exists(cfg.Ffmpeg))
 	if cfg.WebDir != "" {
 		if _, err := os.Stat(filepath.Join(cfg.WebDir, "index.html")); err == nil {
@@ -129,7 +129,7 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 func loadOrCreateJWTSecret(cfg *config.Config) (string, error) {
 	if cfg.JWTSecret != "" {
 		// Reject known weak/default secrets.
-		if cfg.JWTSecret == "simplenvr-dev-secret-change-me" || len(cfg.JWTSecret) < 16 {
+		if cfg.JWTSecret == "cyannvr-dev-secret-change-me" || len(cfg.JWTSecret) < 16 {
 			log.Fatal("REFUSING weak JWT secret — set NVR_JWT_SECRET to a strong random value (>= 16 chars)")
 		}
 		return cfg.JWTSecret, nil

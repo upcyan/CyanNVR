@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"simplenvr/server/config"
-	"simplenvr/server/models"
-	"simplenvr/server/pkg/ai"
-	"simplenvr/server/pkg/ffmpeg"
-	"simplenvr/server/store"
+	"cyannvr/server/config"
+	"cyannvr/server/models"
+	"cyannvr/server/pkg/ai"
+	"cyannvr/server/pkg/ffmpeg"
+	"cyannvr/server/store"
 )
 
 type Manager struct {

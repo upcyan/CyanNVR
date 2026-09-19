@@ -37,3 +37,6 @@ PROJECT_STRUCTURE.md
 # Python 缓存
 __pycache__/
 *.pyc
+
+# UI 验证截图(本机产物)
+.ui-shots/

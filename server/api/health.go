@@ -6,14 +6,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"simplenvr/server/auth"
-	"simplenvr/server/models"
+	"cyannvr/server/auth"
+	"cyannvr/server/models"
 )
 
 func (s *Server) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ok",
-		"name":   "SimpleNVR",
+		"name":   "CyanNVR",
 		"time":   time.Now().Format(time.RFC3339),
 		"auth":   true,
 	})

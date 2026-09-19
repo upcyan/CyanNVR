@@ -24,5 +24,5 @@
   <circle cx="75" cy="47" r="4" fill="#ff4444"/>
   
   <!-- 底部文字 -->
-  <text x="50" y="88" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">SimpleNVR</text>
+  <text x="50" y="88" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">CyanNVR</text>
 </svg>

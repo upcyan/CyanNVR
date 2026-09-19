@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"simplenvr/server/pkg/ai"
+	"cyannvr/server/pkg/ai"
 )
 
 // aiWorkerURL returns the configured local detect worker base URL.
