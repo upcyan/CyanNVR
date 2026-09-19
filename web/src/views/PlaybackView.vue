@@ -48,13 +48,30 @@ const ym = computed(() => dateStr.value.slice(0, 7))
 const totalMinutes = computed(() => Math.round(segments.value.reduce((a, s) => a + (s.end - s.start), 0) / 60000))
 
 async function loadMonth() {
-  monthDays.value = await fetchMonthRecords(deviceId.value, ym.value)
+  if (!deviceId.value) {
+    monthDays.value = []
+    return
+  }
+  try {
+    monthDays.value = await fetchMonthRecords(deviceId.value, ym.value)
+  } catch {
+    monthDays.value = []
+  }
 }
 
 async function loadSegments() {
+  if (!deviceId.value) {
+    segments.value = []
+    return
+  }
   loading.value = true
-  segments.value = await fetchDaySegments(deviceId.value, dateStr.value)
-  loading.value = false
+  try {
+    segments.value = await fetchDaySegments(deviceId.value, dateStr.value)
+  } catch {
+    segments.value = []
+  } finally {
+    loading.value = false
+  }
   rebuildPlayable()
 }
 
@@ -174,17 +191,40 @@ function pickDevice() {
   showDevicePicker.value = true
 }
 
-onMounted(() => {
+// 选择设备：优先用路由参数，否则用第一个设备。
+// 返回是否成功选到设备。
+function pickInitialDevice(): boolean {
   const q = route.query.device as string | undefined
   if (q && store.byId(q)) {
     deviceId.value = q
-  } else if (store.devices.length) {
-    deviceId.value = store.devices[0].id
+    return true
   }
-  loadMonth()
-  loadSegments()
+  if (store.devices.length) {
+    deviceId.value = store.devices[0].id
+    return true
+  }
+  return false
+}
+
+onMounted(() => {
+  const ok = pickInitialDevice()
+  if (ok) {
+    loadMonth()
+    loadSegments()
+  }
   startTimer()
 })
+
+// 关键修复：App.vue 的 devices.load() 是异步的，直接进入/刷新本页时
+// 设备列表可能尚未就绪。此处等列表到位后自动选设备并加载，
+// 否则 deviceId 为空会请求 /api/devices//recordings 而始终没有画面。
+watch(
+  () => store.devices.length,
+  () => {
+    // 只负责选设备；后续加载由 deviceId 的 watch 统一驱动，避免重复请求
+    if (!deviceId.value) pickInitialDevice()
+  },
+)
 
 watch(deviceId, () => {
   loadMonth()
