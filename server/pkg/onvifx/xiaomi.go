@@ -106,10 +106,14 @@ func DiscoverXiaomi(ctx context.Context) []Found {
 					name = "小米摄像头 (" + model + ")"
 				}
 				f := Found{
-					IP:     ip,
-					Port:   XiaomiRTSPSPort,
-					Name:   name,
-					Vendor: "xiaomi",
+					IP:           ip,
+					Port:         XiaomiRTSPSPort,
+					Name:         name,
+					Vendor:       "xiaomi",
+					Manufacturer: VendorName("xiaomi"),
+					// 厂商判定依据是 8554 端口特征 + RTSP 路径探测，
+					// 与 ONVIF 自报、MAC 查表都不同，单独标注便于排查。
+					VendorSource: "xiaomi",
 				}
 				if path != "" {
 					f.RTSPURL = fmt.Sprintf("rtsp://%s:%d%s", ip, XiaomiRTSPSPort, path)

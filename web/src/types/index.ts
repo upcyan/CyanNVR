@@ -31,8 +31,18 @@ export interface DiscoveredDevice {
   port: number
   name: string
   xaddr?: string
-  /** 发现来源：onvif（标准广播）或 xiaomi（端口特征扫描） */
+  /** 归一化厂商标识（hikvision/dahua/xiaomi/tplink/unknown 等），决定列表里显示哪个 logo */
   vendor?: string
+  /** 厂商展示名，例如 "TP-LINK" */
+  manufacturer?: string
+  /** 厂商判定依据：onvif（设备自报）/ oui（MAC 查表）/ xiaomi（端口特征）/ none */
+  vendorSource?: string
+  /** 设备型号，来自 ONVIF scope hardware */
+  hardware?: string
+  /** 设备位置，来自 ONVIF scope location */
+  location?: string
+  /** 设备网卡 MAC，仅同网段时填充 */
+  mac?: string
   /** 探测到的直连拉流地址（小米摄像头会带上） */
   rtspUrl?: string
 }

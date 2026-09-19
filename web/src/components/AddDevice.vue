@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { Device, DiscoveredDevice, Stream } from '../types'
 import { isBackend, probeStreams, testDevice } from '../api'
+import VendorBadge from './VendorBadge.vue'
 
 const props = defineProps<{
   show: boolean
@@ -448,11 +449,22 @@ function applyDevice(d: Device) {
             <van-cell
               v-for="d in devices"
               :key="d.ip"
-              :title="d.name"
-              :label="`${d.ip}:${d.port}`"
               clickable
               @click="selectedIp = d.ip"
             >
+              <template #title>
+                <div class="dev-title">
+                  <span class="dev-name">{{ d.name }}</span>
+                  <VendorBadge :vendor="d.vendor" :source="d.vendorSource" />
+                </div>
+              </template>
+              <template #label>
+                <div class="dev-label">
+                  <span class="dev-addr">{{ d.ip }}:{{ d.port }}</span>
+                  <span v-if="d.hardware" class="dev-extra">{{ d.hardware }}</span>
+                  <span v-if="d.mac" class="dev-extra dev-mac">{{ d.mac }}</span>
+                </div>
+              </template>
               <template #right-icon>
                 <van-radio :name="d.ip" @click.stop />
               </template>
@@ -486,5 +498,37 @@ function applyDevice(d: Device) {
   padding: 10px 0 14px;
   font-size: 13px;
   color: var(--nvr-text-2);
+}
+/* 发现结果一行：设备名 + 厂商徽章 */
+.dev-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.dev-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dev-addr {
+  font-variant-numeric: tabular-nums;
+}
+/* 发现结果的次级信息：型号、MAC */
+.dev-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.dev-extra {
+  color: var(--nvr-text-3, #969799);
+}
+.dev-mac {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
 }
 </style>
