@@ -90,7 +90,9 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 		"-an",
 	}
 	if transcode {
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-g", "30")
+		// 自动选择可用硬件编码器（NVENC > VAAPI > 软编），探测结果全局缓存
+		kind, detail := ffmpeg.ProbeH264Encoder(h.cfg.Ffmpeg)
+		args = append(args, ffmpeg.H264EncodeArgs(kind, detail)...)
 	} else {
 		args = append(args, "-c:v", "copy")
 	}

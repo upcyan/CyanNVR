@@ -206,8 +206,10 @@ func (w *Worker) recordInputArgs() []string {
 	return []string{"-rtsp_transport", "tcp", "-i", w.withCreds(w.streamURL("record"))}
 }
 
-func transcodeArgs() []string {
-	return []string{"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-g", "30"}
+func transcodeArgs(ffmpegPath string) []string {
+	// 与回放转码保持一致：优先硬件编码（NVENC/VAAPI），不可用时回退软编
+	kind, detail := ffmpeg.ProbeH264Encoder(ffmpegPath)
+	return ffmpeg.H264EncodeArgs(kind, detail)
 }
 
 func (w *Worker) startProcs() error {
@@ -236,7 +238,7 @@ func (w *Worker) startProcs() error {
 	}
 	codec := []string{"-c", "copy"}
 	if transcode {
-		codec = transcodeArgs()
+		codec = transcodeArgs(w.mgr.cfg.Ffmpeg)
 	}
 
 	recArgs := append(append([]string{}, recIn...), "-an")
@@ -247,7 +249,7 @@ func (w *Worker) startProcs() error {
 
 	liveArgs := append(append([]string{}, in...), "-an")
 	if transcode {
-		liveArgs = append(liveArgs, transcodeArgs()...)
+		liveArgs = append(liveArgs, transcodeArgs(w.mgr.cfg.Ffmpeg)...)
 	} else {
 		liveArgs = append(liveArgs, "-c:v", "copy")
 	}
