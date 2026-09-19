@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, RecordingSegment } from '../types'
@@ -58,9 +58,11 @@ async function loadSegments() {
   rebuildPlayable()
 }
 
-function rebuildPlayable() {
+async function rebuildPlayable() {
   playable?.destroy()
   playable = null
+  // 等待 DOM 更新完成再取 video 元素，避免 ref 尚未就绪导致画面空白
+  await nextTick()
   const el = playerRef.value?.getVideoEl()
   if (!el || !device.value || !segments.value.length) return
   const start = segments.value[0].start
@@ -227,9 +229,9 @@ onBeforeUnmount(() => {
 
       <div class="pb-right">
         <div class="player-wrap">
-          <van-loading v-if="loading" class="center" />
+          <!-- 播放器常驻：原先 v-if/v-else 会在加载时销毁并重建组件，
+               导致 playerRef 时序错乱、画面闪烁与播放位置重置 -->
           <PlaybackPlayer
-            v-else
             ref="playerRef"
             :display-time="currentTs"
             :playing="playing"
@@ -240,6 +242,9 @@ onBeforeUnmount(() => {
             @speed="onSpeed"
             @fullscreen="onFullscreen"
           />
+          <div v-if="loading" class="loading-mask">
+            <van-loading />
+          </div>
         </div>
 
         <div class="timeline-wrap">
@@ -306,10 +311,14 @@ onBeforeUnmount(() => {
   padding: 0 12px;
   min-height: 120px;
 }
-.center {
+.loading-mask {
+  position: absolute;
+  inset: 0;
   display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 40px 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2;
 }
 .timeline-wrap {
   margin-top: 8px;

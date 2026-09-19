@@ -105,6 +105,21 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 		<-time.After(12 * time.Hour)
 		proc.Kill()
 	}()
+
+	// 等待播放列表就绪后再返回。
+	// ffmpeg 必须先编码完首个分片才会写出 index.m3u8（转码场景通常 1-3 秒），
+	// 若直接返回 URL，前端立即加载会得到 404 —— 这正是回放页打不开的原因。
+	playlist := filepath.Join(dir, "index.m3u8")
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if fi, statErr := os.Stat(playlist); statErr == nil && fi.Size() > 0 {
+			break
+		}
+		if proc != nil && !proc.Running() {
+			break // ffmpeg 已退出（如源文件损坏），无需再等
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	return &Session{Dir: dir, Name: name}, nil
 }
 

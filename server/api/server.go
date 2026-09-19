@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -74,6 +76,28 @@ func (s *Server) loadSettings() {
 		return
 	}
 	_ = json.Unmarshal(data, s.settings)
+
+	// 配置迁移：早期版本把内置检测进程地址写作 TCP(http://localhost:11435)，
+	// 该端口现已不再监听（改为 Unix Domain Socket）。
+	// 此处自动迁移，否则升级后旧配置会覆盖环境变量默认值，导致 AI 接口 502。
+	if isLegacyDetectURL(s.settings.AI.DetectURL) {
+		target := s.cfg.AIDetectURL
+		if target == "" {
+			target = "unix:/tmp/simplenvr-ai.sock"
+		}
+		log.Printf("migrating AI detect url %q -> %q", s.settings.AI.DetectURL, target)
+		s.settings.AI.DetectURL = target
+		s.saveSettings()
+	}
+}
+
+// isLegacyDetectURL 判断是否为旧版本遗留的本地 TCP 检测地址。
+func isLegacyDetectURL(u string) bool {
+	switch strings.TrimRight(u, "/") {
+	case "http://localhost:11435", "http://127.0.0.1:11435", "":
+		return true
+	}
+	return false
 }
 
 func defaultSettings() AppSettings {

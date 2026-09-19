@@ -49,7 +49,7 @@ func New(cfg *config.Config, st *store.Store, onEvent func(string, string, strin
 	return &Analyzer{
 		cfg:     cfg,
 		st:      st,
-		http:    newDetectClient(cfg.AIDetectURL),
+		http:    NewDetectClient(cfg.AIDetectURL),
 		dirs:    map[string]*DeviceState{},
 		onEvent: onEvent,
 	}
@@ -58,20 +58,20 @@ func New(cfg *config.Config, st *store.Store, onEvent func(string, string, strin
 // isUnixDetect 判断检测地址是否使用 Unix Domain Socket。
 func isUnixDetect(u string) bool { return strings.HasPrefix(u, "unix:") }
 
-// detectEndpoint 把配置里的检测地址归一化为可用的 HTTP URL。
+// DetectEndpoint 把配置里的检测地址归一化为可用的 HTTP URL（导出以便 api 层复用）。
 // UDS 模式下 host 仅为占位，真正的连接目标由 DialContext 决定。
-func detectEndpoint(cfgURL string) string {
+func DetectEndpoint(cfgURL string) string {
 	if isUnixDetect(cfgURL) {
 		return "http://unix/"
 	}
 	return strings.TrimRight(cfgURL, "/") + "/"
 }
 
-// newDetectClient 依据配置构造 HTTP 客户端。
+// NewDetectClient 依据配置构造 HTTP 客户端（导出以便 api 层复用）。
 //
 // unix:/path 形式走 Unix Domain Socket：数据不经网络协议栈，
 // 属于真正的进程间通信（IPC），延迟低于 TCP 回环，且天然不对外暴露。
-func newDetectClient(cfgURL string) *http.Client {
+func NewDetectClient(cfgURL string) *http.Client {
 	if isUnixDetect(cfgURL) {
 		sock := strings.TrimPrefix(cfgURL, "unix:")
 		return &http.Client{
@@ -94,9 +94,9 @@ func StartLocalWorker(detectURL string) {
 	if detectURL == "" {
 		return
 	}
-	client := newDetectClient(detectURL)
+	client := NewDetectClient(detectURL)
 	client.Timeout = 2 * time.Second
-	if resp, err := client.Get(detectEndpoint(detectURL)); err == nil {
+	if resp, err := client.Get(DetectEndpoint(detectURL)); err == nil {
 		resp.Body.Close()
 		log.Printf("AI detect worker already running at %s", detectURL)
 		return
@@ -253,7 +253,7 @@ func (a *Analyzer) detectLocal(jpg []byte) (result, float64, error) {
 	}
 	payload := map[string]any{"image": base64.StdEncoding.EncodeToString(jpg)}
 	body, _ := json.Marshal(payload)
-	url := detectEndpoint(a.cfg.AIDetectURL)
+	url := DetectEndpoint(a.cfg.AIDetectURL)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return result{}, 0, err

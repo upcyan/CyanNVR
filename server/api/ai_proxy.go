@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"simplenvr/server/pkg/ai"
 )
 
 // aiWorkerURL returns the configured local detect worker base URL.
@@ -17,14 +19,18 @@ func (s *Server) aiWorkerURL() string {
 }
 
 func (s *Server) aiProxy(method, path string, body io.Reader) ([]byte, int, error) {
-	req, err := http.NewRequest(method, s.aiWorkerURL()+path, body)
+	base := s.aiWorkerURL()
+	// 复用 ai 包的地址归一化与客户端构造：检测进程默认走 Unix Domain Socket，
+	// 若此处仍按 http:// 拼 URL，会得到 unix:/path/models 这类无效地址而返回 502
+	req, err := http.NewRequest(method, ai.DetectEndpoint(base)+strings.TrimPrefix(path, "/"), body)
 	if err != nil {
 		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := ai.NewDetectClient(base)
+	client.Timeout = 10 * time.Second
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err

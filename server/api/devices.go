@@ -343,6 +343,12 @@ func (s *Server) deviceSnapshot(c *gin.Context) {
 
 func (s *Server) deviceRecordings(c *gin.Context) {
 	id := c.Param("id")
+	// 校验设备存在：原先对不存在的设备也返回 200 + 空列表，
+	// 调用方无法区分"设备不存在"与"当日无录像"
+	if d, err := s.st.GetDevice(id); err != nil || d == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
 	dateStr := c.Query("date")
 	if dateStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "date required"})
