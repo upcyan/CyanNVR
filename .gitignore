@@ -17,12 +17,12 @@ docker/payload.json
 docker/test_*.py
 docker/check_devs.py
 
-# 部署脚本
+# ===== 以下为本机运维产物，不属于主项目，禁止提交 =====
 scripts/
-
-# 保留根目录的启动脚本
-!start_softrouter.sh
-!deploy_now.sh
-
-# 保留文档目录
-!docs/
+docs/
+*.sh
+.git-credentials.example
+docker-compose.softrouter.yml
+QUICK_START_BYPASS.md
+SOFTRouter_COMPLETE_GUIDE.md
+FINAL_PUSH_GUIDE.md
