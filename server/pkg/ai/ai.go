@@ -2,11 +2,13 @@ package ai
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -47,10 +49,42 @@ func New(cfg *config.Config, st *store.Store, onEvent func(string, string, strin
 	return &Analyzer{
 		cfg:     cfg,
 		st:      st,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    newDetectClient(cfg.AIDetectURL),
 		dirs:    map[string]*DeviceState{},
 		onEvent: onEvent,
 	}
+}
+
+// isUnixDetect 判断检测地址是否使用 Unix Domain Socket。
+func isUnixDetect(u string) bool { return strings.HasPrefix(u, "unix:") }
+
+// detectEndpoint 把配置里的检测地址归一化为可用的 HTTP URL。
+// UDS 模式下 host 仅为占位，真正的连接目标由 DialContext 决定。
+func detectEndpoint(cfgURL string) string {
+	if isUnixDetect(cfgURL) {
+		return "http://unix/"
+	}
+	return strings.TrimRight(cfgURL, "/") + "/"
+}
+
+// newDetectClient 依据配置构造 HTTP 客户端。
+//
+// unix:/path 形式走 Unix Domain Socket：数据不经网络协议栈，
+// 属于真正的进程间通信（IPC），延迟低于 TCP 回环，且天然不对外暴露。
+func newDetectClient(cfgURL string) *http.Client {
+	if isUnixDetect(cfgURL) {
+		sock := strings.TrimPrefix(cfgURL, "unix:")
+		return &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, "unix", sock)
+				},
+			},
+		}
+	}
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 // StartLocalWorker launches the bundled Python detection worker if the detect
@@ -60,9 +94,9 @@ func StartLocalWorker(detectURL string) {
 	if detectURL == "" {
 		return
 	}
-	u := strings.TrimRight(detectURL, "/") + "/"
-	client := &http.Client{Timeout: 2 * time.Second}
-	if resp, err := client.Get(u); err == nil {
+	client := newDetectClient(detectURL)
+	client.Timeout = 2 * time.Second
+	if resp, err := client.Get(detectEndpoint(detectURL)); err == nil {
 		resp.Body.Close()
 		log.Printf("AI detect worker already running at %s", detectURL)
 		return
@@ -81,14 +115,13 @@ func StartLocalWorker(detectURL string) {
 	if py == "" {
 		py = "python"
 	}
-	port := "11435"
-	if i := strings.LastIndex(u, ":"); i >= 0 {
-		rest := strings.TrimSuffix(u[i+1:], "/")
-		if rest != "" {
-			port = rest
-		}
+	// 参数透传：UDS 直接传 unix:/path，TCP 传 host:port
+	arg := detectURL
+	if !isUnixDetect(detectURL) {
+		arg = strings.TrimPrefix(strings.TrimPrefix(detectURL, "http://"), "https://")
+		arg = strings.TrimSuffix(arg, "/")
 	}
-	cmd := exec.Command(py, script, port)
+	cmd := exec.Command(py, script, arg)
 	cmd.Env = append(os.Environ(), "NVR_AI_MODEL_PATH="+modelPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -220,7 +253,7 @@ func (a *Analyzer) detectLocal(jpg []byte) (result, float64, error) {
 	}
 	payload := map[string]any{"image": base64.StdEncoding.EncodeToString(jpg)}
 	body, _ := json.Marshal(payload)
-	url := strings.TrimRight(a.cfg.AIDetectURL, "/") + "/"
+	url := detectEndpoint(a.cfg.AIDetectURL)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return result{}, 0, err

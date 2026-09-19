@@ -37,6 +37,7 @@ ENV NVR_PORT=8080 \
     NVR_DATA=/data \
     NVR_WEB=/app/dist \
     NVR_AI_DETECT_SCRIPT=/app/ai_detect.py \
+    NVR_AI_DETECT_URL=unix:/tmp/simplenvr-ai.sock \
     NVR_AI_MODEL_PATH=/models/yolov8n.onnx \
     PYTHON=python3 \
     GIN_MODE=release

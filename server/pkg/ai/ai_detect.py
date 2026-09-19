@@ -24,6 +24,7 @@ import base64
 import glob
 import json
 import os
+import socket
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -329,10 +330,58 @@ class Handler(BaseHTTPRequestHandler):
 _initial_load()
 
 
+class _UnixHTTPServer(HTTPServer):
+    """基于 Unix Domain Socket 的 HTTP 服务。
+
+    相比 TCP：不占用端口、不经过网络协议栈（真 IPC，延迟更低），
+    且文件权限可限制为仅本进程用户可写，绝不会被局域网访问。
+    """
+
+    address_family = socket.AF_UNIX
+    daemon_threads = True
+
+    def server_bind(self):
+        # 清理上次遗留的 socket 文件，否则 bind 会失败
+        try:
+            os.unlink(self.server_address)
+        except OSError:
+            pass
+        self.socket.bind(self.server_address)
+        os.chmod(self.server_address, 0o600)
+        self.server_name = "localhost"
+        self.server_port = 0
+
+    def server_activate(self):
+        self.socket.listen(self.request_queue_size)
+
+
+def _make_server(addr):
+    """按地址创建服务：unix:/path 走 UDS，host:port 走 TCP。
+
+    默认（无参数）绑 127.0.0.1，不再绑 0.0.0.0——
+    检测接口仅服务本机后端，暴露到局域网既无必要也不安全。
+    """
+    if addr.startswith("unix:"):
+        path = addr[len("unix:"):]
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        return _UnixHTTPServer(path, Handler), f"socket={path}"
+
+    if ":" in addr:
+        host, _, port_s = addr.rpartition(":")
+        host = host or "127.0.0.1"
+        port = int(port_s)
+    else:
+        host, port = "127.0.0.1", int(addr)
+    return HTTPServer((host, port), Handler), f"addr={host}:{port}"
+
+
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 11435
-    print(f"detect worker engine={_engine} port={port}", flush=True)
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    addr = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1:11435"
+    srv, desc = _make_server(addr)
+    print(f"detect worker engine={_engine} {desc}", flush=True)
+    srv.serve_forever()
 
 
 if __name__ == "__main__":

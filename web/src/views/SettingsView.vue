@@ -43,6 +43,18 @@ function onAIModeConfirm({ selectedValues }: any) {
   showAIModePicker.value = false
 }
 
+// 让用户明确当前检测服务是"本机进程间通信"还是"网络调用"
+const aiTransportHint = computed(() => {
+  const url = s.ai.detectUrl || ''
+  if (url.startsWith('unix:')) {
+    return 'Unix Socket 本机进程间通信：不经网络协议栈、不占端口、不对外暴露'
+  }
+  if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+    return '本机 TCP 回环（127.0.0.1），数据不出本机'
+  }
+  return '远程检测服务（http://host:port），请确认网络与鉴权'
+})
+
 const usedPct = computed(() => {
   const { totalGB, usedGB } = store.storage
   if (!totalGB) return 0
@@ -368,7 +380,12 @@ async function removeUser(u: ManagedUser) {
           @click="showAIModePicker = true"
         />
         <template v-if="s.ai.mode === 'local'">
-          <van-field v-model="s.ai.detectUrl" label="本地检测地址" placeholder="http://localhost:11435" />
+          <van-field
+            v-model="s.ai.detectUrl"
+            label="检测服务地址"
+            placeholder="unix:/tmp/simplenvr-ai.sock"
+          />
+          <van-cell title="通信方式" :label="aiTransportHint" />
           <van-field
             v-model="s.ai.modelPath"
             is-link
@@ -398,7 +415,19 @@ async function removeUser(u: ManagedUser) {
         </van-cell>
         <van-cell title="触发阈值" label="置信度达到该值才记录">
           <template #value>
-            <van-slider v-model="s.ai.threshold" :min="0.1" :max="1" :step="0.05" style="width: 120px" />
+            <!-- 原先只有滑块、无数值显示，用户无法得知当前阈值；
+                 现补充实时数值，并在松手时持久化 -->
+            <div class="slider-box">
+              <van-slider
+                v-model="s.ai.threshold"
+                :min="0.1"
+                :max="1"
+                :step="0.05"
+                style="width: 110px"
+                @change="store.set({ ai: { ...s.ai, threshold: s.ai.threshold } })"
+              />
+              <span class="days">{{ (s.ai.threshold ?? 0.5).toFixed(2) }}</span>
+            </div>
           </template>
         </van-cell>
         <van-field
