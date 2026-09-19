@@ -19,6 +19,7 @@ FROM hub.rat.dev/library/debian:bookworm-slim
 RUN sed -i 's@deb.debian.org@mirrors.aliyun.com@g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true \
     && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates tzdata wget \
+        libva2 libva-drm2 mesa-va-drivers vainfo \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple \
         onnxruntime opencv-python-headless numpy \
