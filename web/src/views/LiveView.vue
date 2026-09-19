@@ -161,7 +161,7 @@ function onViewerPlayback(d: Device) {
       @select="onActionSelect"
     />
 
-    <van-popup v-model:show="showMulti" position="right" :style="{ width: '100%', height: '100%', background: '#000' }">
+    <van-popup v-model:show="showMulti" position="right" teleport="body" :style="{ width: '100%', height: '100%', background: '#000' }">
       <div class="multi">
         <div class="mhd">
           <span>多画面</span>

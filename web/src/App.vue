@@ -8,9 +8,10 @@ import { useNotifications } from './utils/notify'
 const settings = useSettingsStore()
 const route = useRoute()
 
-// 登录页与服务器设置页属于独立流程，不应出现底部导航
-const HIDE_TABBAR_ROUTES = ['/login', '/server']
-const showTabbar = computed(() => !HIDE_TABBAR_ROUTES.includes(route.path))
+// 登录页与服务器设置页属于独立流程，不应出现侧边栏与底部导航
+const STANDALONE_ROUTES = ['/login', '/server']
+const showTabbar = computed(() => !STANDALONE_ROUTES.includes(route.path))
+const showSidebar = computed(() => isDesktop.value && showTabbar.value)
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(false)
@@ -63,7 +64,7 @@ onBeforeUnmount(() => {
       class="app-shell"
       :class="[isDesktop ? 'desktop' : '']"
     >
-      <aside v-if="isDesktop" class="sidebar">
+      <aside v-if="showSidebar" class="sidebar">
         <div class="brand">
           <svg viewBox="0 0 100 100" class="logo">
             <rect width="100" height="100" rx="22" fill="#171a21" />
@@ -85,7 +86,7 @@ onBeforeUnmount(() => {
             <span>录像管理</span>
           </router-link>
           <router-link to="/events" class="nav-item" active-class="on">
-            <van-icon name="bell-o" size="18" />
+            <van-icon name="bullhorn-o" size="18" />
             <span>事件记录</span>
           </router-link>
           <router-link to="/settings" class="nav-item" active-class="on">
@@ -110,7 +111,7 @@ onBeforeUnmount(() => {
       <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
         <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
         <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
-        <van-tabbar-item replace to="/events" icon="bell-o">事件</van-tabbar-item>
+        <van-tabbar-item replace to="/events" icon="bullhorn-o">事件</van-tabbar-item>
         <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
       </van-tabbar>
     </div>
