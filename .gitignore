@@ -19,8 +19,10 @@ docker/check_devs.py
 
 # 部署脚本
 scripts/
-*.sh
-!web/src/**/*.sh
+
+# 保留根目录的启动脚本
+!start_softrouter.sh
+!deploy_now.sh
 
 # 保留文档目录
 !docs/
