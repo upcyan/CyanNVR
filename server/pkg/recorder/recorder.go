@@ -153,7 +153,11 @@ func (w *Worker) inputArgs() []string {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
 	url := w.inputURL()
-	return []string{"-rtsp_transport", "tcp", "-i", url}
+	// 硬件解码参数需置于 -i 之前
+	args := []string{"-rtsp_transport", "tcp"}
+	args = append(args, ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
+	args = append(args, "-i", url)
+	return args
 }
 
 // streamURL resolves the RTSP URL for a given role ("preview" or "record"),
@@ -203,13 +207,15 @@ func (w *Worker) recordInputArgs() []string {
 	if w.dev.Source == models.SourceTest {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
-	return []string{"-rtsp_transport", "tcp", "-i", w.withCreds(w.streamURL("record"))}
+	args := []string{"-rtsp_transport", "tcp"}
+	args = append(args, ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
+	args = append(args, "-i", w.withCreds(w.streamURL("record")))
+	return args
 }
 
 func transcodeArgs(ffmpegPath string) []string {
-	// 与回放转码保持一致：优先硬件编码（NVENC/VAAPI），不可用时回退软编
-	kind, detail := ffmpeg.ProbeH264Encoder(ffmpegPath)
-	return ffmpeg.H264EncodeArgs(kind, detail)
+	// 与回放转码保持一致：按配置优先级选择编码器
+	return ffmpeg.ProbeHW(ffmpegPath).EncodeArgs()
 }
 
 func (w *Worker) startProcs() error {

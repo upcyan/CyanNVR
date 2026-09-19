@@ -11,48 +11,95 @@ import (
 	"time"
 )
 
-// EncoderKind 表示实际选用的 H.264 编码器。
+// ============================ 类型定义 ============================
+
+// EncoderKind 表示选用的视频编码器。
 type EncoderKind string
 
 const (
-	// EncoderNVENC NVIDIA 硬件编码（Tesla P4 等）。
-	EncoderNVENC EncoderKind = "h264_nvenc"
-	// EncoderVAAPI VAAPI 硬件编码（AMD/Intel 核显）。
-	EncoderVAAPI EncoderKind = "h264_vaapi"
-	// EncoderSoftware 软件编码，始终可用的兜底方案。
+	EncoderNVENC    EncoderKind = "h264_nvenc"
+	EncoderVAAPI    EncoderKind = "h264_vaapi"
 	EncoderSoftware EncoderKind = "libx264"
 )
 
-var (
-	hwOnce   sync.Once
-	hwKind   EncoderKind
-	hwDesc   string
-	hwVAAPID string
+// DecoderKind 表示选用的硬件解码后端。
+type DecoderKind string
+
+const (
+	DecoderCUDA     DecoderKind = "cuda"
+	DecoderVAAPI    DecoderKind = "vaapi"
+	DecoderSoftware DecoderKind = "sw"
 )
 
-// ProbeH264Encoder 探测可用的 H.264 编码器，结果只计算一次并缓存。
-//
-// 探测方式是"实际编码一小段测试画面"，而非仅检查编码器列表：
-// ffmpeg 普遍编译了 nvenc/vaapi 支持，但设备缺失或驱动库不全时
-// 仍会初始化失败，只有真正跑通才说明可用。
-//
-// 优先级：NVENC > VAAPI > 软件编码。
-func ProbeH264Encoder(ffmpegPath string) (EncoderKind, string) {
-	hwOnce.Do(func() {
-		hwKind, hwDesc = detectEncoder(ffmpegPath)
-		log.Printf("[hwaccel] selected encoder: %s (%s)", hwKind, hwDesc)
-	})
-	return hwKind, hwDesc
+// HWSelection 是探测得到的硬件加速方案。
+type HWSelection struct {
+	Encoder     EncoderKind
+	EncoderDesc string
+	Decoder     DecoderKind
+	DecoderDesc string
+	// Reason 说明如何得到该结果（用于日志与排查）
+	Reason string
 }
 
-// H264EncodeArgs 返回指定编码器的转码参数。
+var (
+	hwOnce sync.Once
+	hwSel  *HWSelection
+	vaapiD string
+)
+
+// ============================ 对外接口 ============================
+
+// ProbeHW 探测并缓存本机可用的硬件编解码方案。
 //
-// 传入 detail 是为了在 VAAPI 场景下取回探测到的设备节点。
-func H264EncodeArgs(kind EncoderKind, detail string) []string {
+// 配置项（均可选）：
+//
+//	NVR_HWACCEL=auto|off                        总开关，默认 auto（启用硬件加速）
+//	NVR_ENCODER_PRIORITY=nvenc,vaapi,software   编码器优先级，默认硬编优先
+//	NVR_DECODER_PRIORITY=cuda,vaapi,software    解码器优先级，默认硬解优先
+//	NVR_VAAPI_DEVICE=/dev/dri/renderD128        指定 VAAPI 设备，默认自动探测
+//
+// 探测方式是实际编解码一小段测试画面：ffmpeg 普遍编译了 nvenc/vaapi 支持，
+// 设备缺失或驱动库不全时仍会初始化失败，只有真正跑通才算可用。
+func ProbeHW(ffmpegPath string) *HWSelection {
+	hwOnce.Do(func() {
+		hwSel = detect(ffmpegPath)
+		log.Printf("[hwaccel] encoder=%s (%s) | decoder=%s (%s)",
+			hwSel.Encoder, hwSel.EncoderDesc, hwSel.Decoder, hwSel.DecoderDesc)
+		if hwSel.Reason != "" {
+			log.Printf("[hwaccel] %s", hwSel.Reason)
+		}
+	})
+	return hwSel
+}
+
+// EncodeArgs 返回编码参数。
+func (h *HWSelection) EncodeArgs() []string { return H264EncodeArgs(h.Encoder, "") }
+
+// DecodeArgs 返回解码参数（需置于 -i 之前）；软件解码返回 nil。
+func (h *HWSelection) DecodeArgs() []string { return DecodeArgs(h.Decoder) }
+
+// DecodeArgs 按解码后端返回 ffmpeg 参数（放在 -i 之前）。
+func DecodeArgs(kind DecoderKind) []string {
+	switch kind {
+	case DecoderCUDA:
+		// NVDEC：让 ffmpeg 按比特流自动选择对应 cuvid 解码器
+		return []string{"-hwaccel", "cuda"}
+	case DecoderVAAPI:
+		dev := vaapiD
+		if dev == "" {
+			dev = "/dev/dri/renderD128"
+		}
+		return []string{"-hwaccel", "vaapi", "-hwaccel_device", dev}
+	default:
+		return nil
+	}
+}
+
+// H264EncodeArgs 返回指定编码器的转码参数，目标是贴合
+// libx264 -preset veryfast（CRF 23）的观感。
+func H264EncodeArgs(kind EncoderKind, _ string) []string {
 	switch kind {
 	case EncoderNVENC:
-		// 对齐 libx264 -preset veryfast（CRF 23）的观感：
-		// CQ 模式负责质量，maxrate 限制复杂场景下的码率上限，避免无限膨胀。
 		return []string{
 			"-c:v", "h264_nvenc",
 			"-preset", "p4",
@@ -67,12 +114,7 @@ func H264EncodeArgs(kind EncoderKind, detail string) []string {
 			"-g", "30",
 		}
 	case EncoderVAAPI:
-		dev := hwVAAPID
-		if dev == "" {
-			dev = "/dev/dri/renderD128"
-		}
 		return []string{
-			"-vaapi_device", dev,
 			"-vf", "format=nv12,hwupload",
 			"-c:v", "h264_vaapi",
 			"-qp", "23",
@@ -88,38 +130,82 @@ func H264EncodeArgs(kind EncoderKind, detail string) []string {
 	}
 }
 
-// detectEncoder 探测并选择 H.264 编码器。
-//
-// 可用 NVR_HW_ENCODER 显式指定：
-//
-//	auto（默认）  实测对比硬件与软件编码速度，选更快的
-//	nvenc         强制 NVIDIA NVENC
-//	vaapi         强制 VAAPI
-//	software      强制软件编码
-//
-// 之所以默认做实测而非无条件优先硬件：老一代 NVENC（如 Pascal 架构的
-// Tesla P4）在 1080p 下可能明显慢于现代多核 CPU 的软编，盲目启用反而
-// 拖慢转码。硬件编码的真正价值在于多路并发时释放 CPU 与不受会话数限制。
-func detectEncoder(ffmpegPath string) (EncoderKind, string) {
-	forced := strings.ToLower(strings.TrimSpace(os.Getenv("NVR_HW_ENCODER")))
+// ============================ 探测实现 ============================
 
-	// 收集可用硬件编码器
-	type cand struct {
-		kind EncoderKind
-		name string
+func detect(ffmpegPath string) *HWSelection {
+	sel := &HWSelection{}
+
+	if !hwaccelEnabled() {
+		sel.Encoder, sel.EncoderDesc = EncoderSoftware, "libx264"
+		sel.Decoder, sel.DecoderDesc = DecoderSoftware, "software"
+		sel.Reason = "硬件加速已由 NVR_HWACCEL=off 关闭"
+		return sel
 	}
-	var avail []cand
-	if forced == "" || forced == "auto" || forced == "nvenc" {
-		if hasNvidiaDevice() &&
-			tryEncode(ffmpegPath, []string{"-c:v", "h264_nvenc", "-preset", "p4", "-f", "null", "-"}) {
-			name := "NVIDIA NVENC"
-			if d := nvidiaName(); d != "" {
-				name += " (" + d + ")"
-			}
-			avail = append(avail, cand{EncoderNVENC, name})
+
+	var notes []string
+
+	// ---- 编码器：按优先级取首个可用 ----
+	encPriority := parsePriority(os.Getenv("NVR_ENCODER_PRIORITY"),
+		[]string{"nvenc", "vaapi", "software"})
+	encFound := false
+	for _, name := range encPriority {
+		kind, desc, ok := probeEncoder(ffmpegPath, name)
+		if ok {
+			sel.Encoder, sel.EncoderDesc = kind, desc
+			encFound = true
+			break
+		}
+		if name != "software" {
+			notes = append(notes, name+"编码不可用")
 		}
 	}
-	if forced == "" || forced == "auto" || forced == "vaapi" {
+	if !encFound {
+		sel.Encoder, sel.EncoderDesc = EncoderSoftware, "libx264 (兜底)"
+		notes = append(notes, "无可用硬件编码器，回退软编")
+	}
+
+	// ---- 解码器：按优先级取首个可用 ----
+	decPriority := parsePriority(os.Getenv("NVR_DECODER_PRIORITY"),
+		[]string{"cuda", "vaapi", "software"})
+	decFound := false
+	for _, name := range decPriority {
+		kind, desc, ok := probeDecoder(ffmpegPath, name)
+		if ok {
+			sel.Decoder, sel.DecoderDesc = kind, desc
+			decFound = true
+			break
+		}
+		if name != "software" {
+			notes = append(notes, name+"解码不可用")
+		}
+	}
+	if !decFound {
+		sel.Decoder, sel.DecoderDesc = DecoderSoftware, "software (兜底)"
+	}
+
+	sel.Reason = fmt.Sprintf("优先级 编码[%s] 解码[%s]",
+		strings.Join(encPriority, ">"), strings.Join(decPriority, ">"))
+	if len(notes) > 0 {
+		sel.Reason += "；" + strings.Join(notes, "，")
+	}
+	return sel
+}
+
+// probeEncoder 实测某个编码器是否可用。
+func probeEncoder(ffmpegPath, name string) (EncoderKind, string, bool) {
+	switch strings.ToLower(name) {
+	case "nvenc", "h264_nvenc":
+		if !hasNvidiaDevice() {
+			return "", "", false
+		}
+		if tryEncode(ffmpegPath, []string{"-c:v", "h264_nvenc", "-preset", "p4", "-f", "null", "-"}) {
+			desc := "NVIDIA NVENC"
+			if n := nvidiaName(); n != "" {
+				desc += " (" + n + ")"
+			}
+			return EncoderNVENC, desc, true
+		}
+	case "vaapi", "h264_vaapi":
 		for _, dev := range vaapiCandidates() {
 			if tryEncode(ffmpegPath, []string{
 				"-vaapi_device", dev,
@@ -127,77 +213,121 @@ func detectEncoder(ffmpegPath string) (EncoderKind, string) {
 				"-c:v", "h264_vaapi",
 				"-f", "null", "-",
 			}) {
-				hwVAAPID = dev
-				avail = append(avail, cand{EncoderVAAPI, "VAAPI " + dev})
-				break
+				vaapiD = dev
+				return EncoderVAAPI, "VAAPI " + dev, true
 			}
 		}
+	case "software", "libx264":
+		return EncoderSoftware, "libx264 (software)", true
 	}
-
-	if forced == "software" {
-		return EncoderSoftware, "libx264 (forced)"
-	}
-	if forced != "" && forced != "auto" {
-		if len(avail) > 0 {
-			return avail[0].kind, avail[0].name + " (forced)"
-		}
-		log.Printf("[hwaccel] %q requested but unavailable, using software", forced)
-		return EncoderSoftware, "libx264 (requested " + forced + " unavailable)"
-	}
-	if len(avail) == 0 {
-		return EncoderSoftware, "libx264 (no hw encoder)"
-	}
-
-	// auto：与软编实测对比，选更快的
-	swMs := benchEncode(ffmpegPath, H264EncodeArgs(EncoderSoftware, ""))
-	for _, c := range avail {
-		hwMs := benchEncode(ffmpegPath, H264EncodeArgs(c.kind, c.name))
-		if hwMs > 0 && swMs > 0 && hwMs < swMs {
-			return c.kind, fmt.Sprintf("%s, %.0fms vs software %.0fms", c.name, hwMs, swMs)
-		}
-		log.Printf("[hwaccel] %s slower than software (%.0fms vs %.0fms), skipping", c.name, hwMs, swMs)
-	}
-	return EncoderSoftware, fmt.Sprintf("libx264 (faster than hw: %.0fms)", swMs)
+	return "", "", false
 }
 
-// benchEncode 用固定样本粗略测量编码耗时（毫秒），失败返回 0。
-func benchEncode(ffmpegPath string, encArgs []string) float64 {
-	args := []string{
-		"-hide_banner", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "2",
+// probeDecoder 实测某个解码后端是否可用。
+//
+// 合成测试源不经过解码器，因此先生成一个极小 H.264 样片再解码，
+// 确保结论真实可靠。
+func probeDecoder(ffmpegPath, name string) (DecoderKind, string, bool) {
+	switch strings.ToLower(name) {
+	case "cuda", "nvdec", "cuvid":
+		if !hasNvidiaDevice() {
+			return "", "", false
+		}
+		if tryDecode(ffmpegPath, []string{"-hwaccel", "cuda"}) {
+			desc := "NVDEC (CUDA)"
+			if n := nvidiaName(); n != "" {
+				desc += " " + n
+			}
+			return DecoderCUDA, desc, true
+		}
+	case "vaapi":
+		for _, dev := range vaapiCandidates() {
+			if tryDecode(ffmpegPath, []string{"-hwaccel", "vaapi", "-hwaccel_device", dev}) {
+				vaapiD = dev
+				return DecoderVAAPI, "VAAPI " + dev, true
+			}
+		}
+	case "software", "sw":
+		return DecoderSoftware, "software", true
 	}
-	args = append(args, encArgs...)
-	args = append(args, "-f", "null", "-")
-	start := time.Now()
-	if err := exec.Command(ffmpegPath, args...).Run(); err != nil {
-		return 0
-	}
-	return float64(time.Since(start).Milliseconds())
+	return "", "", false
 }
 
-// tryEncode 用极小的合成画面实测编码器能否真正初始化并编码。
+// tryEncode 用合成画面实测编码器能否真正初始化并编码。
 func tryEncode(ffmpegPath string, encArgs []string) bool {
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=5", "-t", "0.2",
 	}
 	args = append(args, encArgs...)
-	cmd := exec.Command(ffmpegPath, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
+	return exec.Command(ffmpegPath, args...).Run() == nil
+}
+
+// tryDecode 生成极小 H.264 样片并用指定后端解码，验证硬解真实可用。
+func tryDecode(ffmpegPath string, decArgs []string) bool {
+	dir, err := os.MkdirTemp("", "hwprobe")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	sample := filepath.Join(dir, "s.mp4")
+
+	mk := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=10", "-t", "0.5",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", sample,
+	}
+	if exec.Command(ffmpegPath, mk...).Run() != nil {
+		return false
+	}
+	if _, err := os.Stat(sample); err != nil {
+		return false
+	}
+
+	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
+	args = append(args, decArgs...)
+	args = append(args, "-i", sample, "-f", "null", "-")
+
+	out, err := exec.Command(ffmpegPath, args...).CombinedOutput()
+	if err != nil {
+		if s := string(out); s != "" {
+			log.Printf("[hwaccel] 解码探测失败 %s: %s", strings.Join(decArgs, " "), firstLine(s))
+		}
 		return false
 	}
 	return true
 }
 
-// hasNvidiaDevice 检查容器内是否存在 NVIDIA 设备节点。
-func hasNvidiaDevice() bool {
-	matches, _ := filepath.Glob("/dev/nvidia[0-9]*")
-	return len(matches) > 0
+// ============================ 辅助函数 ============================
+
+// hwaccelEnabled 硬件加速总开关（默认开启）。
+func hwaccelEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("NVR_HWACCEL")))
+	return v != "off" && v != "false" && v != "0" && v != "disable"
 }
 
-// nvidiaName 尽力获取显卡型号，仅用于日志展示。
+// parsePriority 解析逗号分隔的优先级列表，空值回退默认。
+func parsePriority(env string, def []string) []string {
+	if strings.TrimSpace(env) == "" {
+		return def
+	}
+	var out []string
+	for _, p := range strings.Split(env, ",") {
+		if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return def
+	}
+	return out
+}
+
+func hasNvidiaDevice() bool {
+	m, _ := filepath.Glob("/dev/nvidia[0-9]*")
+	return len(m) > 0
+}
+
 func nvidiaName() string {
 	out, err := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output()
 	if err != nil {
@@ -206,13 +336,26 @@ func nvidiaName() string {
 	return strings.TrimSpace(strings.Split(string(out), "\n")[0])
 }
 
-// vaapiCandidates 列出可能可用的 VAAPI 渲染节点。
 func vaapiCandidates() []string {
 	var out []string
 	if v := os.Getenv("NVR_VAAPI_DEVICE"); v != "" {
 		out = append(out, v)
 	}
-	matches, _ := filepath.Glob("/dev/dri/renderD*")
-	out = append(out, matches...)
-	return out
+	m, _ := filepath.Glob("/dev/dri/renderD*")
+	return append(out, m...)
+}
+
+// benchEncode 粗略测量编码耗时（毫秒），失败返回 0，供诊断使用。
+func benchEncode(ffmpegPath string, encArgs []string) float64 {
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "2",
+	}
+	args = append(args, encArgs...)
+	args = append(args, "-f", "null", "-")
+	start := time.Now()
+	if exec.Command(ffmpegPath, args...).Run() != nil {
+		return 0
+	}
+	return float64(time.Since(start).Milliseconds())
 }

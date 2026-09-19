@@ -82,17 +82,18 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 	if dur <= 0 {
 		dur = 60
 	}
-	args := []string{
-		"-loglevel", "error", "-y",
+	// 硬件解码参数必须置于 -i 之前
+	hw := ffmpeg.ProbeHW(h.cfg.Ffmpeg)
+	args := []string{"-loglevel", "error", "-y"}
+	args = append(args, hw.DecodeArgs()...)
+	args = append(args,
 		"-f", "concat", "-safe", "0", "-i", listPath,
 		"-ss", fmt.Sprintf("%.3f", rel),
 		"-t", fmt.Sprintf("%.3f", dur),
 		"-an",
-	}
+	)
 	if transcode {
-		// 自动选择可用硬件编码器（NVENC > VAAPI > 软编），探测结果全局缓存
-		kind, detail := ffmpeg.ProbeH264Encoder(h.cfg.Ffmpeg)
-		args = append(args, ffmpeg.H264EncodeArgs(kind, detail)...)
+		args = append(args, hw.EncodeArgs()...)
 	} else {
 		args = append(args, "-c:v", "copy")
 	}
