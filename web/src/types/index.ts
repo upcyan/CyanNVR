@@ -31,6 +31,10 @@ export interface DiscoveredDevice {
   port: number
   name: string
   xaddr?: string
+  /** 发现来源：onvif（标准广播）或 xiaomi（端口特征扫描） */
+  vendor?: string
+  /** 探测到的直连拉流地址（小米摄像头会带上） */
+  rtspUrl?: string
 }
 
 export interface RecordingSegment {

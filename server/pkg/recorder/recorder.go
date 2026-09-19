@@ -233,12 +233,21 @@ func transcodeArgs(ffmpegPath string) []string {
 //	NVR_SINGLE_CONNECTION=off  强制多连接（各自独立进程）
 //	其它（默认 auto）          由运行时自动降级决定
 func (w *Worker) useSingleConnection() bool {
+	// 1) 设备自身记录的模式最优先（可能是此前自动探测并持久化的结果）
+	switch strings.ToLower(strings.TrimSpace(w.dev.ConnMode)) {
+	case "single":
+		return true
+	case "multi":
+		return false
+	}
+	// 2) 其次看全局强制开关
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("NVR_SINGLE_CONNECTION"))) {
 	case "on", "true", "1", "yes":
 		return true
 	case "off", "false", "0", "no":
 		return false
 	}
+	// 3) 默认 auto：由运行时自动降级决定
 	return w.singleConn
 }
 
@@ -255,6 +264,13 @@ func (w *Worker) markStreamError(reason string) {
 		w.singleConn = true
 		log.Printf("[%s] 连续 %d 次流读取失败，自动切换为单连接模式（tee 合并录像与 HLS）",
 			w.dev.Name, w.streamErrs)
+		// 把探测结果写回设备，避免每次重启都重新试错
+		w.dev.ConnMode = "single"
+		if err := w.mgr.st.UpdateDevice(*w.dev); err != nil {
+			log.Printf("[%s] 持久化连接模式失败: %v", w.dev.Name, err)
+		} else {
+			log.Printf("[%s] 已将连接模式记录为 single", w.dev.Name)
+		}
 	}
 }
 
@@ -423,6 +439,22 @@ func redactURL(raw string) string {
 	return raw
 }
 
+// credPattern 匹配 URL 中的明文凭证（scheme://user:pass@host）。
+var credPattern = regexp.MustCompile(`(?i)\b(rtsps?|https?)://([^:@/\s]+):([^@/\s]+)@`)
+
+// redactText 脱敏任意文本里出现的 URL 凭证。
+//
+// 为什么需要它：ffmpeg 会把输入 URL 原样回显到 stderr，例如
+// "rtsp://admin:secret@192.168.1.10:554/stream1: Invalid data found when processing input"。
+// 这些 stderr 会被写进容器日志，等于把摄像头密码明文落盘，
+// 因此所有外部进程输出都必须先经过这里再记录。
+func redactText(s string) string {
+	if s == "" {
+		return s
+	}
+	return credPattern.ReplaceAllString(s, "$1://$2:****@")
+}
+
 func (w *Worker) killProcs() {
 	for _, p := range []*ffmpeg.Proc{w.recordProc, w.liveProc, w.snapProc, w.teeProc} {
 		if p != nil {
@@ -474,7 +506,7 @@ func (w *Worker) supervise() {
 			continue
 		}
 		if err := w.startProcs(); err != nil {
-			log.Printf("[%s] start ffmpeg: %v", w.dev.Name, err)
+			log.Printf("[%s] start ffmpeg: %v", w.dev.Name, redactText(err.Error()))
 			if w.fail(&backoff) {
 				return
 			}
@@ -490,12 +522,14 @@ func (w *Worker) supervise() {
 		// Check if processes are still alive after 2s
 		time.Sleep(2 * time.Second)
 		if w.recordProc != nil && !w.recordProc.Running() {
-			log.Printf("[%s] record process exited early, stderr: %s", w.dev.Name, w.recordProc.Log())
-			w.markStreamError(w.recordProc.Log())
+			out := redactText(w.recordProc.Log())
+			log.Printf("[%s] record process exited early, stderr: %s", w.dev.Name, out)
+			w.markStreamError(out)
 		}
 		if w.liveProc != nil && !w.liveProc.Running() {
-			log.Printf("[%s] live process exited early, stderr: %s", w.dev.Name, w.liveProc.Log())
-			w.markStreamError(w.liveProc.Log())
+			out := redactText(w.liveProc.Log())
+			log.Printf("[%s] live process exited early, stderr: %s", w.dev.Name, out)
+			w.markStreamError(out)
 		}
 		if w.snapProc != nil && !w.snapProc.Running() {
 			log.Printf("[%s] snap process exited early (non-fatal)", w.dev.Name)

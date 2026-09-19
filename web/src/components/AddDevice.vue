@@ -226,9 +226,11 @@ function submitDiscover() {
     form.port = d.port === 80 || d.port === 8080 || d.port === 2020 ? 554 : d.port
     form.username = 'admin'
     form.password = ''
-    form.rtspUrl = ''
+    // 小米摄像头通常使用非标准 RTSP 端口(8554)与型号专属路径，
+    // 直接采用探测到的地址可免去手工试路径
+    form.rtspUrl = d.rtspUrl || ''
     mode.value = 'form'
-    showToast('请填写摄像头密码后保存')
+    showToast(d.rtspUrl ? '已填入探测到的 RTSP 地址，请填写密码后保存' : '请填写摄像头密码后保存')
   }
 }
 

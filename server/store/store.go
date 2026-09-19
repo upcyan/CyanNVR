@@ -42,7 +42,8 @@ func (s *Store) migrate() error {
 			online INTEGER NOT NULL DEFAULT 0, rtsp_url TEXT, created DATETIME NOT NULL,
 			record_enabled INTEGER NOT NULL DEFAULT 1, record_mode TEXT NOT NULL DEFAULT 'continuous',
 			schedule_start TEXT NOT NULL DEFAULT '08:00', schedule_end TEXT NOT NULL DEFAULT '20:00',
-			ai_enabled INTEGER, streams TEXT, preview_stream TEXT, record_stream TEXT)`,
+			ai_enabled INTEGER, streams TEXT, preview_stream TEXT, record_stream TEXT,
+			conn_mode TEXT NOT NULL DEFAULT 'auto')`,
 		`CREATE TABLE IF NOT EXISTS segments (
 			id TEXT PRIMARY KEY, device_id TEXT NOT NULL, start DATETIME NOT NULL,
 			end DATETIME NOT NULL, path TEXT NOT NULL)`,
@@ -71,6 +72,7 @@ func (s *Store) migrate() error {
 		`ALTER TABLE devices ADD COLUMN streams TEXT`,
 		`ALTER TABLE devices ADD COLUMN preview_stream TEXT`,
 		`ALTER TABLE devices ADD COLUMN record_stream TEXT`,
+		`ALTER TABLE devices ADD COLUMN conn_mode TEXT NOT NULL DEFAULT 'auto'`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -153,7 +155,8 @@ func scanUser(row *sql.Row) (*models.User, error) {
 
 func (s *Store) ListDevices() ([]models.Device, error) {
 	rows, err := s.db.Query(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream,
+		conn_mode
 		FROM devices ORDER BY created`)
 	if err != nil {
 		return nil, err
@@ -178,7 +181,8 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 
 func (s *Store) GetDevice(id string) (*models.Device, error) {
 	row := s.db.QueryRow(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream,
+		conn_mode
 		FROM devices WHERE id=?`, id)
 	d, err := scanDeviceRow(row)
 	if err == sql.ErrNoRows {
@@ -209,7 +213,7 @@ func scanDeviceRow(scanner interface {
 	var previewStream sql.NullString
 	var recordStream sql.NullString
 	err := scanner.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created,
-		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled, &streamsJSON, &previewStream, &recordStream)
+		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled, &streamsJSON, &previewStream, &recordStream, &d.ConnMode)
 	if err != nil {
 		return nil, err
 	}
@@ -242,10 +246,11 @@ func (s *Store) CreateDevice(d models.Device) error {
 	}
 	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`INSERT INTO devices(id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream, conn_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.Created,
-		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream)
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream,
+		connModeOr(d.ConnMode))
 	return err
 }
 
@@ -260,11 +265,22 @@ func (s *Store) UpdateDevice(d models.Device) error {
 	}
 	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`UPDATE devices SET name=?, ip=?, port=?, username=?, password=?, source=?, model=?, online=?, rtsp_url=?,
-		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=?, streams=?, preview_stream=?, record_stream=?
+		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=?, streams=?, preview_stream=?, record_stream=?, conn_mode=?
 		WHERE id=?`,
 		d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL,
-		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream, d.ID)
+		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream,
+		connModeOr(d.ConnMode), d.ID)
 	return err
+}
+
+// connModeOr 归一化连接模式：空值一律存为 auto。
+func connModeOr(v string) string {
+	switch v {
+	case "multi", "single":
+		return v
+	default:
+		return "auto"
+	}
 }
 
 func aiNull(b *bool) any {

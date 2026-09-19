@@ -22,6 +22,10 @@ type Found struct {
 	IP    string `json:"ip"`
 	Port  int    `json:"port"`
 	Name  string `json:"name"`
+	// Vendor 标识来源：onvif（标准发现）或 xiaomi（端口扫描发现）
+	Vendor string `json:"vendor,omitempty"`
+	// RTSPURL 是探测到的可用拉流地址（目前用于小米摄像头）
+	RTSPURL string `json:"rtspUrl,omitempty"`
 }
 
 func Discover(ctx context.Context, iface string) ([]Found, error) {

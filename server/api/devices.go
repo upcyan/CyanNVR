@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -245,12 +246,38 @@ func (s *Server) discoverDevices(c *gin.Context) {
 		Interface string `json:"interface"`
 	}
 	_ = c.ShouldBindJSON(&req)
+
+	// 1) ONVIF 标准发现（WS-Discovery 广播）
 	found, err := onvifx.Discover(c.Request.Context(), req.Interface)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		// ONVIF 失败不应阻断小米摄像头的主动扫描
+		log.Printf("onvif discover: %v", err)
+		found = nil
 	}
-	c.JSON(http.StatusOK, gin.H{"devices": found})
+
+	// 2) 小米摄像头主动扫描
+	//    多数小米摄像头不响应 ONVIF 广播（或其 ONVIF 默认关闭），
+	//    故按其 RTSP 特征端口 8554 主动探测，两者结果合并去重。
+	xiaomi := onvifx.DiscoverXiaomi(c.Request.Context())
+
+	c.JSON(http.StatusOK, gin.H{"devices": mergeDiscovered(found, xiaomi)})
+}
+
+// mergeDiscovered 合并两路发现结果，按 IP:Port 去重（ONVIF 结果优先）。
+func mergeDiscovered(onvifFound, xiaomiFound []onvifx.Found) []onvifx.Found {
+	seen := make(map[string]bool, len(onvifFound)+len(xiaomiFound))
+	out := make([]onvifx.Found, 0, len(onvifFound)+len(xiaomiFound))
+	for _, group := range [][]onvifx.Found{onvifFound, xiaomiFound} {
+		for _, f := range group {
+			key := net.JoinHostPort(f.IP, strconv.Itoa(f.Port))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func (s *Server) probeDevice(c *gin.Context) {

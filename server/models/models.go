@@ -49,6 +49,13 @@ type Device struct {
 	// Per-device AI analysis override (defaults to global AI setting when unset).
 	AIEnabled *bool `json:"aiEnabled,omitempty"`
 
+	// ConnMode 记录该设备的 RTSP 连接策略：
+	//   ""/"auto" 自动（先用多连接，失败则降级）
+	//   "multi"   多连接（录制/预览/快照各自独立连接）
+	//   "single"  单连接（tee 单连接同时输出，适配仅允许 1 个会话的摄像头）
+	// 自动降级后会把结果写回该字段，避免每次重启重复试错。
+	ConnMode string `json:"connMode,omitempty"`
+
 	// Multiple video streams (ONVIF profiles). PreviewStream / RecordStream
 	// select which stream is used for live view and storage respectively.
 	Streams       []Stream `json:"streams,omitempty"`
