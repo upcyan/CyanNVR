@@ -5,9 +5,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -144,24 +146,35 @@ func detect(ffmpegPath string) *HWSelection {
 
 	var notes []string
 
-	// ---- 编码器：按优先级取首个可用 ----
+	// ---- 编码器：候选按优先级排列，逐个探测可用性 ----
 	encPriority := parsePriority(os.Getenv("NVR_ENCODER_PRIORITY"),
 		[]string{"nvenc", "vaapi", "software"})
-	encFound := false
+	var encCands []encCandidate
 	for _, name := range encPriority {
 		kind, desc, ok := probeEncoder(ffmpegPath, name)
 		if ok {
-			sel.Encoder, sel.EncoderDesc = kind, desc
-			encFound = true
-			break
-		}
-		if name != "software" {
+			encCands = append(encCands, encCandidate{kind, desc})
+			if kind == EncoderSoftware {
+				break // 软编始终可用，作为兜底候选即可
+			}
+		} else if name != "software" {
 			notes = append(notes, name+"编码不可用")
 		}
 	}
-	if !encFound {
-		sel.Encoder, sel.EncoderDesc = EncoderSoftware, "libx264 (兜底)"
-		notes = append(notes, "无可用硬件编码器，回退软编")
+	if len(encCands) == 0 {
+		encCands = append(encCands, encCandidate{EncoderSoftware, "libx264 (兜底)"})
+		notes = append(notes, "无可用硬件编码器")
+	}
+
+	// 单一候选时无需基准测试
+	if len(encCands) == 1 {
+		sel.Encoder, sel.EncoderDesc = encCands[0].kind, encCands[0].desc
+	} else {
+		// 多候选：实测综合评分挑选最优（吞吐达标前提下优先省 CPU）
+		minRT := minThroughput()
+		best, report := pickBest(ffmpegPath, encCands, minRT)
+		sel.Encoder, sel.EncoderDesc = best.kind, best.desc
+		sel.Reason = report
 	}
 
 	// ---- 解码器：按优先级取首个可用 ----
@@ -183,12 +196,129 @@ func detect(ffmpegPath string) *HWSelection {
 		sel.Decoder, sel.DecoderDesc = DecoderSoftware, "software (兜底)"
 	}
 
-	sel.Reason = fmt.Sprintf("优先级 编码[%s] 解码[%s]",
+	prio := fmt.Sprintf("优先级 编码[%s] 解码[%s]",
 		strings.Join(encPriority, ">"), strings.Join(decPriority, ">"))
+	if sel.Reason == "" {
+		sel.Reason = prio
+	} else {
+		sel.Reason = prio + "；" + sel.Reason
+	}
 	if len(notes) > 0 {
 		sel.Reason += "；" + strings.Join(notes, "，")
 	}
 	return sel
+}
+
+// encCandidate 是参与评分的编码器候选。
+type encCandidate struct {
+	kind EncoderKind
+	desc string
+}
+
+// pickBest 对候选编码器做基准测试，返回最优者与可读的对比报告。
+//
+// 评分原则（NVR 场景）：
+//   1. 吞吐必须达标（≥ NVR_MIN_THROUGHPUT 倍实时，默认 1.2x），否则转码跟不上录像
+//   2. 达标者中优先选择 CPU 占用最低的 —— CPU 是 NVR 的稀缺资源
+//      （还需承载 AI 检测、快照、预览等）
+//   3. 若全部不达标，退而选吞吐最高者，并在日志中说明
+func pickBest(ffmpegPath string, cands []encCandidate, minRT float64) (encCandidate, string) {
+	results := make([]benchResult, 0, len(cands))
+	for _, c := range cands {
+		r := benchEncoder(ffmpegPath, c.kind, c.desc)
+		results = append(results, r)
+		if r.wallMs > 0 {
+			log.Printf("[hwaccel] 基准 %-28s 吞吐 %.1fx实时  CPU %.0f%%",
+				r.desc, r.realtime, r.cpuPct)
+		}
+	}
+
+	// 1) 达标者中选 CPU 最低
+	best := -1
+	for i, r := range results {
+		if r.wallMs <= 0 || r.realtime < minRT {
+			continue
+		}
+		if best < 0 || r.cpuPct < results[best].cpuPct {
+			best = i
+		}
+	}
+	if best >= 0 {
+		return cands[best], fmt.Sprintf(
+			"实测择优：%s（吞吐 %.1fx 实时、CPU %.0f%%），阈值 %.1fx",
+			results[best].desc, results[best].realtime, results[best].cpuPct, minRT)
+	}
+
+	// 2) 都不达标 → 取吞吐最高
+	fastest := 0
+	for i, r := range results {
+		if r.wallMs > 0 && (results[fastest].wallMs <= 0 || r.realtime > results[fastest].realtime) {
+			fastest = i
+		}
+	}
+	if results[fastest].wallMs <= 0 {
+		return cands[0], "基准测试均失败，沿用优先级首位"
+	}
+	return cands[fastest], fmt.Sprintf(
+		"无候选达到 %.1fx 实时阈值，改用吞吐最高的 %s（%.1fx）",
+		minRT, results[fastest].desc, results[fastest].realtime)
+}
+
+// benchResult 是一次编码基准测试的结果。
+type benchResult struct {
+	desc     string
+	wallMs   float64 // 墙钟耗时
+	cpuMs    float64 // 子进程 CPU 时间（user+sys）
+	realtime float64 // 吞吐倍率（相对实时）
+	cpuPct   float64 // CPU 占用百分比（cpuMs/wallMs*100）
+}
+
+// benchEncoder 用固定样本测量编码器的吞吐与 CPU 占用。
+func benchEncoder(ffmpegPath string, kind EncoderKind, desc string) benchResult {
+	const secs = 3.0 // 样本时长
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", fmt.Sprintf("testsrc2=size=1280x720:rate=25"),
+		"-t", fmt.Sprintf("%.0f", secs),
+	}
+	args = append(args, H264EncodeArgs(kind, "")...)
+	args = append(args, "-f", "null", "-")
+
+	var before, after syscall.Rusage
+	_ = syscall.Getrusage(syscall.RUSAGE_CHILDREN, &before)
+	start := time.Now()
+	err := exec.Command(ffmpegPath, args...).Run()
+	wall := time.Since(start)
+	_ = syscall.Getrusage(syscall.RUSAGE_CHILDREN, &after)
+
+	r := benchResult{desc: desc}
+	if err != nil {
+		return r
+	}
+	r.wallMs = float64(wall.Milliseconds())
+	cpu := timevalMs(after.Utime) - timevalMs(before.Utime) +
+		timevalMs(after.Stime) - timevalMs(before.Stime)
+	r.cpuMs = cpu
+	if r.wallMs > 0 {
+		r.realtime = secs / (r.wallMs / 1000.0)
+		r.cpuPct = cpu / r.wallMs * 100
+	}
+	return r
+}
+
+// timevalMs 把 syscall.Timeval 转换为毫秒。
+func timevalMs(t syscall.Timeval) float64 {
+	return float64(t.Sec)*1000 + float64(t.Usec)/1000
+}
+
+// minThroughput 返回可接受的最低吞吐倍率（相对实时）。
+func minThroughput() float64 {
+	if v := strings.TrimSpace(os.Getenv("NVR_MIN_THROUGHPUT")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return f
+		}
+	}
+	return 1.2
 }
 
 // probeEncoder 实测某个编码器是否可用。
@@ -343,19 +473,4 @@ func vaapiCandidates() []string {
 	}
 	m, _ := filepath.Glob("/dev/dri/renderD*")
 	return append(out, m...)
-}
-
-// benchEncode 粗略测量编码耗时（毫秒），失败返回 0，供诊断使用。
-func benchEncode(ffmpegPath string, encArgs []string) float64 {
-	args := []string{
-		"-hide_banner", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "2",
-	}
-	args = append(args, encArgs...)
-	args = append(args, "-f", "null", "-")
-	start := time.Now()
-	if exec.Command(ffmpegPath, args...).Run() != nil {
-		return 0
-	}
-	return float64(time.Since(start).Milliseconds())
 }
