@@ -140,11 +140,40 @@ function setDemoMode(v: boolean) {
 }
 
 
-// ---- AI model hot-swap ----
+// ---- AI model hot-swap & 推理后端 ----
+interface AIModelInfo { path: string; name: string; size_mb: number; active: boolean }
+interface AICatalogItem { id: string; file: string; desc: string; url: string; approx_mb: number }
+interface AIInfoPayload {
+  backend?: string
+  backend_chain?: string[]
+  backend_fallback?: string
+  active?: string
+  installed?: AIModelInfo[]
+  catalog?: AICatalogItem[]
+}
+
+const aiInfo = ref<AIInfoPayload>({})
 const aiModels = ref<string[]>([])
+const aiBusy = ref('')
+
+/** 推理后端展示名：把 EP 归一化标识换成用户看得懂的叫法。 */
+const backendLabel = computed(() => {
+  const map: Record<string, string> = {
+    cpu: 'CPU（软件推理）', cuda: 'NVIDIA CUDA', rocm: 'AMD ROCm',
+    openvino: 'Intel OpenVINO', directml: 'DirectML', tensorrt: 'NVIDIA TensorRT',
+  }
+  return map[aiInfo.value.backend || ''] || aiInfo.value.backend || '未知'
+})
+
+/** 发生了后端回退时给一句人话解释。 */
+const backendHint = computed(() =>
+  aiInfo.value.backend_fallback ? `已回退：${aiInfo.value.backend_fallback}` : ''
+)
+
 async function loadAIModels() {
   try {
     const { data: j } = await http.get('/api/ai/models')
+    aiInfo.value = j
     aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
     if (!s.ai.modelPath && aiModels.value.length) {
       const def = aiModels.value.find(m => m.includes('yolov8n')) || aiModels.value[0]
@@ -152,6 +181,33 @@ async function loadAIModels() {
     }
   } catch { /* worker unreachable */ }
 }
+
+/** 目录里尚未安装的模型，可按需下载，避免把镜像撑大。 */
+const downloadable = computed(() => {
+  const have = new Set((aiInfo.value.installed || []).map(i => i.name))
+  return (aiInfo.value.catalog || []).filter(
+    c => !have.has(c.file.replace(/\.onnx$/, ''))
+  )
+})
+
+async function downloadModel(item: AICatalogItem) {
+  if (!item.url) {
+    showToast('该模型未内置下载直链，请自行导出 ONNX 后放入模型目录')
+    return
+  }
+  aiBusy.value = item.id
+  try {
+    const { data: r } = await http.post('/api/ai/download', { name: item.id }, { timeout: 600000 })
+    if (r.error) throw new Error(r.error)
+    showToast(`${item.id} 下载完成（${r.size_mb} MB）`)
+    await loadAIModels()
+  } catch (e: any) {
+    showToast('下载失败：' + (e?.response?.data?.error || e?.message || '网络错误'))
+  } finally {
+    aiBusy.value = ''
+  }
+}
+
 onMounted(loadAIModels)
 const showAIModelPicker = ref(false)
 const aiModelColumns = computed(() => aiModels.value.map(m => ({ text: m, value: m })))
@@ -162,6 +218,7 @@ async function onAIModelConfirm({ selectedValues }: any) {
   try {
     await http.post('/api/ai/load', { path: aiModels.value.find(x => x.endsWith('/' + m) || x === m) })
     showToast('模型已切换：' + m)
+    await loadAIModels()
   } catch {
     showToast('切换请求失败')
   }
@@ -386,6 +443,14 @@ async function removeUser(u: ManagedUser) {
             placeholder="unix:/tmp/simplenvr-ai.sock"
           />
           <van-cell title="通信方式" :label="aiTransportHint" />
+          <!-- 推理后端：让用户一眼看出当前是 CPU 还是 GPU 在推理 -->
+          <van-cell title="推理后端" :label="backendHint || '自动挑选本机可用的最快后端'">
+            <template #value>
+              <span class="backend-tag" :class="'backend-' + (aiInfo.backend || 'none')">
+                {{ backendLabel }}
+              </span>
+            </template>
+          </van-cell>
           <van-field
             v-model="s.ai.modelPath"
             is-link
@@ -397,6 +462,26 @@ async function removeUser(u: ManagedUser) {
           <van-popup v-model:show="showAIModelPicker" position="bottom" round>
             <van-picker title="检测模型" :columns="aiModelColumns" :model-value="[s.ai.modelPath || '' ]" @confirm="onAIModelConfirm" @cancel="showAIModelPicker = false" />
           </van-popup>
+          <!-- 可下载模型：镜像只内置 yolov8n，其余按需拉取，避免镜像膨胀 -->
+          <template v-if="downloadable.length">
+            <van-cell title="可添加模型" label="按需下载，不占镜像体积" />
+            <van-cell
+              v-for="c in downloadable"
+              :key="c.id"
+              :title="c.id"
+              :label="`${c.desc} · 约 ${c.approx_mb}MB`"
+            >
+              <template #right-icon>
+                <van-button
+                  size="mini"
+                  type="primary"
+                  :loading="aiBusy === c.id"
+                  :disabled="!c.url"
+                  @click.stop="downloadModel(c)"
+                >{{ c.url ? '下载' : '需手动放置' }}</van-button>
+              </template>
+            </van-cell>
+          </template>
         </template>
         <template v-else>
           <van-field v-model="s.ai.baseUrl" label="接口地址" placeholder="http://localhost:11434/v1（Ollama）" />
@@ -660,5 +745,30 @@ async function removeUser(u: ManagedUser) {
     margin: 0 auto;
     width: 100%;
   }
+}
+/* 推理后端标签：GPU 类后端用醒目色，CPU 用中性色，避免用户误以为已开硬件加速 */
+.backend-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--nvr-text-3, #969799);
+}
+.backend-tag.backend-cuda,
+.backend-tag.backend-tensorrt {
+  background: #76b900;
+}
+.backend-tag.backend-rocm {
+  background: #ed1c24;
+}
+.backend-tag.backend-openvino,
+.backend-tag.backend-directml {
+  background: #0068b7;
+}
+.backend-tag.backend-cpu {
+  background: #8a8a8a;
 }
 </style>

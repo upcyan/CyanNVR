@@ -202,6 +202,9 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/storage", s.storageInfo)
 	protected.GET("/ai/models", s.requireOperator, s.listAIModels)
 	protected.POST("/ai/load", s.requireOperator, s.loadAIModel)
+	// 后端状态只读，所有登录用户都能看到「当前用的是 CPU 还是 GPU」
+	protected.GET("/ai/status", s.aiWorkerStatus)
+	protected.POST("/ai/download", s.requireOperator, s.downloadAIModel)
 
 	stream := r.Group("/api/stream")
 	stream.Use(s.streamAuth())
