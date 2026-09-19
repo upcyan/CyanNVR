@@ -43,7 +43,6 @@ RUN sed -i 's@deb.debian.org@mirrors.aliyun.com@g' /etc/apt/sources.list.d/debia
         opencv-python-headless numpy \
     && if [ "$AI_BACKEND" = "gpu" ]; then \
          # 预装 onnxruntime-gpu 1.17 + CUDA 11 + cuDNN 8（Pascal 兼容）
-         # 注意：容器内网络不可用，不能依赖运行时 pip 下载
          pip3 install --no-cache-dir --break-system-packages \
            -i https://mirrors.aliyun.com/pypi/simple \
            "onnxruntime-gpu==1.17.1" "numpy<2" \
@@ -52,8 +51,9 @@ RUN sed -i 's@deb.debian.org@mirrors.aliyun.com@g' /etc/apt/sources.list.d/debia
            nvidia-cublas-cu11 nvidia-cudnn-cu11 nvidia-cuda-runtime-cu11 \
            nvidia-cufft-cu11 nvidia-curand-cu11 ; \
        else \
+         # CPU 镜像：装 onnxruntime-openvino（含 OpenVINO + CPU EP）
          pip3 install --no-cache-dir --break-system-packages \
-           -i https://mirrors.aliyun.com/pypi/simple onnxruntime ; \
+           -i https://mirrors.aliyun.com/pypi/simple onnxruntime-openvino ; \
        fi \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
