@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,13 +15,43 @@ import (
 	"simplenvr/server/store"
 )
 
+// 回放会话目录的回收策略。
+const (
+	// playbackTTL 是回放会话目录在「停止更新」后的保留时长。
+	// ffmpeg 转码完整个录像片段后目录不再变化，此后保留一小段时间
+	// 供用户暂停或重连，超时即回收。
+	// 此前该值为 2 小时，且只在有人发起回放时才顺带清理，
+	// 实测导致 10 个会话目录堆积 332MB。
+	playbackTTL = 20 * time.Minute
+
+	// playbackMaxBytes 是 playback 目录的总量上限；超出时按最旧优先回收，
+	// 避免长时间无人回放时旧会话无限累积吃满磁盘。
+	playbackMaxBytes = 2 << 30 // 2 GiB
+
+	// playbackSweepInterval 是后台回收的扫描间隔。
+	playbackSweepInterval = 5 * time.Minute
+)
+
 type Hls struct {
 	cfg *config.Config
 	st  *store.Store
 }
 
 func New(cfg *config.Config, st *store.Store) *Hls {
-	return &Hls{cfg: cfg, st: st}
+	h := &Hls{cfg: cfg, st: st}
+	go h.janitor()
+	return h
+}
+
+// janitor 周期性回收回放会话目录。
+// 不能只依赖 CreatePlayback 里的清理：没人回放时旧目录会一直堆积。
+func (h *Hls) janitor() {
+	h.sweep()
+	t := time.NewTicker(playbackSweepInterval)
+	defer t.Stop()
+	for range t.C {
+		h.sweep()
+	}
 }
 
 // Session describes a generated playback HLS session directory.
@@ -31,7 +62,7 @@ type Session struct {
 
 // CreatePlayback builds a continuous HLS from recorded segments covering [start, end].
 func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bool) (*Session, error) {
-	h.cleanupSessions()
+	h.sweep()
 	segs, err := h.st.SegmentsForDay(deviceID,
 		time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location()),
 		time.Date(start.Year(), start.Month(), start.Day()+1, 0, 0, 0, 0, start.Location()))
@@ -126,21 +157,67 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 	return &Session{Dir: dir, Name: name}, nil
 }
 
-func (h *Hls) cleanupSessions() {
+// sweep 回收回放会话目录：先删除过期会话，再按总量上限做最旧优先回收。
+func (h *Hls) sweep() {
 	base := filepath.Join(h.cfg.LiveDir, "playback")
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return
 	}
+	type session struct {
+		path string
+		mod  time.Time
+		size int64
+	}
+	var (
+		kept  []session
+		total int64
+		now   = time.Now()
+	)
 	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		if time.Since(info.ModTime()) > 2*time.Hour {
-			_ = os.RemoveAll(filepath.Join(base, e.Name()))
+		path := filepath.Join(base, e.Name())
+		if now.Sub(info.ModTime()) > playbackTTL {
+			_ = os.RemoveAll(path)
+			continue
 		}
+		size := dirSize(path)
+		kept = append(kept, session{path: path, mod: info.ModTime(), size: size})
+		total += size
 	}
+	if total <= playbackMaxBytes {
+		return
+	}
+	// 超限：从最旧的开始回收，直到降到上限以内。
+	sort.Slice(kept, func(i, j int) bool { return kept[i].mod.Before(kept[j].mod) })
+	for _, s := range kept {
+		if total <= playbackMaxBytes {
+			break
+		}
+		_ = os.RemoveAll(s.path)
+		total -= s.size
+	}
+}
+
+// dirSize 统计目录占用的字节数；读取失败的条目按 0 计，不影响回收主流程。
+func dirSize(dir string) int64 {
+	var n int64
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if fi, err := d.Info(); err == nil {
+			n += fi.Size()
+		}
+		return nil
+	})
+	return n
 }
 
 // SegmentExists reports whether a file exists within a live/session dir (path traversal safe).
