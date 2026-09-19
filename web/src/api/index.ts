@@ -120,7 +120,12 @@ export async function fetchDaySegments(deviceId: string, date: string): Promise<
   if (isDemoMode()) return mock.fetchDaySegments(deviceId, date)
   if (!backendOk) return []
   const { data } = await http.get(`/api/devices/${deviceId}/recordings`, { params: { date } })
-  return data.segments as RecordingSegment[]
+  // 后端返回的 start/end 是 ISO 字符串，前端需要毫秒时间戳
+  return (data.segments as Array<{ start: string | number; end: string | number; id: string; deviceId: string; path: string }>).map((s) => ({
+    ...s,
+    start: typeof s.start === 'string' ? new Date(s.start).getTime() : s.start,
+    end: typeof s.end === 'string' ? new Date(s.end).getTime() : s.end,
+  })) as RecordingSegment[]
 }
 
 export async function createPlayback(

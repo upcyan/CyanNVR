@@ -52,6 +52,8 @@ const modeOptions = [
   { text: '定时录制', value: 'schedule' },
 ]
 
+const modeLabel = computed(() => modeOptions.find((o) => o.value === form.recordMode)?.text ?? form.recordMode)
+
 const aiModeOptions = [
   { text: '跟随全局设置', value: 'default' },
   { text: '启用', value: 'on' },
@@ -309,7 +311,7 @@ function applyDevice(d: Device) {
               </template>
             </van-cell>
             <van-field
-              v-model="form.recordMode"
+              :model-value="modeLabel"
               is-link
               readonly
               label="录像模式"

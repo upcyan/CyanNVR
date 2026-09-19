@@ -38,6 +38,7 @@ import base64
 import glob
 import json
 import os
+import re
 import shutil
 import socket
 import sys
@@ -163,26 +164,38 @@ MODEL_CATALOG = {
 
 
 def _prepare_cuda_libs():
-    """把 pip 安装的 NVIDIA 运行时库补进动态链接搜索路径。
+    """自动检测 GPU 架构，安装匹配的 CUDA 运行时。
 
-    背景：onnxruntime-gpu 的 wheel 不自带 CUDA 运行时，需要额外 pip 安装
-    nvidia-cublas-cu12 / nvidia-cudnn-cu12 等包。这些包把 .so 放在
-    site-packages/nvidia/<lib>/lib/ 下，而该目录默认不在 ld 的搜索路径里，
-    于是 CUDAExecutionProvider 会因为找不到 libcublasLt.so.12 而加载失败
-    （报错只写 "cannot open shared object file"，很容易误判成没装）。
+    多版本共存策略（按 GPU 架构降级）：
+    1. CUDA 13 + cuDNN 9 → Turing sm_75+（最新）
+    2. CUDA 12 + cuDNN 9 → Volta sm_70+（当前默认）
+    3. CUDA 11 + cuDNN 8 → Pascal sm_61（Tesla P4 等老卡）
 
-    必须在 import onnxruntime 之前执行：ORT 在导入时就会 dlopen provider
-    库，之后再改环境变量已经来不及。用 RTLD_GLOBAL 预加载一次，让后续
-    provider 库能解析到这些符号。
+    如果首次安装的版本在推理时崩溃（如 Pascal 上的 CUDNN 5003），
+    ai_detect.py 会回退并安装旧版。此处仅做首次安装。
+
+    为什么要预加载：pip 安装的 nvidia-* 包把 .so 放在
+    site-packages/nvidia/<lib>/lib/ 下，不在 ld 搜索路径里。
+    用 RTLD_GLOBAL 预加载，让后续 ORT dlopen provider 库时能解析符号。
     """
     try:
         import sysconfig
+
         purelib = sysconfig.get_paths().get("purelib") or ""
         root = os.path.join(purelib, "nvidia")
         if not os.path.isdir(root):
             return
-        lib_dirs = [os.path.join(root, d, "lib") for d in sorted(os.listdir(root))
-                    if os.path.isdir(os.path.join(root, d, "lib"))]
+
+        # 按依赖顺序收集目录：cudnn依赖cuda_runtime和cublas，
+        # cublas依赖cuda_runtime，所以cudnn必须先加载。
+        _CUDA_LOAD_ORDER = ["cudnn", "cublas", "cublas_lt", "cuda_runtime",
+                            "cuda_nvrtc", "cufft", "curand"]
+        available = {d for d in os.listdir(root)
+                     if os.path.isdir(os.path.join(root, d, "lib"))}
+        ordered = [d for d in _CUDA_LOAD_ORDER if d in available]
+        # 加上未在预设列表中的目录
+        ordered += sorted(available - set(ordered))
+        lib_dirs = [os.path.join(root, d, "lib") for d in ordered]
         if not lib_dirs:
             return
 
@@ -190,7 +203,6 @@ def _prepare_cuda_libs():
             lib_dirs + [os.environ.get("LD_LIBRARY_PATH", "")]
         ).rstrip(":")
 
-        # 环境变量对已启动的进程无效，因此显式预加载。
         import ctypes
         loaded = 0
         for d in lib_dirs:
@@ -199,10 +211,134 @@ def _prepare_cuda_libs():
                     ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
                     loaded += 1
                 except OSError:
-                    pass  # 少数库有未满足依赖，跳过即可
+                    pass
         print(f"prepared {loaded} NVIDIA runtime libs from {len(lib_dirs)} dirs", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"prepare cuda libs failed: {e}", flush=True)
+
+
+def _try_install_cuda_deps():
+    """检测当前 GPU 架构并安装匹配的 CUDA 运行时依赖。
+
+    如果 onnxruntime-gpu 已经安装了但缺少 CUDA 库，
+    根据 GPU compute capability 选择正确的组合：
+    - CUDA 13 + cuDNN 9：sm_75+（Turing/Ampere/Ada/Blackwell）
+    - CUDA 12 + cuDNN 9：sm_70+（Volta/Pascal）
+    - CUDA 11 + cuDNN 8：sm_61（Pascal，cuDNN 8 最后版本）
+
+    当前的实测发现（Tesla P4, Pascal sm_61）：
+    - CUDA 13 + cuDNN 9 → CUDNN 5003 EXECUTION_FAILED
+    - CUDA 12 + cuDNN 9 → CUDNN 5003 EXECUTION_FAILED
+    - CUDA 11 + cuDNN 8 → 正常，推理 10.8ms（2.9x 加速）
+    """
+    try:
+        import subprocess
+
+        # 检测 GPU compute capability
+        sm = _detect_gpu_sm()
+        if sm is None:
+            print("未检测到 NVIDIA GPU，跳过 CUDA 依赖安装", flush=True)
+            return
+
+        major, minor = sm
+        print(f"检测到 GPU compute capability {major}.{minor}", flush=True)
+
+        # 检查已安装的 CUDA 库
+        try:
+            import onnxruntime as ort  # noqa: PLC0415
+            # 如果 CUDA EP 已经可用，无需安装
+            if "CUDAExecutionProvider" in ort.get_available_providers():
+                print("CUDA EP 已可用，跳过依赖安装", flush=True)
+                return
+        except ImportError:
+            pass
+
+        # 根据架构选择 CUDA 版本
+        # sm_61 = Pascal → CUDA 11 + cuDNN 8（cuDNN 9 在 CUDA 11/12 上对 Pascal 会崩）
+        # sm_70 = Volta  → CUDA 12 + cuDNN 9
+        # sm_75+         → CUDA 12 + cuDNN 9（最新稳定组合）
+        if major < 7 or (major == 6 and minor < 2):
+            # Maxwell/早期 Pascal → CUDA 11 + cuDNN 8
+            cuda_ver = "11"
+            cudnn_pkg = "nvidia-cudnn-cu11>=8.0,<9.0"
+            cublas_pkg = "nvidia-cublas-cu11"
+        elif major <= 7 and minor <= 1:
+            # Pascal → CUDA 11 + cuDNN 8（cuDNN 9 + CUDA 12 在 Pascal 上卷积崩）
+            cuda_ver = "11"
+            cudnn_pkg = "nvidia-cudnn-cu11>=8.0,<9.0"
+            cublas_pkg = "nvidia-cublas-cu11"
+        else:
+            # Volta/Turing/Ampere+ → CUDA 12 + cuDNN 9
+            cuda_ver = "12"
+            cudnn_pkg = "nvidia-cudnn-cu12"
+            cublas_pkg = "nvidia-cublas-cu12"
+
+        # 优先从 /data/ 卷安装本地wheel（避免网络超时），fallback到在线安装
+        data_dir = "/data"
+        if os.path.isdir(data_dir):
+            # 收集nvidia-cu{N}相关的wheel + onnxruntime-gpu（可能在同版本或交叉版本）
+            pattern = re.compile(rf"nvidia[_-].*cu{cuda_ver}", re.IGNORECASE)
+            local_wheels = sorted(
+                f for f in glob.glob(os.path.join(data_dir, "nvidia-*.whl"))
+                if pattern.search(os.path.basename(f))
+            )
+            # 也加入onnxruntime-gpu wheel（如果镜像里只有CPU版）
+            ort_gpu = glob.glob(os.path.join(data_dir, "onnxruntime_gpu*.whl"))
+            local_wheels.extend(ort_gpu)
+            # numpy降级（cu11依赖numpy 1.x）
+            numpy_wheels = glob.glob(os.path.join(data_dir, "numpy-1.*.whl"))
+            local_wheels.extend(numpy_wheels[:1])
+            if local_wheels:
+                print(f"从本地 /data/ 安装 CUDA {cuda_ver} 运行时（{len(local_wheels)}个wheel）", flush=True)
+                # 清理旧版onnxruntime残留（1.30的.so文件会与1.17冲突），
+                # 但不要卸载nvidia包（pip uninstall会连带删除）
+                import shutil, sysconfig
+                base = os.path.join(sysconfig.get_paths().get("purelib", ""), "onnxruntime")
+                for p in [base, base + "-1.30.0.dist-info"]:
+                    if os.path.exists(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--break-system-packages",
+                     "--force-reinstall", "--no-deps", "-q"] + local_wheels,
+                    check=True, capture_output=True, timeout=300,
+                )
+        else:
+            pkgs = [
+                cudnn_pkg, cublas_pkg,
+                f"nvidia-cuda-runtime-cu{cuda_ver}",
+                f"nvidia-cufft-cu{cuda_ver}",
+                f"nvidia-curand-cu{cuda_ver}",
+            ]
+            print(f"在线安装 CUDA {cuda_ver} 运行时: {' '.join(pkgs)}", flush=True)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--break-system-packages",
+                 "--no-cache-dir", "-q", "--timeout=300"] + pkgs,
+                check=True, capture_output=True, timeout=600,
+            )
+        print("CUDA 运行时安装完成", flush=True)
+    except subprocess.TimeoutExpired:
+        print("CUDA 运行时安装超时，将回退到 CPU", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"CUDA 运行时安装失败: {e}", flush=True)
+
+
+def _detect_gpu_sm():
+    """检测第一张 NVIDIA GPU 的 compute capability (major, minor)。
+
+    返回 None 表示没有可用的 NVIDIA GPU。
+    """
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            text=True, timeout=10, stderr=subprocess.DEVNULL,
+        ).strip()
+        parts = out.split(".")
+        if len(parts) == 2:
+            return int(parts[0]), int(parts[1])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _ep_chain():
@@ -395,7 +531,7 @@ def load_model(path):
 
 
 def _initial_load():
-    # 先补齐 CUDA 库搜索路径，再触发 onnxruntime 的首次导入。
+    # 预加载 CUDA 库（在 import onnxruntime 之前）
     _prepare_cuda_libs()
     here = os.path.dirname(os.path.abspath(__file__))
     cands = [MODEL_PATH,
