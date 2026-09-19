@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/url"
@@ -41,6 +42,14 @@ type Worker struct {
 	recordProc *ffmpeg.Proc
 	liveProc   *ffmpeg.Proc
 	snapProc   *ffmpeg.Proc
+	// teeProc 是单连接模式下的主进程：一个 RTSP 连接同时输出录像分段与 HLS。
+	// 部分低端摄像头仅允许单个活跃 RTSP 会话，多连接会导致全部失败。
+	teeProc *ffmpeg.Proc
+
+	// singleConn 表示当前是否使用单连接模式
+	singleConn bool
+	// streamErrs 记录连续出现的流读取错误次数，用于自动降级判断
+	streamErrs int
 
 	recordDir string
 	liveDir   string
@@ -218,7 +227,103 @@ func transcodeArgs(ffmpegPath string) []string {
 	return ffmpeg.ProbeHW(ffmpegPath).EncodeArgs()
 }
 
+// useSingleConnection 判断是否采用单连接模式。
+//
+//	NVR_SINGLE_CONNECTION=on   强制单连接（tee 同时输出录像与 HLS）
+//	NVR_SINGLE_CONNECTION=off  强制多连接（各自独立进程）
+//	其它（默认 auto）          由运行时自动降级决定
+func (w *Worker) useSingleConnection() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("NVR_SINGLE_CONNECTION"))) {
+	case "on", "true", "1", "yes":
+		return true
+	case "off", "false", "0", "no":
+		return false
+	}
+	return w.singleConn
+}
+
+// markStreamError 记录一次流读取失败；连续失败达阈值时自动降级为单连接模式。
+//
+// 触发场景：摄像头只允许一个活跃 RTSP 会话时，多连接会互相挤占，
+// 表现为 "Invalid data found when processing input" 并陷入重启循环。
+func (w *Worker) markStreamError(reason string) {
+	if !strings.Contains(reason, "Invalid data") && !strings.Contains(reason, "Invalid data found") {
+		return
+	}
+	w.streamErrs++
+	if w.streamErrs >= 2 && !w.singleConn {
+		w.singleConn = true
+		log.Printf("[%s] 连续 %d 次流读取失败，自动切换为单连接模式（tee 合并录像与 HLS）",
+			w.dev.Name, w.streamErrs)
+	}
+}
+
+// startSingleConn 用单个 RTSP 连接同时输出录像分段与 HLS，
+// 快照改从 HLS 播放列表抓帧，从而把连接数从 3 降到 1。
+func (w *Worker) startSingleConn() error {
+	in := w.inputArgs() // 已含硬件解码参数
+	codec := w.pickCodec()
+
+	for _, off := range []int{0, 1, 2} {
+		day := time.Now().AddDate(0, 0, off).Format("20060102")
+		_ = os.MkdirAll(filepath.Join(w.recordDir, day), 0o755)
+	}
+
+	recTpl := filepath.Join(w.recordDir, "%Y%m%d", "%H%M%S.mp4")
+	livePl := filepath.Join(w.liveDir, "index.m3u8")
+	teeSpec := fmt.Sprintf(
+		"[f=segment:segment_time=300:reset_timestamps=1:strftime=1]%s|[f=hls:hls_time=2:hls_list_size=4:hls_flags=delete_segments]%s",
+		recTpl, livePl)
+
+	// -map 0:v 是必需的：缺少显式流映射时 tee 会报
+	// "Output file #0 does not contain any stream" 而无法输出
+	args := append(append([]string{}, in...), "-map", "0:v", "-an")
+	args = append(args, codec...)
+	args = append(args, "-f", "tee", teeSpec)
+
+	log.Printf("[%s] starting ffmpeg (single-conn): %v", w.dev.Name, sanitizeArgs(args))
+	var err error
+	if w.teeProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, args...); err != nil {
+		log.Printf("[%s] single-conn start error: %v", w.dev.Name, err)
+		return err
+	}
+
+	// 快照从 HLS 播放列表读取：不新增 RTSP 连接
+	snapArgs := []string{
+		"-loglevel", "error", "-y",
+		"-i", livePl,
+		"-vf", "fps=1", "-update", "1", filepath.Join(w.snapDir, "current.jpg"),
+	}
+	w.snapProc, _ = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+
+	// 复用字段便于既有逻辑（waitExit / killProcs）统一处理
+	w.recordProc = w.teeProc
+	w.liveProc = nil
+	return nil
+}
+
+// pickCodec 返回编码参数：h264 源直接 copy，否则转码（按硬件优先级）。
+func (w *Worker) pickCodec() []string {
+	if w.dev.Source == models.SourceTest {
+		return transcodeArgs(w.mgr.cfg.Ffmpeg)
+	}
+	for _, url := range []string{w.streamURL("preview"), w.streamURL("record")} {
+		if c := ffmpeg.ProbeVideoCodec(w.mgr.cfg.Ffmpeg, url); c != "" && c != "h264" {
+			log.Printf("[%s] input codec=%s, transcoding to h264 for browser compatibility", w.dev.Name, c)
+			return transcodeArgs(w.mgr.cfg.Ffmpeg)
+		}
+	}
+	return []string{"-c", "copy"}
+}
+
 func (w *Worker) startProcs() error {
+	if w.useSingleConnection() {
+		return w.startSingleConn()
+	}
+	return w.startMultiConn()
+}
+
+func (w *Worker) startMultiConn() error {
 	in := w.inputArgs()
 	recIn := w.recordInputArgs()
 	transcode := w.dev.Source == models.SourceTest
@@ -319,11 +424,12 @@ func redactURL(raw string) string {
 }
 
 func (w *Worker) killProcs() {
-	for _, p := range []*ffmpeg.Proc{w.recordProc, w.liveProc, w.snapProc} {
+	for _, p := range []*ffmpeg.Proc{w.recordProc, w.liveProc, w.snapProc, w.teeProc} {
 		if p != nil {
 			p.Kill()
 		}
 	}
+	w.teeProc = nil
 }
 
 // killRecordProc stops only the recording process; live HLS and snapshots keep
@@ -375,6 +481,7 @@ func (w *Worker) supervise() {
 			continue
 		}
 		_ = w.mgr.st.SetDeviceOnline(w.dev.ID, true)
+		w.streamErrs = 0
 		w.mgr.broadcastEvent("online", w.dev.ID, w.dev.Name, "", "设备在线", w.dev.Name+" 流已恢复", time.Now().Format(time.RFC3339))
 		w.restarts = 0
 		backoff = time.Second
@@ -384,9 +491,11 @@ func (w *Worker) supervise() {
 		time.Sleep(2 * time.Second)
 		if w.recordProc != nil && !w.recordProc.Running() {
 			log.Printf("[%s] record process exited early, stderr: %s", w.dev.Name, w.recordProc.Log())
+			w.markStreamError(w.recordProc.Log())
 		}
 		if w.liveProc != nil && !w.liveProc.Running() {
 			log.Printf("[%s] live process exited early, stderr: %s", w.dev.Name, w.liveProc.Log())
+			w.markStreamError(w.liveProc.Log())
 		}
 		if w.snapProc != nil && !w.snapProc.Running() {
 			log.Printf("[%s] snap process exited early (non-fatal)", w.dev.Name)
