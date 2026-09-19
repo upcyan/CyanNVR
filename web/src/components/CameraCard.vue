@@ -9,7 +9,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'enter', d: Device): void
-  (e: 'play', d: Device): void
   (e: 'more', d: Device): void
 }>()
 
@@ -68,7 +67,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="rootRef" class="cam-card" :class="{ offline: !device.online }">
+  <div
+    ref="rootRef"
+    class="cam-card"
+    :class="{ offline: !device.online, live: device.online }"
+    @click="device.online && emit('enter', device)"
+  >
     <video ref="videoEl" class="bg" muted playsinline v-show="device.online" />
     <div class="shade top" />
     <div class="shade bottom" />
@@ -79,16 +83,13 @@ onBeforeUnmount(() => {
         <span class="name">{{ device.name }}</span>
         <span class="model">{{ device.model || 'ONVIF Camera' }}</span>
       </div>
-      <button class="enter" @click.stop="emit('enter', device)">
+      <button v-if="device.online" class="enter" @click.stop="emit('enter', device)">
         进入
         <van-icon name="arrow" size="11" />
       </button>
     </div>
 
-    <div v-if="device.online" class="center" @click.stop="emit('play', device)">
-      <span class="play"><van-icon name="play" size="22" /></span>
-    </div>
-    <div v-else class="center offline-tip">
+    <div v-if="!device.online" class="center offline-tip">
       <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor"
         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <line x1="2" y1="2" x2="22" y2="22" />
@@ -204,21 +205,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
 }
-.play {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
+.cam-card.live {
   cursor: pointer;
-  transition: transform 0.15s;
-}
-.play:active {
-  transform: scale(0.9);
 }
 .offline-tip {
   flex-direction: column;
@@ -247,11 +235,8 @@ onBeforeUnmount(() => {
 }
 
 @media (hover: hover) {
-  .cam-card:hover {
+  .cam-card.live:hover {
     border-color: rgba(255, 255, 255, 0.18);
-  }
-  .play:hover {
-    background: rgba(255, 255, 255, 0.4);
   }
   .enter:hover {
     background: rgba(255, 255, 255, 0.32);

@@ -5,6 +5,7 @@
   --nvr-border: rgba(255, 255, 255, 0.06);
   --nvr-text: #e6e9ef;
   --nvr-text-2: #8b93a3;
+  --nvr-text-3: #6f7889;
   --nvr-accent: #2ea8ff;
   --nvr-green: #2ecc8f;
   --nvr-red: #ff5d5d;
@@ -49,6 +50,12 @@ body.light {
   --nvr-border: #e3e8ee;
   --nvr-text: #1f2630;
   --nvr-text-2: #6b7280;
+  --nvr-text-3: #9aa3b0;
+}
+
+/* 亮色主题下的滚动条与暗色相反，否则几乎不可见 */
+body.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
 }
 
 .app-shell {
@@ -128,27 +135,39 @@ body.light {
   }
 }
 
-/* ===== 关怀模式（适老化） ===== */
+/* ===== 关怀模式（适老化） =====
+   缩放由 App.vue 统一 zoom 处理，这里只负责对比度、控件尺寸与少量字号。
+   注意：不要在组件上写死 size 属性，否则会覆盖下方 --van-switch-size。 */
 body.care {
-  /* 更高对比度（适老） */
+  /* 深色主题下更高对比度（适老） */
   --nvr-text: #ffffff;
   --nvr-text-2: #d1d9e6;
+  --nvr-text-3: #c3ccdb;
   --nvr-border: rgba(255, 255, 255, 0.3);
   --nvr-panel: #1e2532;
   --nvr-panel-2: #2a3445;
-  /* Vant 开关以 size 变量驱动尺寸(2em x 1em)：默认 26px → 52x26，
-     关怀模式放大到 36px → 72x36，保持正确比例 */
+  /* Vant 开关以 font-size 驱动尺寸(1.8em+4px x 1em+4px)：
+     默认 26px → 约51x30，关怀模式放大到 36px → 约69x40 */
   --van-switch-size: 36px;
 }
 
-body.care .van-nav-bar__title {
-  font-size: 20px;
+/* 亮色主题 + 关怀模式：白底必须配深色文字，
+   否则沿用深色变量会出现白字浅底不可读 */
+body.light.care {
+  --nvr-bg: #eef1f5;
+  --nvr-panel: #ffffff;
+  --nvr-panel-2: #dfe5ed;
+  --nvr-border: #8f9aab;
+  --nvr-text: #0b1220;
+  --nvr-text-2: #3d4a5c;
+  --nvr-text-3: #4a5568;
+  --nvr-accent: #0b62c4;
+  --nvr-green: #0f7a52;
+  --nvr-red: #c53030;
+  --nvr-amber: #b25f00;
 }
 
-body.care .van-tabbar-item__text {
-  font-size: 14px;
-}
-
+/* ---- Vant 组件 ---- */
 body.care .van-cell {
   padding: 18px 16px;
 }
@@ -162,40 +181,120 @@ body.care .van-cell__label {
 body.care .van-cell-group__title {
   font-size: 16px;
 }
-
 body.care .van-button {
   min-height: 50px;
   font-size: 17px;
 }
+body.care .van-button--normal {
+  min-height: 56px;
+  font-size: 18px;
+}
+body.care .van-field {
+  padding: 12px 16px;
+}
 body.care .van-field__control,
 body.care .van-field__label {
   font-size: 17px;
+  min-height: 44px;
+}
+body.care .van-field__label {
+  font-size: 16px;
+  min-width: 100px;
 }
 body.care .van-radio__label {
   font-size: 17px;
 }
+body.care .van-nav-bar {
+  height: 56px;
+}
+body.care .van-nav-bar__title {
+  font-size: 20px;
+  font-weight: 600;
+}
+body.care .van-tabbar {
+  height: 64px;
+}
+/* van-tabbar 已启用 placeholder，无需再补 padding，避免双倍底部空白 */
+body.care .van-tabbar-item__icon {
+  font-size: 24px;
+}
+body.care .van-tabbar-item__text {
+  font-size: 14px;
+  margin-top: 2px;
+}
+body.care .van-icon {
+  font-size: 24px;
+}
+body.care .van-dialog {
+  border-radius: 12px;
+}
+body.care .van-dialog__header {
+  font-size: 20px;
+  padding: 20px;
+}
+body.care .van-dialog__message {
+  font-size: 16px;
+  padding: 0 20px 20px;
+}
+body.care .van-picker {
+  height: 280px;
+}
+body.care .van-picker__toolbar {
+  height: 50px;
+}
+body.care .van-picker__confirm {
+  font-size: 18px;
+  padding: 0 20px;
+}
+body.care .van-switch--on {
+  background-color: #1989fa;
+}
+body.care .van-slider {
+  height: 6px;
+}
+body.care .van-tag {
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+body.care .van-loading {
+  font-size: 18px;
+}
+body.care .van-empty__description {
+  font-size: 16px;
+}
 
+/* ---- 页面自有元素 ---- */
 body.care .hd h1 {
   font-size: 26px;
 }
+body.care .hd-sub {
+  font-size: 15px;
+}
 body.care .icon-btn {
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
 }
 body.care .chip {
   padding: 11px 18px;
   font-size: 15px;
 }
 
+body.care .cam-card {
+  padding: 16px;
+  border-radius: 12px;
+}
 body.care .cam-card .name {
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 600;
 }
 body.care .cam-card .model {
   font-size: 13px;
 }
 body.care .cam-card .enter {
-  padding: 8px 16px;
-  font-size: 14px;
+  padding: 10px 20px;
+  font-size: 16px;
+  border-radius: 8px;
 }
 body.care .cam-card .more {
   width: 44px;
@@ -228,20 +327,17 @@ body.care .timeline .track {
 body.care .timeline .labels {
   font-size: 13px;
 }
-body.care .seg-list .chip {
+body.care .seg-list .seg-item {
   padding: 7px 14px;
   font-size: 14px;
 }
 
-body.care .ev-name {
+body.care .ev-card .name {
   font-size: 16px;
 }
-body.care .ev-text,
-body.care .ev-time {
+body.care .ev-card .desc,
+body.care .ev-card .time {
   font-size: 14px;
-}
-body.care .ev-hd {
-  font-size: 18px;
 }
 
 body.care .vname {
@@ -251,7 +347,7 @@ body.care .vbtn {
   font-size: 14px;
 }
 
-/* 关怀模式 - 设置页面优化 */
+/* ---- 设置页 ---- */
 body.care .settings-page .van-cell-group {
   margin-bottom: 16px;
 }
@@ -268,121 +364,4 @@ body.care .settings-page .van-cell__label {
 }
 body.care .settings-page .van-radio-group .van-cell {
   padding: 16px;
-}
-/* 开关尺寸统一由 --van-switch-size 控制（见下方 body.care 变量块） */
-
-/* 关怀模式 - 更大的触摸区域 */
-body.care .van-button--normal {
-  min-height: 56px;
-  font-size: 18px;
-}
-body.care .van-field__control {
-  font-size: 18px;
-  min-height: 44px;
-}
-
-/* 关怀模式 - 更高的对比度 */
-
-
-/* 关怀模式 - 图标和按钮 */
-body.care .icon-btn {
-  width: 48px;
-  height: 48px;
-}
-body.care .van-icon {
-  font-size: 24px;
-}
-
-/* 关怀模式 - 底部导航栏 */
-body.care .van-tabbar {
-  height: 64px;
-}
-/* 注：van-tabbar 已启用 placeholder，无需再补 padding，避免双倍底部空白 */
-body.care .van-tabbar-item__icon {
-  font-size: 24px;
-}
-body.care .van-tabbar-item__text {
-  font-size: 13px;
-  margin-top: 2px;
-}
-
-/* 关怀模式 - 标题栏 */
-body.care .van-nav-bar {
-  height: 56px;
-}
-body.care .van-nav-bar__title {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-/* 关怀模式 - 摄像机卡片 */
-body.care .cam-card {
-  padding: 16px;
-  border-radius: 12px;
-}
-body.care .cam-card .name {
-  font-size: 20px;
-  font-weight: 600;
-}
-body.care .cam-card .enter {
-  padding: 10px 20px;
-  font-size: 16px;
-  border-radius: 8px;
-}
-
-/* 关怀模式 - 表单输入 */
-body.care .van-field {
-  padding: 12px 16px;
-}
-body.care .van-field__label {
-  font-size: 16px;
-  min-width: 100px;
-}
-
-/* 关怀模式 - 弹窗和对话框 */
-body.care .van-dialog {
-  border-radius: 12px;
-}
-body.care .van-dialog__header {
-  font-size: 20px;
-  padding: 20px;
-}
-body.care .van-dialog__message {
-  font-size: 16px;
-  padding: 0 20px 20px;
-}
-
-/* 关怀模式 - 选择器 */
-body.care .van-picker {
-  height: 280px;
-}
-body.care .van-picker__toolbar {
-  height: 50px;
-}
-body.care .van-picker__confirm {
-  font-size: 18px;
-  padding: 0 20px;
-}
-
-/* 关怀模式 - 开关和滑块 */
-body.care .van-switch--on {
-  background-color: #1989fa;
-}
-body.care .van-slider {
-  height: 6px;
-}
-
-/* 关怀模式 - 标签和徽章 */
-body.care .van-tag {
-  padding: 4px 8px;
-  font-size: 13px;
-  border-radius: 4px;
-}
-
-/* 关怀模式 - 加载和空状态 */
-body.care .van-loading {
-  font-size: 18px;
-}
-body.care .van-empty__description {
-  font-size: 16px;
 }

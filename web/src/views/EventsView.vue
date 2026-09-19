@@ -145,6 +145,40 @@ onMounted(() => {
       </button>
     </div>
 
+    <van-collapse v-if="!loading && events.length" v-model="filterOpen" class="filter-collapse">
+      <van-collapse-item name="filter">
+        <template #title>
+          <van-icon name="filter-o" style="margin-right: 4px" />
+          筛选设备与日期
+        </template>
+        <div class="filter-row">
+          <div class="filter-item">
+            <label>设备</label>
+            <van-field
+              v-model="deviceId"
+              is-link
+              readonly
+              placeholder="全部设备"
+              @click="showDevicePicker = true"
+            />
+          </div>
+          <div class="filter-item">
+            <label>日期</label>
+            <van-field
+              v-model="dateStr"
+              is-link
+              readonly
+              placeholder="全部日期"
+              @click="showDatePicker = true"
+            />
+          </div>
+          <van-button v-if="deviceId || dateStr" plain size="small" @click="deviceId = ''; dateStr = ''">
+            清除筛选
+          </van-button>
+        </div>
+      </van-collapse-item>
+    </van-collapse>
+
     <van-loading v-if="loading" class="loading" />
 
     <div v-else class="list">
@@ -196,40 +230,6 @@ onMounted(() => {
         加载更多（{{ events.length }}/{{ total }}）
       </van-button>
     </div>
-
-    <van-collapse v-if="!loading && events.length > 0" v-model="filterOpen" class="filter-collapse">
-      <van-collapse-item name="filter">
-        <template #title>
-          <van-icon name="filter-o" style="margin-right: 4px" />
-          筛选
-        </template>
-        <div class="filter-row">
-          <div class="filter-item">
-            <label>设备</label>
-            <van-field
-              v-model="deviceId"
-              is-link
-              readonly
-              placeholder="全部设备"
-              @click="showDevicePicker = true"
-            />
-          </div>
-          <div class="filter-item">
-            <label>日期</label>
-            <van-field
-              v-model="dateStr"
-              is-link
-              readonly
-              placeholder="全部日期"
-              @click="showDatePicker = true"
-            />
-          </div>
-          <van-button v-if="deviceId || dateStr" plain size="small" @click="deviceId = ''; dateStr = ''">
-            清除筛选
-          </van-button>
-        </div>
-      </van-collapse-item>
-    </van-collapse>
 
     <van-popup v-model:show="showDevicePicker" position="bottom" round>
       <van-picker
@@ -387,7 +387,7 @@ onMounted(() => {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--nvr-bg-2);
+  background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   display: flex;
   align-items: center;

@@ -110,24 +110,15 @@ function onViewerPlayback(d: Device) {
 <template>
   <div class="page live2">
     <header class="hd">
-      <h1>监控中心</h1>
+      <div class="hd-title">
+        <h1>监控中心</h1>
+        <span class="hd-sub">在线 {{ onlineDevices.length }} / {{ store.devices.length }}</span>
+      </div>
       <div class="hd-actions">
         <button class="icon-btn" title="添加摄像机" @click="showAdd = true"><van-icon name="plus" size="22" /></button>
-        <button class="icon-btn" title="设置" @click="router.push('/settings')"><van-icon name="setting-o" size="20" /></button>
         <button class="icon-btn" title="多画面预览" @click="showMulti = true"><van-icon name="apps-o" size="20" /></button>
       </div>
     </header>
-
-    <div class="chips">
-      <button class="chip" @click="showMulti = true">
-        <van-icon name="video-o" size="15" color="#4da3ff" />
-        多画面 {{ onlineDevices.length }}
-      </button>
-      <button class="chip" @click="router.push('/events')">
-        <van-icon name="bell-o" size="15" color="#b78cff" />
-        最近事件
-      </button>
-    </div>
 
     <div class="cards">
       <CameraCard
@@ -136,7 +127,6 @@ function onViewerPlayback(d: Device) {
         :device="d"
         :stream-url="streamUrlFor(d)"
         @enter="openViewer"
-        @play="openViewer"
         @more="openActions"
       />
       <div v-if="!store.devices.length" class="empty">
@@ -204,10 +194,22 @@ function onViewerPlayback(d: Device) {
   justify-content: space-between;
   padding: 18px 16px 12px;
 }
+.hd-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 .hd h1 {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
+  line-height: 1.2;
+}
+.hd-sub {
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  white-space: nowrap;
 }
 .hd-actions {
   display: flex;
@@ -226,26 +228,6 @@ function onViewerPlayback(d: Device) {
   cursor: pointer;
 }
 .icon-btn:active {
-  background: var(--nvr-panel-2);
-}
-.chips {
-  display: flex;
-  gap: 10px;
-  padding: 0 16px 14px;
-}
-.chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--nvr-border);
-  background: var(--nvr-panel);
-  color: var(--nvr-text);
-  font-size: 13px;
-  cursor: pointer;
-}
-.chip:active {
   background: var(--nvr-panel-2);
 }
 .cards {
@@ -311,9 +293,6 @@ function onViewerPlayback(d: Device) {
   .hd {
     padding: 22px 24px 14px;
   }
-  .chips {
-    padding: 0 24px 16px;
-  }
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
@@ -329,10 +308,6 @@ function onViewerPlayback(d: Device) {
 @media (hover: hover) {
   .icon-btn:hover {
     background: var(--nvr-panel-2);
-  }
-  .chip:hover {
-    background: var(--nvr-panel-2);
-    border-color: rgba(255, 255, 255, 0.14);
   }
 }
 </style>

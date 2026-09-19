@@ -305,7 +305,7 @@ function applyDevice(d: Device) {
           <van-cell-group inset title="录像策略">
             <van-cell title="启用录像" label="关闭后仅直播不录像">
               <template #right-icon>
-                <van-switch v-model="form.recordEnabled" size="20" />
+                <van-switch v-model="form.recordEnabled" />
               </template>
             </van-cell>
             <van-field
