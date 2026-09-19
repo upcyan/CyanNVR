@@ -74,7 +74,10 @@ export const useSettingsStore = defineStore('settings', {
   },
   actions: {
     set(patch: Partial<Settings>) {
-      this.settings = { ...this.settings, ...patch }
+      // 原地合并，保持 settings 对象引用不变。
+      // 若整对象替换，组件中 `const s = store.settings` 持有的旧引用会失效，
+      // 导致开关等控件的显示与实际值不一致。
+      Object.assign(this.settings, patch)
       const local: LocalSettings = {
         theme: this.settings.theme,
         fontSize: this.settings.fontSize,
@@ -92,7 +95,7 @@ export const useSettingsStore = defineStore('settings', {
       try {
         const [remote, sto] = await Promise.all([fetchAppSettings(), fetchStorageInfo()])
         const local = loadLocal()
-        this.settings = backendToSettings(remote, local)
+        Object.assign(this.settings, backendToSettings(remote, local))
         this.storage = sto
         this.loaded = true
       } catch {
@@ -112,7 +115,7 @@ export const useSettingsStore = defineStore('settings', {
       if (isBackend()) {
         try {
           const saved = await saveAppSettings(settingsToBackend(this.settings))
-          this.settings = backendToSettings(saved, local)
+          Object.assign(this.settings, backendToSettings(saved, local))
         } catch {
           /* ignore */
         }

@@ -74,12 +74,15 @@ async function submit() {
 
 <style scoped>
 .login {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  padding-top: 12vh;
-  padding-left: 16px;
-  padding-right: 16px;
+  /* 用 flex 居中代替 vh 定位：关怀模式 zoom 放大后 vh 不会同步缩放，会溢出 */
+  justify-content: center;
+  padding: 32px 16px;
   box-sizing: border-box;
-  min-height: 100vh;
+  min-height: 100%;
+  width: 100%;
 }
 .brand {
   text-align: center;
@@ -108,7 +111,6 @@ async function submit() {
   width: 100%;
   max-width: 420px;
   margin: 24px auto 0;
-  padding: 0 16px;
 }
 .tip {
   margin-top: 24px;
@@ -120,7 +122,7 @@ async function submit() {
 /* 移动端适配 */
 @media (max-width: 375px) {
   .login {
-    padding-top: 8vh;
+    padding: 24px 12px;
   }
   .brand h1 {
     font-size: 22px;
@@ -133,7 +135,7 @@ async function submit() {
 
 @media (max-width: 320px) {
   .login {
-    padding-top: 6vh;
+    padding: 16px 10px;
   }
   .brand h1 {
     font-size: 20px;

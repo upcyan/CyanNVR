@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSettingsStore } from './stores/settings'
 import { useDeviceStore } from './stores/devices'
 import { useNotifications } from './utils/notify'
 
 const settings = useSettingsStore()
+const route = useRoute()
+
+// 登录页与服务器设置页属于独立流程，不应出现底部导航
+const HIDE_TABBAR_ROUTES = ['/login', '/server']
+const showTabbar = computed(() => !HIDE_TABBAR_ROUTES.includes(route.path))
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(false)
@@ -101,7 +107,7 @@ onBeforeUnmount(() => {
         </router-view>
       </div>
 
-      <van-tabbar v-if="!isDesktop" route fixed placeholder safe-area-inset-bottom>
+      <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
         <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
         <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
         <van-tabbar-item replace to="/events" icon="bell">事件</van-tabbar-item>

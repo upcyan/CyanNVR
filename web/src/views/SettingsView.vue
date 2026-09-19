@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -67,11 +67,11 @@ function columnsToTime(c: string[]): string {
   return `${c[0]}:${c[1]}`
 }
 function onStartConfirm(c: string[]) {
-  s.scheduleStart = columnsToTime(c)
+  store.set({ scheduleStart: columnsToTime(c) })
   showStartPicker.value = false
 }
 function onEndConfirm(c: string[]) {
-  s.scheduleEnd = columnsToTime(c)
+  store.set({ scheduleEnd: columnsToTime(c) })
   showEndPicker.value = false
 }
 
@@ -119,11 +119,8 @@ function setFontSize(v: 'normal' | 'large' | 'xlarge') {
 }
 
 function setCareMode(v: boolean) {
+  // 统一走 store action；样式应用由 App.vue 的 watch(applyA11y) 负责
   store.set({ careMode: v })
-  // 强制重新应用样式
-  nextTick(() => {
-    document.body.classList.toggle('care', v)
-  })
 }
 
 function setDemoMode(v: boolean) {
@@ -294,12 +291,12 @@ async function removeUser(u: ManagedUser) {
     <van-cell-group title="通知">
       <van-cell title="移动侦测告警" label="检测到移动时推送通知">
         <template #right-icon>
-          <van-switch v-model="s.motionPush" size="20" @update:model-value="store.set({ motionPush: $event })" />
+          <van-switch :model-value="s.motionPush" size="20" @update:model-value="store.set({ motionPush: $event })" />
         </template>
       </van-cell>
       <van-cell title="设备离线提醒" label="设备断线时推送通知">
         <template #right-icon>
-          <van-switch v-model="s.offlinePush" size="20" @update:model-value="store.set({ offlinePush: $event })" />
+          <van-switch :model-value="s.offlinePush" size="20" @update:model-value="store.set({ offlinePush: $event })" />
         </template>
       </van-cell>
     </van-cell-group>
@@ -307,7 +304,7 @@ async function removeUser(u: ManagedUser) {
     <van-cell-group title="网络">
       <van-cell title="启用 HTTPS" label="通过安全通道访问">
         <template #right-icon>
-          <van-switch v-model="s.https" size="20" @update:model-value="store.set({ https: $event })" />
+          <van-switch :model-value="s.https" size="20" @update:model-value="store.set({ https: $event })" />
         </template>
       </van-cell>
     </van-cell-group>
@@ -336,12 +333,12 @@ async function removeUser(u: ManagedUser) {
       </van-cell>
       <van-cell title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
         <template #right-icon>
-          <van-switch v-model="s.careMode" size="20" @change="setCareMode(s.careMode)" />
+          <van-switch :model-value="s.careMode" size="20" @update:model-value="setCareMode" />
         </template>
       </van-cell>
       <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
         <template #right-icon>
-          <van-switch v-model="s.demoMode" size="20" @change="setDemoMode(s.demoMode)" />
+          <van-switch :model-value="s.demoMode" size="20" @update:model-value="setDemoMode" />
         </template>
       </van-cell>
     </van-cell-group>
