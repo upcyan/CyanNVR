@@ -110,6 +110,10 @@ export interface Settings {
   motionPush: boolean
   offlinePush: boolean
   https: boolean
+  httpsPort: number
+  tlsCertMode: string
+  tlsDomain: string
+  acmeEmail: string
   ai: AIConfig
   theme: 'dark' | 'light'
   fontSize: FontSize

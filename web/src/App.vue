@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
             <span>录像管理</span>
           </router-link>
           <router-link to="/events" class="nav-item" active-class="on">
-            <van-icon name="bullhorn-o" size="18" />
+            <van-icon name="description-o" size="16" />
             <span>事件记录</span>
           </router-link>
           <router-link to="/settings" class="nav-item" active-class="on">
@@ -108,17 +108,35 @@ onBeforeUnmount(() => {
         </router-view>
       </div>
 
-      <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
-        <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
-        <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
-        <van-tabbar-item replace to="/events" icon="bullhorn-o">事件</van-tabbar-item>
-        <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
-      </van-tabbar>
+        <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
+          <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
+          <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
+          <van-tabbar-item replace to="/events" icon="description-o">事件</van-tabbar-item>
+          <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
+        </van-tabbar>
     </div>
   </van-config-provider>
 </template>
 
+<style>
+/* 沉浸式手势条适配：安卓 WebView 不支持 env(safe-area-inset-bottom)，
+   CyanNVR App 会监听系统 inset 后注入 --nvr-safe-bottom 覆盖此值 */
+:root {
+  --nvr-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+.van-tabbar {
+  padding-bottom: calc(var(--nvr-safe-bottom) + 8px) !important;
+}
+</style>
+
 <style scoped>
+/* description 字形偏竖长，略缩字号使其视觉高度与其他导航图标一致 */
+.van-tabbar-item :deep(.van-icon-description-o) {
+  font-size: 20px;
+}
+.nav-item :deep(.van-icon-description-o) {
+  font-size: 16px;
+}
 .sidebar {
   width: 216px;
   flex-shrink: 0;

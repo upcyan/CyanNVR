@@ -370,14 +370,6 @@ async function removeUser(u: ManagedUser) {
       </van-cell>
     </van-cell-group>
 
-    <van-cell-group title="网络">
-      <van-cell title="启用 HTTPS" label="通过安全通道访问">
-        <template #right-icon>
-          <van-switch :model-value="s.https" @update:model-value="store.set({ https: $event })" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-
     <van-cell-group title="显示与无障碍">
       <van-cell title="深色模式" label="切换界面主题">
         <template #right-icon>

@@ -206,6 +206,10 @@ export interface AppSettings {
   motionPush: boolean
   offlinePush: boolean
   https: boolean
+  httpsPort: number
+  tlsCertMode: string
+  tlsDomain: string
+  acmeEmail: string
   ai: {
     enabled: boolean
     mode: string
@@ -221,6 +225,18 @@ export interface AppSettings {
   }
 }
 
+export interface TLSStatus {
+  enabled: boolean
+  running: boolean
+  mode: string
+  domain: string
+  port: number
+  hasManual: boolean
+  notAfter?: string
+  issuer?: string
+  message?: string
+}
+
 export async function fetchAppSettings(): Promise<AppSettings> {
   const { data } = await http.get('/api/settings')
   return data.settings as AppSettings
@@ -229,6 +245,16 @@ export async function fetchAppSettings(): Promise<AppSettings> {
 export async function saveAppSettings(s: AppSettings): Promise<AppSettings> {
   const { data } = await http.put('/api/settings', s)
   return data.settings as AppSettings
+}
+
+export async function fetchTLSStatus(): Promise<TLSStatus> {
+  const { data } = await http.get('/api/tls/status')
+  return data as TLSStatus
+}
+
+export async function uploadManualCert(cert: string, key: string): Promise<TLSStatus> {
+  const { data } = await http.post('/api/tls/manual-cert', { cert, key })
+  return data as TLSStatus
 }
 
 export async function changeOwnPassword(old: string, next: string): Promise<void> {

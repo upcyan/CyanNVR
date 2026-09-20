@@ -44,6 +44,10 @@ function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
     motionPush: b.motionPush ?? true,
     offlinePush: b.offlinePush ?? true,
     https: b.https ?? false,
+    httpsPort: b.httpsPort ?? 443,
+    tlsCertMode: b.tlsCertMode ?? '',
+    tlsDomain: b.tlsDomain ?? '',
+    acmeEmail: b.acmeEmail ?? '',
     ai: (b.ai ?? defaultSettings().ai) as Settings['ai'],
     ...local,
   }
@@ -58,6 +62,10 @@ function settingsToBackend(s: Settings): AppSettings {
     motionPush: s.motionPush,
     offlinePush: s.offlinePush,
     https: s.https,
+    httpsPort: s.httpsPort,
+    tlsCertMode: s.tlsCertMode,
+    tlsDomain: s.tlsDomain,
+    acmeEmail: s.acmeEmail,
     ai: s.ai,
   }
 }

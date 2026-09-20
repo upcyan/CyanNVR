@@ -204,6 +204,36 @@ body.care .van-field__label {
 body.care .van-radio__label {
   font-size: 17px;
 }
+body.care .van-radio {
+  margin-right: 4px;
+}
+/* 关怀模式下，标题 + 横向多选项的单元格改为上下堆叠：
+   否则 zoom 放大后选项被挤进窄右列竖排换行，与左侧标题文字视觉重叠 */
+body.care .opt-cell {
+  flex-direction: column;
+  align-items: stretch;
+}
+body.care .opt-cell .van-cell__title {
+  margin-bottom: 10px;
+}
+body.care .opt-cell .van-cell__value {
+  width: 100%;
+  flex: none;
+  text-align: left;
+  overflow: visible;
+}
+body.care .opt-cell .van-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+}
+body.care .opt-cell .van-radio {
+  margin-right: 0;
+}
+body.care .van-field__control {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 body.care .van-nav-bar {
   height: 56px;
 }
@@ -263,6 +293,34 @@ body.care .van-loading {
 body.care .van-empty__description {
   font-size: 16px;
 }
+body.care .van-field--textarea .van-field__control {
+  min-height: 80px;
+}
+/* 关怀模式下事件筛选 chips 改为换行铺满，避免横向滚动条难以发现 */
+body.care .type-chips {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  gap: 10px;
+}
+body.care .qr-img {
+  max-width: 200px;
+  width: 60vw;
+  height: auto;
+  aspect-ratio: 1;
+}
+body.care .actions {
+  padding: 16px;
+}
+body.care .actions .van-button + .van-button {
+  margin-top: 8px !important;
+}
+body.care .tls-actions {
+  padding: 12px 16px 16px;
+}
+body.care .tls-actions .van-button {
+  min-height: 44px;
+  font-size: 15px;
+}
 
 /* ---- 页面自有元素 ---- */
 body.care .hd h1 {
@@ -280,6 +338,13 @@ body.care .chip {
   font-size: 15px;
 }
 
+body.care .font-opt {
+  width: 44px;
+  height: 44px;
+}
+body.care .font-opt.on {
+  border-color: var(--nvr-accent);
+}
 body.care .cam-card {
   padding: 16px;
   border-radius: 12px;
