@@ -14,6 +14,7 @@ import (
 	"cyannvr/server/config"
 	"cyannvr/server/pkg/hls"
 	"cyannvr/server/pkg/recorder"
+	"cyannvr/server/pkg/tlsx"
 	"cyannvr/server/store"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	hls *hls.Hls
 	am  *auth.Manager
 	hub *SSEHub
+	tls *tlsx.Runner
 
 	settingsMu sync.Mutex
 	settings   *AppSettings
@@ -51,6 +53,10 @@ type AppSettings struct {
 	MotionPush    bool     `json:"motionPush"`
 	OfflinePush   bool     `json:"offlinePush"`
 	HTTPS         bool     `json:"https"`
+	HTTPSPort     int      `json:"httpsPort"`
+	TLSCertMode   string   `json:"tlsCertMode"` // "auto"(ACME) | "manual"
+	TLSDomain     string   `json:"tlsDomain"`
+	ACMEEmail     string   `json:"acmeEmail"`
 	AI            AIConfig `json:"ai"`
 }
 
@@ -109,6 +115,8 @@ func defaultSettings() AppSettings {
 		MotionPush:    true,
 		OfflinePush:   true,
 		HTTPS:         false,
+		HTTPSPort:     443,
+		TLSCertMode:   "",
 		AI: AIConfig{
 			Enabled:   false,
 			Mode:      "local",
@@ -199,6 +207,9 @@ func (s *Server) Router() http.Handler {
 
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)
+	protected.GET("/tls/status", s.tlsStatus)
+	protected.POST("/tls/manual-cert", s.requireAdmin, s.uploadManualCert)
+	protected.POST("/tls/reload", s.requireAdmin, s.reloadTLS)
 	protected.GET("/storage", s.storageInfo)
 	protected.GET("/ai/models", s.requireOperator, s.listAIModels)
 	protected.POST("/ai/load", s.requireOperator, s.loadAIModel)

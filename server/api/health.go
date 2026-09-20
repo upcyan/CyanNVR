@@ -52,6 +52,20 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "retentionDays must be 1-3650"})
 		return
 	}
+	if in.HTTPSPort == 0 {
+		in.HTTPSPort = 443
+	}
+	if in.HTTPSPort < 1 || in.HTTPSPort > 65535 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "httpsPort must be 1-65535"})
+		return
+	}
+	switch in.TLSCertMode {
+	case "", "auto", "manual":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tlsCertMode must be auto/manual"})
+		return
+	}
+	oldTLS := s.CurrentTLSConfig()
 	s.settingsMu.Lock()
 	if in.AI.APIKey != "" && len(in.AI.APIKey) < 20 && s.settings.AI.APIKey != "" {
 		in.AI.APIKey = s.settings.AI.APIKey
@@ -60,6 +74,10 @@ func (s *Server) putSettings(c *gin.Context) {
 	s.settingsMu.Unlock()
 	s.saveSettings()
 	s.applySettings()
+	newTLS := s.CurrentTLSConfig()
+	if newTLS != oldTLS {
+		go s.tls.Apply(newTLS)
+	}
 	s.settingsMu.Lock()
 	out := *s.settings
 	s.settingsMu.Unlock()

@@ -18,6 +18,7 @@ import (
 	"cyannvr/server/pkg/ffmpeg"
 	"cyannvr/server/pkg/hls"
 	"cyannvr/server/pkg/recorder"
+	"cyannvr/server/pkg/tlsx"
 	"cyannvr/server/store"
 )
 
@@ -69,9 +70,15 @@ func main() {
 	rec.Start()
 	defer rec.Stop()
 
+	router := server.Router()
+	tlsRunner := tlsx.New(cfg.DataDir, router)
+	server.SetTLSRunner(tlsRunner)
+	go tlsRunner.Apply(server.CurrentTLSConfig())
+
 	addr := ":" + cfg.Port
 	log.Printf("CyanNVR listening on %s", addr)
 	log.Printf("ffmpeg available: %v", ffmpeg.Exists(cfg.Ffmpeg))
+	go startMDNS(cfg.Port)
 	if cfg.WebDir != "" {
 		if _, err := os.Stat(filepath.Join(cfg.WebDir, "index.html")); err == nil {
 			log.Printf("serving web UI from %s", cfg.WebDir)
@@ -79,7 +86,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.Router(),
+		Handler:           router,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       120 * time.Second,
