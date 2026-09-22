@@ -20,6 +20,8 @@ export interface Device {
   recordMode?: RecordMode
   scheduleStart?: string
   scheduleEnd?: string
+  retentionDays?: number
+  retentionSizeGB?: number
   aiEnabled?: boolean
   streams?: Stream[]
   previewStream?: string
@@ -104,6 +106,7 @@ export interface AIConfig {
 
 export interface Settings {
   retentionDays: number
+  retentionSizeGB: number
   recordMode: RecordMode
   scheduleStart: string
   scheduleEnd: string

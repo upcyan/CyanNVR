@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -28,6 +28,33 @@ function goBack() {
 const s = store.settings
 
 const saving = ref(false)
+
+// ---- 循环覆盖：保留天数（1-3650）与总容量限额（GB，0 = 不限制） ----
+const retentionDaysText = ref(String(s.retentionDays || 30))
+const retentionSizeText = ref(String(s.retentionSizeGB ?? 0))
+const retentionPresets = [30, 90, 180, 365, 730, 1825, 3650]
+
+function setRetentionDays(d: number) {
+  retentionDaysText.value = String(d)
+  store.set({ retentionDays: d })
+}
+
+function applyRetentionDays() {
+  let v = Math.round(Number(retentionDaysText.value) || 0)
+  if (v < 1) v = 1
+  if (v > 3650) v = 3650
+  retentionDaysText.value = String(v)
+  store.set({ retentionDays: v })
+}
+
+function applyRetentionSize() {
+  let v = Math.round(Number(retentionSizeText.value) || 0)
+  if (v < 0) v = 0
+  if (v > 1048576) v = 1048576
+  retentionSizeText.value = String(v)
+  store.set({ retentionSizeGB: v })
+}
+
 const showStartPicker = ref(false)
 const showEndPicker = ref(false)
 const showAIModePicker = ref(false)
@@ -155,6 +182,8 @@ interface AIInfoPayload {
 const aiInfo = ref<AIInfoPayload>({})
 const aiModels = ref<string[]>([])
 const aiBusy = ref('')
+const aiError = ref('')
+let aiRetryTimer: number | undefined
 
 /** 推理后端展示名：把 EP 归一化标识换成用户看得懂的叫法。 */
 const backendLabel = computed(() => {
@@ -162,24 +191,38 @@ const backendLabel = computed(() => {
     cpu: 'CPU（软件推理）', cuda: 'NVIDIA CUDA', rocm: 'AMD ROCm',
     openvino: 'Intel OpenVINO', directml: 'DirectML', tensorrt: 'NVIDIA TensorRT',
   }
+  if (aiError.value && !aiInfo.value.backend) return '检测服务未连接'
   return map[aiInfo.value.backend || ''] || aiInfo.value.backend || '未知'
 })
 
 /** 发生了后端回退时给一句人话解释。 */
-const backendHint = computed(() =>
-  aiInfo.value.backend_fallback ? `已回退：${aiInfo.value.backend_fallback}` : ''
-)
+const backendHint = computed(() => {
+  if (aiInfo.value.backend_fallback) return `已回退：${aiInfo.value.backend_fallback}`
+  if (aiError.value) return `${aiError.value}（依赖缺失时请安装 opencv-python-headless 与 onnxruntime 后重启应用，页面每 5 秒自动重试）`
+  return ''
+})
 
 async function loadAIModels() {
   try {
     const { data: j } = await http.get('/api/ai/models')
     aiInfo.value = j
+    aiError.value = ''
     aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
     if (!s.ai.modelPath && aiModels.value.length) {
       const def = aiModels.value.find(m => m.includes('yolov8n')) || aiModels.value[0]
       store.set({ ai: { ...s.ai, modelPath: def } })
     }
-  } catch { /* worker unreachable */ }
+  } catch (e: any) {
+    // worker 未就绪（依赖缺失 / 正在启动）：给出原因并自动重试，
+    // 启动成功后推理后端会自动刷出来，而不是永远显示「未知」。
+    aiInfo.value = {}
+    aiError.value = e?.response?.data?.error || '检测服务未连接'
+    if (aiRetryTimer) clearTimeout(aiRetryTimer)
+    aiRetryTimer = window.setTimeout(() => {
+      aiRetryTimer = undefined
+      loadAIModels()
+    }, 5000)
+  }
 }
 
 /** 目录里尚未安装的模型，可按需下载，避免把镜像撑大。 */
@@ -209,6 +252,9 @@ async function downloadModel(item: AICatalogItem) {
 }
 
 onMounted(loadAIModels)
+onUnmounted(() => {
+  if (aiRetryTimer) clearTimeout(aiRetryTimer)
+})
 const showAIModelPicker = ref(false)
 const aiModelColumns = computed(() => aiModels.value.map(m => ({ text: m, value: m })))
 async function onAIModelConfirm({ selectedValues }: any) {
@@ -265,8 +311,11 @@ function openEditUser(u: ManagedUser) {
 async function saveUser() {
   try {
     if (editingUser.value) {
-      const patch: { password?: string; role?: string } = { role: userForm.value.role }
+      const patch: { password?: string; role?: string; username?: string } = { role: userForm.value.role }
       if (userForm.value.password) patch.password = userForm.value.password
+      if (userForm.value.username && userForm.value.username !== editingUser.value.username) {
+        patch.username = userForm.value.username.trim()
+      }
       await updateUser(editingUser.value.id, patch)
       showToast('已更新')
     } else {
@@ -319,18 +368,49 @@ async function removeUser(u: ManagedUser) {
           </div>
         </template>
       </van-cell>
-      <van-cell title="循环覆盖" label="超过保留天数自动删除最早录像">
+      <van-cell title="循环覆盖 · 保留天数" label="超过保留天数自动删除最早录像，可填 1-3650 天">
         <template #value>
           <div class="slider-box">
-            <van-slider
-              v-model="s.retentionDays"
-              :min="7"
-              :max="180"
-              :step="1"
-              style="width: 120px"
-              @change="store.set({ retentionDays: s.retentionDays })"
+            <van-field
+              v-model="retentionDaysText"
+              type="number"
+              :border="false"
+              class="days-input"
+              placeholder="30"
+              @blur="applyRetentionDays"
             />
-            <span class="days">{{ s.retentionDays }} 天</span>
+            <span class="days">天</span>
+          </div>
+        </template>
+      </van-cell>
+      <van-cell title="快捷档位" label="点击即生效">
+        <template #value>
+          <div class="days-chips">
+            <van-tag
+              v-for="d in retentionPresets"
+              :key="d"
+              type="primary"
+              plain
+              :class="{ active: String(d) === retentionDaysText }"
+              @click="setRetentionDays(d)"
+            >
+              {{ d }} 天
+            </van-tag>
+          </div>
+        </template>
+      </van-cell>
+      <van-cell title="循环覆盖 · 容量限额" label="所有摄像头录像合计的磁盘上限，超出后优先删除最旧的录像；0 = 不限制">
+        <template #value>
+          <div class="slider-box">
+            <van-field
+              v-model="retentionSizeText"
+              type="number"
+              :border="false"
+              class="days-input"
+              placeholder="0"
+              @blur="applyRetentionSize"
+            />
+            <span class="days">GB</span>
           </div>
         </template>
       </van-cell>
@@ -606,7 +686,6 @@ async function removeUser(u: ManagedUser) {
           v-model="userForm.username"
           label="用户名"
           placeholder="请输入用户名"
-          :disabled="!!editingUser"
         />
         <van-field
           v-model="userForm.password"
@@ -657,6 +736,21 @@ async function removeUser(u: ManagedUser) {
 }
 .bar i.warn {
   background: var(--nvr-amber);
+}
+.days-input {
+  width: 84px;
+  padding: 0 4px;
+}
+.days-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  max-width: 230px;
+}
+.days-chips .van-tag.active {
+  opacity: 1;
+  font-weight: 600;
 }
 .slider-box {
   display: flex;

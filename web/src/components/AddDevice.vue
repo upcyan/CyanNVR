@@ -32,6 +32,8 @@ const form = reactive({
   recordMode: 'continuous' as 'continuous' | 'motion' | 'schedule',
   scheduleStart: '08:00',
   scheduleEnd: '20:00',
+  retentionDays: '',
+  retentionSizeGB: '',
   aiEnabled: 'default' as 'default' | 'on' | 'off',
   previewStream: '',
   recordStream: '',
@@ -116,6 +118,8 @@ function reset() {
   form.recordMode = 'continuous'
   form.scheduleStart = '08:00'
   form.scheduleEnd = '20:00'
+  form.retentionDays = ''
+  form.retentionSizeGB = ''
   form.aiEnabled = 'default'
   form.previewStream = ''
   form.recordStream = ''
@@ -206,6 +210,8 @@ function submitForm() {
   input.recordMode = form.recordMode
   input.scheduleStart = form.scheduleStart
   input.scheduleEnd = form.scheduleEnd
+  input.retentionDays = Math.max(0, Math.round(Number(form.retentionDays) || 0))
+  input.retentionSizeGB = Math.max(0, Math.round(Number(form.retentionSizeGB) || 0))
   input.aiEnabled = form.aiEnabled === 'default' ? undefined : form.aiEnabled === 'on'
   if (streams.value.length) input.streams = streams.value
   if (form.previewStream) input.previewStream = form.previewStream
@@ -266,6 +272,8 @@ function applyDevice(d: Device) {
   form.recordMode = (d.recordMode || 'continuous') as 'continuous' | 'motion' | 'schedule'
   form.scheduleStart = d.scheduleStart || '08:00'
   form.scheduleEnd = d.scheduleEnd || '20:00'
+  form.retentionDays = String(d.retentionDays ?? 0)
+  form.retentionSizeGB = String(d.retentionSizeGB ?? 0)
   form.aiEnabled = d.aiEnabled === undefined ? 'default' : d.aiEnabled ? 'on' : 'off'
   streams.value = d.streams || []
   form.previewStream = d.previewStream || streams.value[0]?.id || ''
@@ -333,6 +341,22 @@ function applyDevice(d: Device) {
               label="AI 智能识别"
               placeholder="跟随全局"
               @click="showAIPicker = true"
+            />
+            <van-cell
+              title="存储限额（仅本摄像头）"
+              label="天数为 0 跟随全局保留天数；容量为 0 不单独限制，仍受全局总限额约束"
+            />
+            <van-field
+              v-model="form.retentionDays"
+              type="number"
+              label="保留天数"
+              placeholder="0 = 跟随全局"
+            />
+            <van-field
+              v-model="form.retentionSizeGB"
+              type="number"
+              label="容量限额"
+              placeholder="0 = 不单独限制（GB）"
             />
           </van-cell-group>
 

@@ -183,6 +183,7 @@ func (s *Server) updateUser(c *gin.Context) {
 	var req struct {
 		Password string      `json:"password"`
 		Role     models.Role `json:"role"`
+		Username string      `json:"username"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -192,6 +193,20 @@ func (s *Server) updateUser(c *gin.Context) {
 	if u == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
+	}
+	if req.Username != "" && req.Username != u.Username {
+		if !validUsername(req.Username) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "用户名仅支持字母、数字、下划线、点、短横线，长度 1-32"})
+			return
+		}
+		if ex, _ := s.st.GetUserByName(req.Username); ex != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "用户名已存在"})
+			return
+		}
+		if err := s.st.UpdateUsername(id, req.Username); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "改名失败"})
+			return
+		}
 	}
 	if req.Password != "" {
 		if len(req.Password) < 8 {
@@ -224,6 +239,22 @@ func (s *Server) updateUser(c *gin.Context) {
 		_ = s.st.UpdateUserRole(id, req.Role)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// validUsername 与安装向导一致的用户名规则。
+func validUsername(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '_', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) deleteUser(c *gin.Context) {

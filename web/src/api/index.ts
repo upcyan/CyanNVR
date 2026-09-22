@@ -263,6 +263,7 @@ export async function apiResetConfirm(
 
 export interface AppSettings {
   retentionDays: number
+  retentionSizeGB: number
   recordMode: string
   scheduleStart: string
   scheduleEnd: string
@@ -343,7 +344,7 @@ export async function createUser(username: string, password: string, role: strin
   return data.user as ManagedUser
 }
 
-export async function updateUser(id: string, patch: { password?: string; role?: string }): Promise<void> {
+export async function updateUser(id: string, patch: { password?: string; role?: string; username?: string }): Promise<void> {
   await http.put(`/api/users/${id}`, patch)
 }
 

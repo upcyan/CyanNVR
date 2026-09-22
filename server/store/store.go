@@ -77,6 +77,9 @@ func (s *Store) migrate() error {
 		// 用于「重置密码后把旧会话踢下线」。老库补列后为 NULL，
 		// 读取时视为零值（即不做吊销判断），避免升级后把所有人登出。
 		`ALTER TABLE users ADD COLUMN password_changed_at DATETIME`,
+		// 单摄保留限额：0 = 跟随全局 / 不单独限制
+		`ALTER TABLE devices ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE devices ADD COLUMN retention_size_gb INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -150,6 +153,12 @@ func (s *Store) PasswordChangedAt(id string) (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// UpdateUsername 修改用户名；目标名已存在时由 username 的 UNIQUE 约束报错。
+func (s *Store) UpdateUsername(id, name string) error {
+	_, err := s.db.Exec(`UPDATE users SET username=? WHERE id=?`, name, id)
+	return err
+}
+
 func (s *Store) UpdateUserRole(id string, role models.Role) error {
 	_, err := s.db.Exec(`UPDATE users SET role=? WHERE id=?`, string(role), id)
 	return err
@@ -187,7 +196,7 @@ func scanUser(row *sql.Row) (*models.User, error) {
 func (s *Store) ListDevices() ([]models.Device, error) {
 	rows, err := s.db.Query(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
 		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream,
-		conn_mode
+		conn_mode, retention_days, retention_size_gb
 		FROM devices ORDER BY created`)
 	if err != nil {
 		return nil, err
@@ -213,7 +222,7 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 func (s *Store) GetDevice(id string) (*models.Device, error) {
 	row := s.db.QueryRow(`SELECT id, name, ip, port, username, password, source, model, online, rtsp_url, created,
 		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream,
-		conn_mode
+		conn_mode, retention_days, retention_size_gb
 		FROM devices WHERE id=?`, id)
 	d, err := scanDeviceRow(row)
 	if err == sql.ErrNoRows {
@@ -244,7 +253,8 @@ func scanDeviceRow(scanner interface {
 	var previewStream sql.NullString
 	var recordStream sql.NullString
 	err := scanner.Scan(&d.ID, &d.Name, &d.IP, &d.Port, &d.Username, &d.Password, &d.Source, &d.Model, &online, &d.RTSPURL, &d.Created,
-		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled, &streamsJSON, &previewStream, &recordStream, &d.ConnMode)
+		&recEnabled, &d.RecordMode, &d.ScheduleStart, &d.ScheduleEnd, &aiEnabled, &streamsJSON, &previewStream, &recordStream, &d.ConnMode,
+		&d.RetentionDays, &d.RetentionSizeGB)
 	if err != nil {
 		return nil, err
 	}
@@ -277,11 +287,12 @@ func (s *Store) CreateDevice(d models.Device) error {
 	}
 	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`INSERT INTO devices(id, name, ip, port, username, password, source, model, online, rtsp_url, created,
-		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream, conn_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		record_enabled, record_mode, schedule_start, schedule_end, ai_enabled, streams, preview_stream, record_stream, conn_mode,
+		retention_days, retention_size_gb)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL, d.Created,
 		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream,
-		connModeOr(d.ConnMode))
+		connModeOr(d.ConnMode), d.RetentionDays, d.RetentionSizeGB)
 	return err
 }
 
@@ -296,11 +307,12 @@ func (s *Store) UpdateDevice(d models.Device) error {
 	}
 	streamsJSON, _ := json.Marshal(d.Streams)
 	_, err := s.db.Exec(`UPDATE devices SET name=?, ip=?, port=?, username=?, password=?, source=?, model=?, online=?, rtsp_url=?,
-		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=?, streams=?, preview_stream=?, record_stream=?, conn_mode=?
+		record_enabled=?, record_mode=?, schedule_start=?, schedule_end=?, ai_enabled=?, streams=?, preview_stream=?, record_stream=?, conn_mode=?,
+		retention_days=?, retention_size_gb=?
 		WHERE id=?`,
 		d.Name, d.IP, d.Port, d.Username, d.Password, string(d.Source), d.Model, online, d.RTSPURL,
 		recEnabled, d.RecordMode, d.ScheduleStart, d.ScheduleEnd, aiNull(d.AIEnabled), string(streamsJSON), d.PreviewStream, d.RecordStream,
-		connModeOr(d.ConnMode), d.ID)
+		connModeOr(d.ConnMode), d.RetentionDays, d.RetentionSizeGB, d.ID)
 	return err
 }
 

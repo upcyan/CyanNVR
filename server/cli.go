@@ -32,6 +32,8 @@ func runCLI(args []string) {
 		os.Exit(cliResetPassword(args[1:]))
 	case "list-users", "users":
 		os.Exit(cliListUsers(args[1:]))
+	case "rename-user", "rename":
+		os.Exit(cliRenameUser(args[1:]))
 	case "help", "-h", "--help":
 		printCLIUsage(os.Stdout)
 		os.Exit(0)
@@ -49,6 +51,7 @@ func printCLIUsage(w *os.File) {
   cyannvr                      启动服务
   cyannvr reset-password [选项]  重置用户密码（忘记密码时使用）
   cyannvr list-users           列出所有用户
+  cyannvr rename-user [选项]    改用户名（--to NEW，省略 --user 时改唯一管理员）
   cyannvr help                 显示本帮助
 
 reset-password 选项:
@@ -167,6 +170,78 @@ func cliResetPassword(args []string) int {
 		fmt.Println("  已清理未使用的重置码文件 reset-code.txt")
 	}
 	return 0
+}
+
+// cliRenameUser 修改用户名。与改密不同，改名不需要新密码验证，
+// 供应用设置页的「管理员改名」直接调用。
+func cliRenameUser(args []string) int {
+	fs := flag.NewFlagSet("rename-user", flag.ContinueOnError)
+	user := fs.String("user", "", "当前用户名；省略时自动选择唯一的管理员")
+	to := fs.String("to", "", "新用户名（必填）")
+	dataDir := fs.String("data", "", "覆盖数据目录")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	newName := strings.TrimSpace(*to)
+	if newName == "" {
+		fmt.Fprintln(os.Stderr, "错误: 缺少 --to NEW（新用户名）")
+		return 1
+	}
+	if len(newName) > 32 || !isSafeUserName(newName) {
+		fmt.Fprintln(os.Stderr, "错误: 新用户名仅支持字母、数字、下划线、点、短横线，长度 1-32")
+		return 1
+	}
+
+	dir := resolveDataDir(*dataDir)
+	st, err := openStoreForCLI(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		return 1
+	}
+	defer st.Close()
+
+	target, err := pickUser(st, *user)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		return 1
+	}
+	if target.Username == newName {
+		fmt.Printf("用户名已经是 %q，无需修改\n", newName)
+		return 0
+	}
+	if exists, err := st.GetUserByName(newName); err != nil {
+		fmt.Fprintf(os.Stderr, "查询用户失败: %v\n", err)
+		return 1
+	} else if exists != nil {
+		fmt.Fprintf(os.Stderr, "错误: 用户名 %q 已存在\n", newName)
+		return 1
+	}
+
+	old := target.Username
+	if err := st.UpdateUsername(target.ID, newName); err != nil {
+		fmt.Fprintf(os.Stderr, "改名失败: %v\n", err)
+		return 1
+	}
+	fmt.Printf("✓ 已将用户 %q 改名为 %q\n", old, newName)
+	fmt.Println("  下次登录请使用新用户名；已登录会话不受影响。")
+	return 0
+}
+
+// isSafeUserName 校验用户名字符集（与安装向导的规则一致）。
+func isSafeUserName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '_', r == '.', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func resolveDataDir(override string) string {

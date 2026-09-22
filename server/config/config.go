@@ -14,6 +14,7 @@ type Config struct {
 	JWTSecret string
 
 	RetentionDays       int
+	RetentionSizeGB     int // 录像总容量上限（GB），0 = 不限制
 	SnapshotIntervalSec int
 
 	AIEnabled   bool

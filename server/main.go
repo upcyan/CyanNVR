@@ -28,7 +28,7 @@ func main() {
 	// 不进入服务启动流程（见 cli.go）。无参数时按原行为启动服务。
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "reset-password", "reset", "list-users", "users", "help", "-h", "--help":
+		case "reset-password", "reset", "list-users", "users", "rename-user", "rename", "help", "-h", "--help":
 			runCLI(os.Args[1:])
 			return
 		}

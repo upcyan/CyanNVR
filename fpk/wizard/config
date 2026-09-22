@@ -42,6 +42,16 @@
         "helpText": "当前用户列表：__USERS__（打开本页时自动刷新；也可在服务器执行 cyannvr list-users 查看）。管理员用户名/密码仅在数据库首次初始化时由安装向导写入；已有数据的改密请用下方重置码或 cyannvr reset-password。"
       },
       {
+        "type": "text",
+        "field": "wizard_admin_rename",
+        "label": "管理员改名",
+        "initValue": "",
+        "helpText": "留空不修改。把当前唯一管理员的用户名改为新值（只改名不改密）；改名后请用新用户名登录，旧会话不受影响。",
+        "rules": [
+          { "pattern": "^$|^[A-Za-z0-9_.-]{1,32}$", "message": "仅支持字母、数字、下划线、点、短横线，长度 1-32" }
+        ]
+      },
+      {
         "type": "radio",
         "field": "wizard_reset_code",
         "label": "忘记密码：生成重置码文件",

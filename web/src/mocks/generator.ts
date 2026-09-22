@@ -160,6 +160,7 @@ export function recentEvents(devices: Device[]): AppEvent[] {
 export function defaultSettings(): Settings {
   return {
     retentionDays: 30,
+    retentionSizeGB: 0,
     recordMode: 'continuous',
     scheduleStart: '08:00',
     scheduleEnd: '20:00',

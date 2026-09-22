@@ -93,7 +93,7 @@ export NVR_JWT_SECRET=""
 export NVR_AI_ENABLED="true"
 export NVR_AI_MODE="local"
 export NVR_AI_DETECT_SCRIPT="${TRIM_APPDEST}/ai_detect.py"
-export NVR_AI_DETECT_URL="unix:/tmp/cyanNVR-ai.sock"
+export NVR_AI_DETECT_URL="unix:/tmp/cyannvr-ai.sock"
 export NVR_AI_MODEL_PATH="${TRIM_APPDEST}/models/yolov8n.onnx"
 export NVR_AI_MODELS_DIR="${DATA_DIR}/models"
 export NVR_AI_CONF="0.20"
@@ -173,9 +173,10 @@ stop_process() {
     fi
 
     # 清理 AI 检测子进程与 socket
-    pkill -f "cyanNVR-ai.sock" 2>/dev/null
+    # 大小写两种历史路径都清（环境变量与 settings.json 曾不一致导致代理连错 socket）
+    pkill -f "c(yannvr|yanNVR)-ai.sock" 2>/dev/null
     pkill -f "${TRIM_APPDEST}/ai_detect.py" 2>/dev/null
-    rm -f /tmp/cyanNVR-ai.sock 2>/dev/null
+    rm -f /tmp/cyannvr-ai.sock /tmp/cyanNVR-ai.sock 2>/dev/null
 
     return 0
 }

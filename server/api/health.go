@@ -57,6 +57,10 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "retentionDays must be 1-3650"})
 		return
 	}
+	if in.RetentionSizeGB < 0 || in.RetentionSizeGB > 1048576 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "retentionSizeGB must be 0-1048576"})
+		return
+	}
 	if in.HTTPSPort == 0 {
 		in.HTTPSPort = 443
 	}

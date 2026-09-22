@@ -49,6 +49,12 @@ type Device struct {
 	ScheduleStart string `json:"scheduleStart"`
 	ScheduleEnd   string `json:"scheduleEnd"`
 
+	// Per-device retention limits. RetentionDays = 0 follows the global
+	// retention days; RetentionSizeGB = 0 means no per-device size cap
+	// (still bounded by the global total size limit).
+	RetentionDays   int `json:"retentionDays"`
+	RetentionSizeGB int `json:"retentionSizeGB"`
+
 	// Per-device AI analysis override (defaults to global AI setting when unset).
 	AIEnabled *bool `json:"aiEnabled,omitempty"`
 

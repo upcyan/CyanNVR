@@ -47,8 +47,9 @@ type AIConfig struct {
 }
 
 type AppSettings struct {
-	RetentionDays int      `json:"retentionDays"`
-	RecordMode    string   `json:"recordMode"`
+	RetentionDays   int    `json:"retentionDays"`
+	RetentionSizeGB int    `json:"retentionSizeGB"` // 录像总容量上限（GB），0 = 不限制
+	RecordMode      string `json:"recordMode"`
 	ScheduleStart string   `json:"scheduleStart"`
 	ScheduleEnd   string   `json:"scheduleEnd"`
 	MotionPush    bool     `json:"motionPush"`
@@ -156,6 +157,8 @@ func (s *Server) applySettings() {
 	if set.RetentionDays > 0 {
 		s.cfg.RetentionDays = set.RetentionDays
 	}
+	// 0 = 关闭容量限制，必须无条件同步（否则一旦设置就再也关不掉）
+	s.cfg.RetentionSizeGB = set.RetentionSizeGB
 }
 
 func (s *Server) saveSettings() {

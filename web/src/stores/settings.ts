@@ -38,6 +38,7 @@ function saveLocal(s: LocalSettings) {
 function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
   return {
     retentionDays: b.retentionDays ?? 30,
+    retentionSizeGB: b.retentionSizeGB ?? 0,
     recordMode: (b.recordMode as Settings['recordMode']) ?? 'continuous',
     scheduleStart: b.scheduleStart ?? '08:00',
     scheduleEnd: b.scheduleEnd ?? '20:00',
@@ -56,6 +57,7 @@ function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
 function settingsToBackend(s: Settings): AppSettings {
   return {
     retentionDays: s.retentionDays,
+    retentionSizeGB: s.retentionSizeGB,
     recordMode: s.recordMode,
     scheduleStart: s.scheduleStart,
     scheduleEnd: s.scheduleEnd,

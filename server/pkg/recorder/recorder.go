@@ -874,46 +874,135 @@ func (m *Manager) cleanupLoop() {
 }
 
 func (m *Manager) cleanupOldRecordings() {
-	days := m.cfg.RetentionDays
-	if days <= 0 {
-		days = 30
+	globalDays := m.cfg.RetentionDays
+	if globalDays <= 0 {
+		globalDays = 30
 	}
-	cutoff := time.Now().AddDate(0, 0, -days)
+	now := time.Now()
+
+	// 单摄限额表：设备配置 >0 时覆盖全局。
+	type limit struct {
+		days   int
+		sizeGB int
+	}
+	limits := map[string]limit{}
+	if devs, err := m.st.ListDevices(); err == nil {
+		for _, d := range devs {
+			limits[d.ID] = limit{days: d.RetentionDays, sizeGB: d.RetentionSizeGB}
+		}
+	}
+
+	type dayRec struct {
+		path  string
+		day   time.Time
+		size  int64
+		sizeOK bool
+	}
+	// dirSize 统计目录字节数（失败的文件忽略，只求近似值）。
+	dirSize := func(p string) int64 {
+		var total int64
+		_ = filepath.WalkDir(p, func(_ string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, err := d.Info(); err == nil {
+				total += info.Size()
+			}
+			return nil
+		})
+		return total
+	}
+	// trimToSize 从最旧开始删除，直到总量 <= keepBytes；返回保留项。
+	trimToSize := func(items []dayRec, keepBytes int64) []dayRec {
+		var total int64
+		for i := range items {
+			if !items[i].sizeOK {
+				items[i].size = dirSize(items[i].path)
+				items[i].sizeOK = true
+			}
+			total += items[i].size
+		}
+		if total <= keepBytes {
+			return items
+		}
+		kept := items[:0]
+		for _, it := range items {
+			if total > keepBytes {
+				if err := os.RemoveAll(it.path); err != nil {
+					log.Printf("cleanup remove %s: %v", it.path, err)
+					kept = append(kept, it)
+					continue
+				}
+				log.Printf("cleanup removed recordings over size limit: %s", it.path)
+				total -= it.size
+				continue
+			}
+			kept = append(kept, it)
+		}
+		return kept
+	}
 
 	deviceDirs, err := os.ReadDir(m.cfg.RecordDir)
 	if err != nil {
 		return
 	}
+
+	// 1) 逐设备：先按保留天数删，再按单摄容量限额删。
+	var flat []dayRec
 	for _, dd := range deviceDirs {
 		if !dd.IsDir() {
 			continue
 		}
 		deviceID := dd.Name()
+		lim := limits[deviceID]
+		days := globalDays
+		if lim.days > 0 {
+			days = lim.days
+		}
+		cutoff := now.AddDate(0, 0, -days)
+
 		dayDirs, err := os.ReadDir(filepath.Join(m.cfg.RecordDir, deviceID))
 		if err != nil {
 			continue
 		}
+		var items []dayRec
 		for _, dayDir := range dayDirs {
 			if !dayDir.IsDir() || !dayDirRe.MatchString(dayDir.Name()) {
 				continue
 			}
 			dateStr := dayDir.Name()
-			yy := atoi(dateStr[0:4])
-			mm := atoi(dateStr[4:6])
-			dd2 := atoi(dateStr[6:8])
-			dayTime := time.Date(yy, time.Month(mm), dd2, 0, 0, 0, 0, time.Local)
-			if dayTime.Before(cutoff) {
-				dirPath := filepath.Join(m.cfg.RecordDir, deviceID, dayDir.Name())
-				if err := os.RemoveAll(dirPath); err != nil {
-					log.Printf("cleanup remove %s: %v", dirPath, err)
-				} else {
-					log.Printf("cleanup removed old recordings: %s", dirPath)
-				}
+			dayTime := time.Date(atoi(dateStr[0:4]), time.Month(atoi(dateStr[4:6])),
+				atoi(dateStr[6:8]), 0, 0, 0, 0, time.Local)
+			info := dayRec{
+				path: filepath.Join(m.cfg.RecordDir, deviceID, dayDir.Name()),
+				day:  dayTime,
 			}
+			if dayTime.Before(cutoff) {
+				if err := os.RemoveAll(info.path); err != nil {
+					log.Printf("cleanup remove %s: %v", info.path, err)
+					items = append(items, info)
+				} else {
+					log.Printf("cleanup removed old recordings: %s", info.path)
+				}
+				continue
+			}
+			items = append(items, info)
 		}
+		// ReadDir 按文件名排序 = 日期升序，最旧在前，正好用于容量淘汰。
+		if lim.sizeGB > 0 {
+			items = trimToSize(items, int64(lim.sizeGB)<<30)
+		}
+		flat = append(flat, items...)
 	}
 
-	if _, err := m.st.DeleteEventsBefore(cutoff); err != nil {
+	// 2) 全局总容量限额：跨设备按日期从旧到新淘汰。
+	if m.cfg.RetentionSizeGB > 0 && len(flat) > 0 {
+		sort.Slice(flat, func(i, j int) bool { return flat[i].day.Before(flat[j].day) })
+		flat = trimToSize(flat, int64(m.cfg.RetentionSizeGB)<<30)
+	}
+
+	// 3) 事件仍按全局保留天数清理。
+	if _, err := m.st.DeleteEventsBefore(now.AddDate(0, 0, -globalDays)); err != nil {
 		log.Printf("cleanup delete events error: %v", err)
 	}
 }

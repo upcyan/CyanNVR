@@ -43,8 +43,10 @@ type deviceReq struct {
 	Source   string `json:"source"` // rtsp | test
 	RTSPURL  string `json:"rtspUrl"`
 
-	RecordEnabled *bool           `json:"recordEnabled"`
-	RecordMode    string          `json:"recordMode"`
+	RecordEnabled   *bool `json:"recordEnabled"`
+	RecordMode      string          `json:"recordMode"`
+	RetentionDays   *int            `json:"retentionDays"`
+	RetentionSizeGB *int            `json:"retentionSizeGB"`
 	ScheduleStart string          `json:"scheduleStart"`
 	ScheduleEnd   string          `json:"scheduleEnd"`
 	AIEnabled     *bool           `json:"aiEnabled"`
@@ -65,6 +67,12 @@ func (r *deviceReq) applyTo(d *models.Device) {
 	}
 	if r.ScheduleEnd != "" {
 		d.ScheduleEnd = r.ScheduleEnd
+	}
+	if r.RetentionDays != nil {
+		d.RetentionDays = *r.RetentionDays
+	}
+	if r.RetentionSizeGB != nil {
+		d.RetentionSizeGB = *r.RetentionSizeGB
 	}
 	if r.AIEnabled != nil {
 		d.AIEnabled = r.AIEnabled

@@ -5,8 +5,19 @@ MISSING=""
 command -v ffmpeg  >/dev/null 2>&1 || MISSING="${MISSING} ffmpeg"
 command -v python3 >/dev/null 2>&1 || MISSING="${MISSING} python3"
 
+# AI 识别的 Python 依赖：缺失时 worker 会在 import 阶段直接退出，
+# 设置页「推理后端」只能显示未连接（历史版本显示「未知」）。
+if command -v python3 >/dev/null 2>&1; then
+    if ! python3 -c "import cv2" >/dev/null 2>&1; then
+        MISSING="${MISSING} python3-opencv(cv2)"
+    fi
+    if ! python3 -c "import onnxruntime" >/dev/null 2>&1; then
+        MISSING="${MISSING} python3-onnxruntime"
+    fi
+fi
+
 if [ -n "${MISSING}" ]; then
-    echo "CyanNVR 依赖缺失:${MISSING}；录像与 AI 检测将不可用，请通过系统套件或 SSH 安装后重启应用。" > "${TRIM_TEMP_LOGFILE}"
+    echo "CyanNVR 依赖缺失:${MISSING}；录像与 AI 检测将不可用。可用 pip3 install opencv-python-headless onnxruntime 安装后重启应用。" > "${TRIM_TEMP_LOGFILE}"
 fi
 
 exit 0

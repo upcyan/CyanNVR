@@ -96,6 +96,20 @@ if [ -f "${CONF_DIR}/datadir.conf" ]; then
 fi
 
 BIN="${TRIM_APPDEST}/cyannvr"
+
+# 管理员改名（设置页「管理员改名」字段）：直接改库，服务无需重启。
+RENAME_NOTE=""
+if [ -n "${wizard_admin_rename}" ]; then
+    app_user=$(stat -c '%U' "${DATA_DIR}" 2>/dev/null)
+    RENAME_OUT=$(runuser -u "${app_user}" -- env NVR_DATA="${DATA_DIR}" "${BIN}"         rename-user --to "${wizard_admin_rename}" 2>&1)
+    RENAME_RC=$?
+    if [ "${RENAME_RC}" = "0" ]; then
+        RENAME_NOTE="${RENAME_OUT%%$'\n'*}"
+    else
+        RENAME_NOTE="改名失败：$(printf '%s' "${RENAME_OUT}" | head -1)"
+    fi
+fi
+
 list_users() {
     local out app_user
     app_user=$(stat -c '%U' "${DATA_DIR}" 2>/dev/null)
@@ -120,6 +134,7 @@ if [ -x "${BIN}" ] && [ -d "${DATA_DIR}" ]; then
 fi
 [ -n "${USERS}" ] || USERS="获取失败（可执行 cyannvr list-users 查看）"
 RESULT="当前用户：${USERS}。"
+[ -n "${RENAME_NOTE}" ] && RESULT="${RESULT} ${RENAME_NOTE}"
 
 if [ "${wizard_reset_code}" = "yes" ]; then
     READY=""
