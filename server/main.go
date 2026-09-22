@@ -149,6 +149,16 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 	if existing != nil {
 		return
 	}
+	// 数据库非空时完全跳过初始化：NVR_ADMIN_USER / NVR_ADMIN_PASSWORD 只在
+	// 首次建库时生效。否则向导里残留的旧用户名（例如自定义了 cnvradmin 但
+	// 库里实际是 admin）会每次启动都尝试插入，撞上固定主键 u_admin，
+	// 日志里永远刷 UNIQUE constraint failed: users.id。
+	all, lerr := st.ListUsers()
+	if lerr == nil && len(all) > 0 {
+		log.Printf("seed admin: 数据库已有 %d 个用户，忽略 NVR_ADMIN_USER=%q（改名/改密请用 cyannvr reset-password 或网页「忘记密码」）",
+			len(all), name)
+		return
+	}
 	pw := os.Getenv("NVR_ADMIN_PASSWORD")
 	if pw == "" {
 		pw = "admin123"

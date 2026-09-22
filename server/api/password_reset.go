@@ -405,7 +405,7 @@ func (s *Server) pickResetUser(name string) (*models.User, error) {
 			return nil, fmt.Errorf("查询用户失败")
 		}
 		if u == nil {
-			return nil, fmt.Errorf("用户不存在：%s", name)
+			return nil, fmt.Errorf("用户不存在：%s（当前用户名可在应用设置页或 cyannvr list-users 查看）", name)
 		}
 		return u, nil
 	}
