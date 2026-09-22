@@ -1,0 +1,20 @@
+{
+  ".url": {
+    "CyanNVR.main": {
+      "noDisplay": false,
+      "allUsers": true,
+      "fileTypes": [],
+      "control": {
+        "accessPerm": "editable"
+      },
+      "protocol": "http",
+      "gatewayPrefix": "",
+      "gatewaySocket": "",
+      "title": "CyanNVR·网络视频录像机",
+      "icon": "images/logo_{0}.png",
+      "type": "iframe",
+      "port": "${wizard_port}",
+      "url": "/"
+    }
+  }
+}

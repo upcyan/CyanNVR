@@ -1,0 +1,200 @@
+#!/bin/bash
+# CyanNVR 生命周期控制脚本
+#
+# 由飞牛 fnOS 调用：main start | stop | status
+# 环境变量由飞牛提供（TRIM_APPDEST/TRIM_PKGVAR 等），向导值以普通变量注入。
+
+# ── PATH ──
+# fnOS 启动应用时不提供 PATH，Go 子进程里 exec.LookPath 找不到
+# ffmpeg / python3，录像与 AI 识别会静默失败（日志报 not found in $PATH）。
+# 这里显式补上标准路径，导出给 cyannvr 及其拉起的所有子进程。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+LOG_FILE="${TRIM_PKGVAR}/cyanNVR.log"
+PID_FILE="${TRIM_PKGVAR}/cyanNVR.pid"
+
+# ── 数据目录 ──
+# 优先级：已保存配置(datadir.conf) > 向导值 > 飞牛默认 TRIM_PKGVAR。
+# 日志与 pid 始终留在 TRIM_PKGVAR（飞牛的运行数据目录），录像等大文件才走 DATA_DIR。
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -f "${TRIM_PKGETC}/datadir.conf" ]; then
+    SAVED_DIR=$(head -n 1 "${TRIM_PKGETC}/datadir.conf" | tr -d '[:space:]')
+    if [ -n "${SAVED_DIR}" ]; then
+        DATA_DIR="${SAVED_DIR}"
+    fi
+fi
+if [ "${wizard_datadir_mode}" = "custom" ] && [ -n "${wizard_data_dir}" ]; then
+    DATA_DIR="${wizard_data_dir}"
+fi
+
+# ── 「应用文件」share 软链 ──
+# fnOS 文件管理的「应用文件」显示 resource 声明的 data-share
+# （${TRIM_DATA_SHARE_PATHS}，默认 /vol1/@appshare/cyanNVR），它与实际数据
+# 目录是两个位置——自定义数据目录里的重置码 / 录像在「应用文件」里看不到，
+# 曾被误认为目录配置写错。这里把常用内容软链过去，文件管理可直接查看。
+# 目录被重装重建后，下次启动会自动补链。
+# （刻意不链 nvr.db / jwt_secret：数据库热文件与密钥不进共享视图。）
+SHARE_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+[ -n "${SHARE_DIR}" ] || SHARE_DIR="/vol1/@appshare/cyanNVR"
+if [ -d "${SHARE_DIR}" ] && [ "${DATA_DIR}" != "${SHARE_DIR}" ]; then
+    for item in reset-code.txt recordings snapshots events live models settings.json; do
+        # reset-code.txt 是按需生成的：即使当前不存在也先建链，
+        # 服务写入新文件后链接即刻可见（dangling symlink 无副作用）。
+        if [ -e "${DATA_DIR}/${item}" ] || [ "${item}" = "reset-code.txt" ]; then
+            ln -sfn "${DATA_DIR}/${item}" "${SHARE_DIR}/${item}" 2>/dev/null
+        fi
+    done
+    if [ -f "${TRIM_PKGVAR}/cyanNVR.log" ]; then
+        ln -sfn "${TRIM_PKGVAR}/cyanNVR.log" "${SHARE_DIR}/cyanNVR.log" 2>/dev/null
+    fi
+fi
+
+# ── 运行时配置 ──
+# 端口优先级：向导值 > 已保存配置(port.conf) > 默认 18182
+PORT="18182"
+if [ -f "${TRIM_PKGETC}/port.conf" ]; then
+    SAVED_PORT=$(head -n 1 "${TRIM_PKGETC}/port.conf" | tr -d '[:space:]')
+    if [ -n "${SAVED_PORT}" ]; then
+        PORT="${SAVED_PORT}"
+    fi
+fi
+if [ -n "${wizard_port}" ]; then
+    PORT="${wizard_port}"
+fi
+
+# 管理员账号：安装时由向导写入 admin.conf（用户名 密码），后续启动从中读取。
+# 用户名只在数据库首次初始化时生效；密码改由应用内修改，故后续启动不再覆盖。
+ADMIN_USER="admin"
+ADMIN_PWD="admin123"
+if [ -f "${TRIM_PKGETC}/admin.conf" ]; then
+    SAVED_USER=$(sed -n '1p' "${TRIM_PKGETC}/admin.conf" | tr -d '[:space:]')
+    SAVED_PWD=$(sed -n '2p' "${TRIM_PKGETC}/admin.conf")
+    if [ -n "${SAVED_USER}" ]; then
+        ADMIN_USER="${SAVED_USER}"
+    fi
+    if [ -n "${SAVED_PWD}" ]; then
+        ADMIN_PWD="${SAVED_PWD}"
+    fi
+fi
+if [ -n "${wizard_admin_user}" ]; then
+    ADMIN_USER="${wizard_admin_user}"
+fi
+if [ -n "${wizard_admin_password}" ]; then
+    ADMIN_PWD="${wizard_admin_password}"
+fi
+
+# 导出给子进程（bash -c 会继承）
+export NVR_PORT="${PORT}"
+export NVR_DATA="${DATA_DIR}"
+export NVR_WEB="${TRIM_APPDEST}/dist"
+export NVR_ADMIN_USER="${ADMIN_USER}"
+export NVR_ADMIN_PASSWORD="${ADMIN_PWD}"
+export NVR_JWT_SECRET=""
+export NVR_AI_ENABLED="true"
+export NVR_AI_MODE="local"
+export NVR_AI_DETECT_SCRIPT="${TRIM_APPDEST}/ai_detect.py"
+export NVR_AI_DETECT_URL="unix:/tmp/cyanNVR-ai.sock"
+export NVR_AI_MODEL_PATH="${TRIM_APPDEST}/models/yolov8n.onnx"
+export NVR_AI_MODELS_DIR="${DATA_DIR}/models"
+export NVR_AI_CONF="0.20"
+export NVR_AI_CLASSES="person,car,truck,bicycle,motorcycle,bus,dog,cat"
+export PYTHON="python3"
+export GIN_MODE="release"
+
+# 启动命令
+CMD="${TRIM_APPDEST}/cyannvr"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+}
+
+check_process() {
+    local pid=$1
+    kill -0 "${pid}" 2>/dev/null
+}
+
+status() {
+    if [ -f "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${pid}" ] && check_process "${pid}"; then
+            return 0
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    return 1
+}
+
+start_process() {
+    if status; then
+        log_msg "already running, skip start"
+        return 0
+    fi
+
+    mkdir -p "${DATA_DIR}"/{live,recordings,snapshots,events,models}
+
+    log_msg "Starting CyanNVR on port ${PORT} ..."
+    bash -c "${CMD}" >> "${LOG_FILE}" 2>&1 &
+    printf "%s" "$!" > "${PID_FILE}"
+
+    # 等待服务就绪（最多 30 秒）
+    local i=0
+    while [ $i -lt 30 ]; do
+        if wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" 2>/dev/null; then
+            log_msg "started successfully (pid $(cat ${PID_FILE}))"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+
+    log_msg "ERROR: service did not become ready within 30s"
+    echo "CyanNVR 启动失败：30 秒内未就绪，请查看日志 ${LOG_FILE}" > "${TRIM_TEMP_LOGFILE}"
+    return 1
+}
+
+stop_process() {
+    log_msg "Stopping CyanNVR ..."
+
+    if [ -r "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if [ -n "${pid}" ] && check_process "${pid}"; then
+            kill -TERM "${pid}" >> "${LOG_FILE}" 2>&1
+            local count=0
+            while check_process "${pid}" && [ $count -lt 10 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+            if check_process "${pid}"; then
+                kill -KILL "${pid}" 2>/dev/null
+                sleep 1
+            fi
+        fi
+        rm -f "${PID_FILE}"
+    fi
+
+    # 清理 AI 检测子进程与 socket
+    pkill -f "cyanNVR-ai.sock" 2>/dev/null
+    pkill -f "${TRIM_APPDEST}/ai_detect.py" 2>/dev/null
+    rm -f /tmp/cyanNVR-ai.sock 2>/dev/null
+
+    return 0
+}
+
+case "$1" in
+start)
+    start_process
+    ;;
+stop)
+    stop_process
+    ;;
+status)
+    if status; then
+        exit 0
+    else
+        exit 3
+    fi
+    ;;
+*)
+    exit 1
+    ;;
+esac

@@ -1,0 +1,17 @@
+appname               = CyanNVR
+version               = @VERSION@
+display_name          = CyanNVR
+desc                  = CyanNVR 是一款轻量级网络视频录像机（NVR）。<br><br>支持 ONVIF 摄像头自动发现、实时预览、多画面分割、录像回放、AI 目标检测与事件管理。安装时可自定义服务端口，安装后直接从飞牛桌面打开。默认账号 admin / admin123。
+platform              = x86
+source                = thirdparty
+maintainer            = CyanNVR
+maintainer_url        = https://github.com/upcyan/SimpleNVR
+distributor           = CyanNVR
+distributor_url       = https://github.com/upcyan/SimpleNVR
+os_min_version        = 1.0.0
+service_port          = 18182
+checkport             = false
+ctl_stop              = true
+desktop_uidir         = ui
+desktop_applaunchname = CyanNVR.main
+changelog             = v1.1.1-2<br>- 修复重装应用时数据目录 / 端口 / 管理员账号被安装向导默认值覆盖（重装后密码失效、重置码写错目录的根因）<br>- 「应用文件」加入数据目录软链：重置码、录像、事件、日志可在飞牛文件管理中直接查看<br><br>v1.1.1<br>- 应用图标全面升级：深青渐变背景 + 与系统一致的 25.4% 圆角（应用中心 / 桌面入口 / 网页图标全套）<br>- 桌面入口图标文件更名（logo_*）以刷新图标缓存<br>- 设置页重构：移除对已有数据无效的「重置管理员密码」，新增「生成重置码文件」，并展示当前用户名列表<br>- 修复向导自定义管理员名只在首次建库生效、导致每次启动报 UNIQUE constraint 的问题（现仅空库初始化）<br>- 修复 fnOS 启动环境缺 PATH 导致 ffmpeg / python3 找不到（录像与 AI 识别不可用）<br>- 密码重置的「用户不存在」提示补充用户名查看指引<br><br>v1.1.0<br>- 全新应用图标（镜头 + 录制指示）<br>- 新增「忘记密码」重置流程：重置码 5 分钟有效，登录页带倒计时<br>- 新增命令行密码重置：cyannvr reset-password / list-users<br>- 改密后旧登录会话立即失效<br>- 应用中心设置页可修改数据目录、服务端口与管理员密码<br>- 安装向导支持自定义管理员用户名与数据目录<br>- 修复配置变更 / 卸载时无法停止服务<br>- 修复事件缩略图无法加载（401）<br>- 修复录像页进度条无法拖动<br>- 修复导航栏事件图标缺失

@@ -1,0 +1,8 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "cyannvr",
+  "groupname": "cyannvr",
+  "join-groups": ["video", "render"]
+}

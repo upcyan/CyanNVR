@@ -1,0 +1,92 @@
+#!/bin/bash
+# 安装后执行：初始化数据目录、保存向导配置、迁移历史数据（若存在）
+
+mkdir -p "${TRIM_PKGETC}"
+chmod 755 "${TRIM_PKGETC}" 2>/dev/null
+
+# ── 解析数据目录 ──
+# 语义（重要）：
+#   - 全新安装（无 datadir.conf）：按向导选择写入
+#   - 重装 / 升级（已有 datadir.conf）：保留既有配置！
+#     曾经这里无条件覆盖，导致重装后数据目录被向导默认值重置回
+#     @appdata，登录与重置码全部指向旧库（密码“莫名失效”的根因）。
+#     需要改目录请在安装后用应用「设置」页，或在安装向导中显式选「自定义」。
+SAVED_DATA_DIR=""
+[ -f "${TRIM_PKGETC}/datadir.conf" ] && \
+    SAVED_DATA_DIR=$(head -n 1 "${TRIM_PKGETC}/datadir.conf" | tr -d '[:space:]')
+
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -n "${SAVED_DATA_DIR}" ] && [ "${wizard_datadir_mode}" != "custom" ]; then
+    # 重装场景：沿用已保存的数据目录
+    DATA_DIR="${SAVED_DATA_DIR}"
+elif [ "${wizard_datadir_mode}" = "custom" ] && [ -n "${wizard_data_dir}" ]; then
+    DATA_DIR="${wizard_data_dir}"
+elif [ "${wizard_datadir_mode}" = "custom" ] && [ -z "${wizard_data_dir}" ]; then
+    echo "选择了自定义数据目录但未填写路径，已回退到默认目录。" > "${TRIM_TEMP_LOGFILE}"
+    DATA_DIR="${TRIM_PKGVAR}"
+fi
+
+# 自定义目录需要显式创建并授权给应用用户
+if [ "${DATA_DIR}" != "${TRIM_PKGVAR}" ]; then
+    if ! mkdir -p "${DATA_DIR}" 2>/dev/null; then
+        echo "无法创建数据目录 ${DATA_DIR}，请检查路径与权限；已回退到默认目录。" > "${TRIM_TEMP_LOGFILE}"
+        DATA_DIR="${TRIM_PKGVAR}"
+    fi
+fi
+
+mkdir -p "${DATA_DIR}"/{live,recordings,snapshots,events,models}
+chmod -R 755 "${DATA_DIR}" 2>/dev/null
+# 自定义目录不在 @appdata 下，属主需显式改为应用用户
+chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${DATA_DIR}" 2>/dev/null
+
+# ── 保存向导配置（向导值只在安装/配置变更时注入一次，日常 start 读不到）──
+# datadir.conf：全新安装必须写入（否则向导选的目录只活在本次环境变量里）；
+# 已存在且未显式选「自定义」时跳过，保留既有配置。
+if [ ! -f "${TRIM_PKGETC}/datadir.conf" ] || [ "${wizard_datadir_mode}" = "custom" ]; then
+    echo "${DATA_DIR}" > "${TRIM_PKGETC}/datadir.conf"
+fi
+# 端口 / 账号与数据目录同理：文件已存在 = 用户配置过，重装不覆盖
+# （安装向导的这些字段未必预填已保存值，盲目覆盖会把自定义端口/账号
+#   重置成默认值）。安装后要修改请用应用「设置」页。
+if [ ! -f "${TRIM_PKGETC}/port.conf" ]; then
+    echo "${wizard_port:-18182}" > "${TRIM_PKGETC}/port.conf"
+fi
+if [ ! -f "${TRIM_PKGETC}/admin.conf" ]; then
+    {
+        echo "${wizard_admin_user:-admin}"
+        echo "${wizard_admin_password:-admin123}"
+    } > "${TRIM_PKGETC}/admin.conf"
+    chmod 600 "${TRIM_PKGETC}/admin.conf"
+fi
+
+# ── 预置模型 ──
+if [ -f "${TRIM_APPDEST}/models/yolov8n.onnx" ]; then
+    cp -f "${TRIM_APPDEST}/models/yolov8n.onnx" "${DATA_DIR}/models/" 2>/dev/null
+fi
+
+# ── 历史数据迁移 ──
+# 支持旧 Docker 部署：默认查找 /vol1/1000/NasAppFiles/simpleNVR
+LEGACY_DIRS="/vol1/1000/NasAppFiles/simpleNVR"
+MIGRATED=""
+for src in ${LEGACY_DIRS}; do
+    if [ -d "${src}" ] && [ -f "${src}/nvr.db" ] && [ ! -f "${DATA_DIR}/nvr.db" ]; then
+        echo "[$(date '+%F %T')] 迁移历史数据: ${src} -> ${DATA_DIR}" >> "${DATA_DIR}/install.log"
+        for item in nvr.db nvr.db-wal nvr.db-shm settings.json jwt_secret recordings snapshots events models; do
+            if [ -e "${src}/${item}" ]; then
+                cp -a "${src}/${item}" "${DATA_DIR}/" 2>>"${DATA_DIR}/install.log"
+            fi
+        done
+        chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${DATA_DIR}" 2>/dev/null
+        MIGRATED="${src}"
+        break
+    fi
+done
+
+USER_SHOWN="${wizard_admin_user:-admin}"
+if [ -n "${MIGRATED}" ]; then
+    echo "CyanNVR 安装完成，已从 ${MIGRATED} 迁移历史数据。端口 ${wizard_port:-18182}，管理员账号 ${USER_SHOWN}，数据目录 ${DATA_DIR}。" > "${TRIM_TEMP_LOGFILE}"
+else
+    echo "CyanNVR 安装完成。端口 ${wizard_port:-18182}，管理员账号 ${USER_SHOWN}，数据目录 ${DATA_DIR}。" > "${TRIM_TEMP_LOGFILE}"
+fi
+
+exit 0

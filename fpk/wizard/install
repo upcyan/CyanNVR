@@ -1,0 +1,64 @@
+[
+  {
+    "stepTitle": "CyanNVR 服务配置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_admin_user",
+        "label": "管理员用户名",
+        "initValue": "admin",
+        "helpText": "登录 CyanNVR 的管理员账号，仅在首次初始化时生效",
+        "rules": [
+          { "required": true, "message": "请填写管理员用户名" },
+          { "pattern": "^[A-Za-z0-9_.-]{1,32}$", "message": "仅支持字母、数字、下划线、点和短横线，长度 1-32" }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_admin_password",
+        "label": "管理员密码",
+        "initValue": "admin123",
+        "helpText": "登录后可随时在应用内修改",
+        "rules": [
+          { "required": true, "message": "请填写管理员密码" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "服务端口",
+        "initValue": "18182",
+        "helpText": "CyanNVR 访问端口，桌面图标会指向该端口。若 18181 已被占用（例如旧的 Docker 部署），保持默认 18182 或另选空闲端口。",
+        "rules": [
+          { "required": true, "message": "请填写服务端口" },
+          { "pattern": "^[0-9]+$", "message": "端口只能是数字" }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_datadir_mode",
+        "label": "数据存放位置",
+        "initValue": "default",
+        "helpText": "录像、快照、事件与数据库的存放位置。录像体积较大，建议放到容量充足的空间。",
+        "options": [
+          { "label": "使用飞牛默认应用数据目录", "value": "default" },
+          { "label": "自定义目录（在下方填写）", "value": "custom" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_data_dir",
+        "label": "自定义数据目录",
+        "initValue": "",
+        "helpText": "仅当上面选择「自定义目录」时生效。填写绝对路径，例如 /vol2/nvr-data。留空或选择默认时使用飞牛默认目录。",
+        "rules": [
+          { "pattern": "^$|^/[A-Za-z0-9_./-]+$", "message": "请填写以 / 开头的绝对路径" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "录像与 AI 检测依赖 ffmpeg / python3；系统缺失时安装脚本会给出提示。安装后如需迁移历史数据，执行 fpk/migrate-data.sh。"
+      }
+    ]
+  }
+]

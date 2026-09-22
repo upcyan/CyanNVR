@@ -1,0 +1,68 @@
+#!/bin/bash
+# 配置变更前执行：停止服务，便于应用新端口等设置；
+# 并刷新设置页 tips 里展示的「当前用户列表」。
+
+
+# fnOS 启动生命周期脚本时不提供 PATH，这里显式补上。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# 定位同目录下的 main 脚本。
+# 不能用 "${TRIM_APPDEST}/../cmd/main"：TRIM_APPDEST 指向 target 软链，
+# 而路径中的 ".." 会跟随软链落到 /vol1/@appcenter，那里没有 cmd 目录。
+# 因此改用脚本自身位置（BASH_SOURCE）；若拿不到再回退到约定路径。
+CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+MAIN="${CMD_DIR}/main"
+if [ ! -x "${MAIN}" ]; then
+    MAIN="/var/apps/${TRIM_APPNAME}/cmd/main"
+fi
+
+"${MAIN}" stop >/dev/null 2>&1
+
+# ── 读取当前数据目录 ──
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -f "${TRIM_PKGETC}/datadir.conf" ]; then
+    SAVED=$(head -n 1 "${TRIM_PKGETC}/datadir.conf" | tr -d '[:space:]')
+    [ -n "${SAVED}" ] && DATA_DIR="${SAVED}"
+fi
+
+# ── 刷新设置页的用户名列表 ──
+# wizard/config 中 tips 的「当前用户列表：」到「（打开本页时自动刷新」之间
+# 的内容会被替换成真实用户名。fnOS 读取 wizard 文件的时机不确定：本次打开
+# 没刷上也会在下一次打开生效；保存结果里还会再给出一份列表，互为备份。
+BIN="${TRIM_APPDEST}/cyannvr"
+WIZFILE="/var/apps/${TRIM_APPNAME}/wizard/config"
+[ -f "${WIZFILE}" ] || WIZFILE="${CMD_DIR}/../wizard/config"
+
+list_users() {
+    local out app_user
+    app_user=$(stat -c '%U' "${DATA_DIR}" 2>/dev/null)
+    if [ -n "${app_user}" ] && [ "${app_user}" != "root" ] && id "${app_user}" >/dev/null 2>&1; then
+        out=$(runuser -u "${app_user}" -- env NVR_DATA="${DATA_DIR}" "${BIN}" list-users 2>/dev/null)
+    else
+        out=$(env NVR_DATA="${DATA_DIR}" "${BIN}" list-users 2>/dev/null)
+    fi
+    printf '%s\n' "${out}" | awk '
+        /^用户名/ {f=1; next}
+        f && NF >= 2 {
+            n++
+            role = ($2 == "admin") ? "管理员" : "用户"
+            printf "%s%s(%s)", (n > 1 ? "、" : ""), $1, role
+        }
+        END { if (n == 0) exit 1 }'
+}
+
+USERS=""
+if [ -x "${BIN}" ] && [ -d "${DATA_DIR}" ]; then
+    USERS=$(list_users 2>/dev/null || true)
+fi
+[ -n "${USERS}" ] || USERS="获取失败（可执行 cyannvr list-users 查看）"
+
+# JSON/sed 安全处理：去掉引号、反斜杠、全角括号与 sed 分隔符，转义 &
+SAFE=$(printf '%s' "${USERS}" | tr -d '\\@"（）' )
+SAFE=${SAFE//&/\\&}
+
+if [ -f "${WIZFILE}" ]; then
+    sed -i -E "s@当前用户列表：.*（打开本页时自动刷新@当前用户列表：${SAFE}（打开本页时自动刷新@" "${WIZFILE}" 2>/dev/null || true
+fi
+
+exit 0

@@ -1,0 +1,12 @@
+#!/bin/bash
+# 安装前执行：检查运行依赖（ffmpeg / python3）
+
+MISSING=""
+command -v ffmpeg  >/dev/null 2>&1 || MISSING="${MISSING} ffmpeg"
+command -v python3 >/dev/null 2>&1 || MISSING="${MISSING} python3"
+
+if [ -n "${MISSING}" ]; then
+    echo "CyanNVR 依赖缺失:${MISSING}；录像与 AI 检测将不可用，请通过系统套件或 SSH 安装后重启应用。" > "${TRIM_TEMP_LOGFILE}"
+fi
+
+exit 0

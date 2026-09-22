@@ -1,0 +1,57 @@
+[
+  {
+    "stepTitle": "CyanNVR 应用设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "除「生成重置码」外，所有项目留空表示保持当前设置不变，不会覆盖已有配置。修改保存后应用会自动重启。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "服务端口",
+        "initValue": "",
+        "helpText": "留空不修改。修改后桌面图标会指向新端口。",
+        "rules": [
+          { "pattern": "^$|^[0-9]+$", "message": "请留空或填写数字端口" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_data_dir",
+        "label": "数据目录",
+        "initValue": "",
+        "helpText": "录像、快照、事件、数据库与密码重置码都存放在这里。留空不修改；填绝对路径（如 /vol2/nvr-data）切换目录；填 default 恢复飞牛默认目录（/vol1/@appdata/CyanNVR）。",
+        "rules": [
+          { "pattern": "^$|^default$|^/[A-Za-z0-9_./-]+$", "message": "请留空、填写 default，或以 / 开头的绝对路径" }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_migrate_data",
+        "label": "切换数据目录时",
+        "initValue": "keep",
+        "helpText": "仅在数据目录确实发生变化时生效。",
+        "options": [
+          { "label": "不迁移，新目录从空开始", "value": "keep" },
+          { "label": "迁移现有数据到新目录（复制，保留原数据）", "value": "move" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "当前用户列表：__USERS__（打开本页时自动刷新；也可在服务器执行 cyannvr list-users 查看）。管理员用户名/密码仅在数据库首次初始化时由安装向导写入；已有数据的改密请用下方重置码或 cyannvr reset-password。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_reset_code",
+        "label": "忘记密码：生成重置码文件",
+        "initValue": "no",
+        "helpText": "选「生成」并保存后，应用重启会生成一次性重置码文件（5 分钟内有效），保存结果中会给出文件路径与用户名列表；随后到网页登录页「忘记密码」输入该码即可设置新密码。",
+        "options": [
+          { "label": "不生成", "value": "no" },
+          { "label": "生成重置码文件", "value": "yes" }
+        ]
+      }
+    ]
+  }
+]

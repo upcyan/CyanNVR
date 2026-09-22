@@ -1,0 +1,163 @@
+#!/bin/bash
+# 配置变更后执行：应用飞牛应用中心设置页提交的改动，然后重启服务；
+# 最后把「当前用户名列表」（以及按需生成的重置码文件路径）写进保存结果。
+#
+# 约定：向导字段留空 = 不修改该项（避免设置页把默认值当成用户输入覆盖掉现有配置）。
+
+# fnOS 启动生命周期脚本时不提供 PATH，这里显式补上。
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# 定位同目录下的 main 脚本。
+# 不能用 "${TRIM_APPDEST}/../cmd/main"：TRIM_APPDEST 指向 target 软链，
+# 而路径中的 ".." 会跟随软链落到 /vol1/@appcenter，那里没有 cmd 目录。
+CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+MAIN="${CMD_DIR}/main"
+if [ ! -x "${MAIN}" ]; then
+    MAIN="/var/apps/${TRIM_APPNAME}/cmd/main"
+fi
+
+mkdir -p "${TRIM_PKGETC}"
+CONF_DIR="${TRIM_PKGETC}"
+DEFAULT_DATA_DIR="${TRIM_PKGVAR}"
+
+# 当前生效的数据目录
+CUR_DIR="${DEFAULT_DATA_DIR}"
+if [ -f "${CONF_DIR}/datadir.conf" ]; then
+    SAVED=$(head -n 1 "${CONF_DIR}/datadir.conf" | tr -d '[:space:]')
+    [ -n "${SAVED}" ] && CUR_DIR="${SAVED}"
+fi
+
+# ── 1. 端口（仅数字有效）──
+if [ -n "${wizard_port}" ]; then
+    case "${wizard_port}" in
+        *[!0-9]*)
+            echo "端口 ${wizard_port} 含有非法字符，已忽略。" > "${TRIM_TEMP_LOGFILE}" ;;
+        *)
+            echo "${wizard_port}" > "${CONF_DIR}/port.conf" ;;
+    esac
+fi
+
+# ── 2. 数据目录 ──
+NEW_DIR=""
+if [ "${wizard_data_dir}" = "default" ]; then
+    NEW_DIR="${DEFAULT_DATA_DIR}"
+elif [ -n "${wizard_data_dir}" ]; then
+    case "${wizard_data_dir}" in
+        /*) NEW_DIR="${wizard_data_dir}" ;;
+        *)  echo "数据目录 ${wizard_data_dir} 不是绝对路径，已忽略。" > "${TRIM_TEMP_LOGFILE}" ;;
+    esac
+fi
+
+if [ -n "${NEW_DIR}" ] && [ "${NEW_DIR}" != "${CUR_DIR}" ]; then
+    if mkdir -p "${NEW_DIR}"/{live,recordings,snapshots,events,models} 2>/dev/null; then
+        chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${NEW_DIR}" 2>/dev/null
+        chmod -R 755 "${NEW_DIR}" 2>/dev/null
+
+        # 迁移现有数据（复制，不删除原目录，保留回退余地）
+        if [ "${wizard_migrate_data}" = "move" ] && [ -d "${CUR_DIR}" ]; then
+            echo "[$(date '+%F %T')] 迁移数据 ${CUR_DIR} -> ${NEW_DIR}" >> "${NEW_DIR}/install.log"
+            for item in nvr.db nvr.db-wal nvr.db-shm settings.json jwt_secret recordings snapshots events models; do
+                if [ -e "${CUR_DIR}/${item}" ]; then
+                    cp -a "${CUR_DIR}/${item}" "${NEW_DIR}/" 2>>"${NEW_DIR}/install.log"
+                fi
+            done
+            chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${NEW_DIR}" 2>/dev/null
+        fi
+
+        echo "${NEW_DIR}" > "${CONF_DIR}/datadir.conf"
+        echo "数据目录已切换为 ${NEW_DIR}。" > "${TRIM_TEMP_LOGFILE}"
+    else
+        # 创建失败时保留原目录，避免应用起不来
+        echo "无法创建数据目录 ${NEW_DIR}，已保留原目录 ${CUR_DIR}。" > "${TRIM_TEMP_LOGFILE}"
+    fi
+fi
+
+# ──3.（旧「重置管理员密码」字段已移除）──────────────────────────────
+# 向导改密只在数据库首次初始化时可能生效；库里已有用户时它既改不了密码，
+# 还会留下幽灵用户名（如 cnvradmin）反复触发 seed 报错。现在统一走
+# 「生成重置码文件」→ 网页「忘记密码」设置新密码，或在服务器执行
+# cyannvr reset-password。
+
+# ── 4. 以新配置重启服务 ──
+"${MAIN}" start >/dev/null2>&1
+
+# ── 5. 生成重置码（可选）并汇总保存结果 ──
+PORT_CUR="18182"
+if [ -f "${CONF_DIR}/port.conf" ]; then
+    PORT_CUR=$(head -n 1 "${CONF_DIR}/port.conf" | tr -d '[:space:]')
+fi
+case "${PORT_CUR}" in ''|*[!0-9]*) PORT_CUR="18182" ;; esac
+
+# 重新读取数据目录（第2步可能已切换）
+DATA_DIR="${DEFAULT_DATA_DIR}"
+if [ -f "${CONF_DIR}/datadir.conf" ]; then
+    SAVED=$(head -n 1 "${CONF_DIR}/datadir.conf" | tr -d '[:space:]')
+    [ -n "${SAVED}" ] && DATA_DIR="${SAVED}"
+fi
+
+BIN="${TRIM_APPDEST}/cyannvr"
+list_users() {
+    local out app_user
+    app_user=$(stat -c '%U' "${DATA_DIR}" 2>/dev/null)
+    if [ -n "${app_user}" ] && [ "${app_user}" != "root" ] && id "${app_user}" >/dev/null 2>&1; then
+        out=$(runuser -u "${app_user}" -- env NVR_DATA="${DATA_DIR}" "${BIN}" list-users 2>/dev/null)
+    else
+        out=$(env NVR_DATA="${DATA_DIR}" "${BIN}" list-users 2>/dev/null)
+    fi
+    printf '%s\n' "${out}" | awk '
+        /^用户名/ {f=1; next}
+        f && NF >= 2 {
+            n++
+            role = ($2 == "admin") ? "管理员" : "用户"
+            printf "%s%s(%s)", (n > 1 ? "、" : ""), $1, role
+        }
+        END { if (n == 0) exit 1 }'
+}
+
+USERS=""
+if [ -x "${BIN}" ] && [ -d "${DATA_DIR}" ]; then
+    USERS=$(list_users 2>/dev/null || true)
+fi
+[ -n "${USERS}" ] || USERS="获取失败（可执行 cyannvr list-users 查看）"
+RESULT="当前用户：${USERS}。"
+
+if [ "${wizard_reset_code}" = "yes" ]; then
+    READY=""
+    for _ in 1 2 3 4 5; do
+        if curl -fsS --max-time 3 "http://127.0.0.1:${PORT_CUR}/api/health" >/dev/null 2>&1; then
+            READY=1
+            break
+        fi
+        sleep 2
+    done
+    if [ -n "${READY}" ]; then
+        RESP=$(curl -fsS --max-time 10 -X POST "http://127.0.0.1:${PORT_CUR}/api/auth/reset-request" \
+                   -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)
+        CODE_FILE=$(printf '%s' "${RESP}" | sed -n 's/.*"file":[ ]*"\([^"]*\)".*/\1/p')
+        EXPIRES=$(printf '%s' "${RESP}" | sed -n 's/.*"expiresAt":[ ]*"\([^"]*\)".*/\1/p')
+        if [ -n "${CODE_FILE}" ]; then
+            EXP_CN=$(date -d "${EXPIRES}" '+%H:%M:%S' 2>/dev/null || true)
+            if [ -n "${EXP_CN}" ]; then
+                RESULT="${RESULT} 重置码文件：${CODE_FILE}（${EXP_CN} 前有效）。"
+            else
+                RESULT="${RESULT} 重置码文件：${CODE_FILE}（5 分钟内有效）。"
+            fi
+            RESULT="${RESULT} 请到网页登录页「忘记密码」输入该码设置新密码。"
+        else
+            RESULT="${RESULT} 重置码生成失败（reset-request 无响应）。"
+        fi
+    else
+        RESULT="${RESULT} 服务未就绪，重置码未生成，请查看 ${TRIM_PKGVAR}/cyanNVR.log。"
+    fi
+fi
+
+# 保留本次流程中更早写入的提示（如数据目录切换结果），追加汇总
+PREV=""
+[ -f "${TRIM_TEMP_LOGFILE}" ] && PREV=$(cat "${TRIM_TEMP_LOGFILE}" 2>/dev/null)
+if [ -n "${PREV}" ]; then
+    printf '%s\n%s\n' "${PREV}" "${RESULT}" > "${TRIM_TEMP_LOGFILE}"
+else
+    printf '%s\n' "${RESULT}" > "${TRIM_TEMP_LOGFILE}"
+fi
+
+exit 0

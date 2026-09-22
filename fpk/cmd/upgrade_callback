@@ -1,0 +1,14 @@
+#!/bin/bash
+# 升级后执行：保留数据目录，仅补齐新增子目录
+
+mkdir -p "${TRIM_PKGVAR}"/{live,recordings,snapshots,events,models}
+chmod -R 755 "${TRIM_PKGVAR}" 2>/dev/null
+
+# 更新预置模型（不覆盖用户已下载的其他模型）
+if [ -f "${TRIM_APPDEST}/models/yolov8n.onnx" ]; then
+    cp -f "${TRIM_APPDEST}/models/yolov8n.onnx" "${TRIM_PKGVAR}/models/" 2>/dev/null
+fi
+
+echo "CyanNVR 已升级，数据目录保持不变。" > "${TRIM_TEMP_LOGFILE}"
+
+exit 0

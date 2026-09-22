@@ -41,8 +41,21 @@ __pycache__/
 # UI 验证截图(本机产物)
 .ui-shots/
 
-# FPK 打包产物与脚本(本机产物，禁止提交)
-fpk/
+# ===== FPK：源码纳入版本管理，仅忽略构建产物 =====
+# （此前整体忽略 fpk/，导致打包脚本、图标生成器、生命周期脚本的
+#   多轮修复没有任何版本记录，误删不可恢复）
+fpk/*.fpk
+fpk/manifest
+fpk/version.env
+fpk/__pycache__/
+fpk/package/
+fpk/app/cyannvr
+fpk/app/dist/
+fpk/app/models/
+fpk/app/ai_detect.py
+
+# fpk 下的 shell 脚本是核心构建/运维工具，覆盖上面的 *.sh 规则
+!fpk/*.sh
 
 # Docker 用前端构建产物
 web/dist.docker/

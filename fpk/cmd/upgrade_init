@@ -1,0 +1,17 @@
+#!/bin/bash
+# 升级前执行：停止服务，避免二进制被占用
+
+
+# 定位同目录下的 main 脚本。
+# 不能用 "${TRIM_APPDEST}/../cmd/main"：TRIM_APPDEST 指向 target 软链，
+# 而路径中的 ".." 会跟随软链落到 /vol1/@appcenter，那里没有 cmd 目录。
+# 因此改用脚本自身位置（BASH_SOURCE）；若拿不到再回退到约定路径。
+CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+MAIN="${CMD_DIR}/main"
+if [ ! -x "${MAIN}" ]; then
+    MAIN="/var/apps/${TRIM_APPNAME}/cmd/main"
+fi
+
+"${MAIN}" stop >/dev/null 2>&1
+
+exit 0

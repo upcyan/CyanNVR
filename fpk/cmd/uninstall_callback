@@ -1,0 +1,8 @@
+#!/bin/bash
+# 卸载后执行：保留用户录像数据，仅清理临时 socket
+
+rm -f /tmp/cyanNVR-ai.sock 2>/dev/null
+
+echo "CyanNVR 已卸载。录像与快照数据已保留在应用数据目录中。" > "${TRIM_TEMP_LOGFILE}"
+
+exit 0
