@@ -22,10 +22,11 @@ type Server struct {
 	cfg *config.Config
 	st  *store.Store
 	rec *recorder.Manager
-	hls *hls.Hls
-	am  *auth.Manager
-	hub *SSEHub
-	tls *tlsx.Runner
+	hls   *hls.Hls
+	am    *auth.Manager
+	hub   *SSEHub
+	reset *resetManager
+	tls   *tlsx.Runner
 
 	settingsMu sync.Mutex
 	settings   *AppSettings
@@ -61,7 +62,7 @@ type AppSettings struct {
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
-	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am, hub: hub}
+	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am, hub: hub, reset: newResetManager(cfg.DataDir)}
 	s.loadSettings()
 	s.applySettings()
 	s.rec.ShouldRecordFn = func() (string, string, string) {
@@ -174,6 +175,12 @@ func (s *Server) Router() http.Handler {
 
 	authGrp := api.Group("/auth")
 	authGrp.POST("/login", s.login)
+	// 忘记密码三步流程：生成重置码 → 校验并换 grant → 凭 grant 设新密码。
+	// 无需鉴权——重置码只写在服务器本地文件里，能读到即证明持有设备；
+	// 端点自带按 IP 限流、5 分钟有效期、一次性校验。
+	authGrp.POST("/reset-request", s.resetRequest)
+	authGrp.POST("/reset-verify", s.resetVerify)
+	authGrp.POST("/reset-confirm", s.resetConfirm)
 
 	protected := api.Group("")
 	protected.Use(s.am.Middleware())

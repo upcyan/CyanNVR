@@ -10,12 +10,17 @@ import (
 	"cyannvr/server/models"
 )
 
+// CoreVersion 由 main 包在启动时注入（见 main.go），用于健康检查暴露核心版本。
+// 定义为变量而非常量，让 api 包不必依赖 main 包。
+var CoreVersion = "dev"
+
 func (s *Server) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-		"name":   "CyanNVR",
-		"time":   time.Now().Format(time.RFC3339),
-		"auth":   true,
+		"status":  "ok",
+		"name":    "CyanNVR",
+		"version": CoreVersion,
+		"time":    time.Now().Format(time.RFC3339),
+		"auth":    true,
 	})
 }
 

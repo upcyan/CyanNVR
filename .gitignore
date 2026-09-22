@@ -40,3 +40,9 @@ __pycache__/
 
 # UI 验证截图(本机产物)
 .ui-shots/
+
+# FPK 打包产物与脚本(本机产物，禁止提交)
+fpk/
+
+# Docker 用前端构建产物
+web/dist.docker/

@@ -8,6 +8,10 @@ export interface Playable {
   resume(): void
   readonly time: number
   destroy(): void
+  // canSeekTo 判断目标时间点是否落在当前已缓冲/可跳转区间内。
+  // 回放会话是 ffmpeg 边转码边切片产出的 HLS，未就绪时不能直接 seek，
+  // 此时必须由上层重建会话。就地可跳转时直接 seek 体验会好很多。
+  canSeekTo(ts: number): boolean
 }
 
 // ---------- simulated stream (mock / offline demo) ----------
@@ -79,6 +83,10 @@ export class SimulatedStream implements Playable {
 
   seek(ts: number) {
     this.now = ts
+  }
+
+  canSeekTo() {
+    return true
   }
 
   get time() {
@@ -159,6 +167,22 @@ export class HlsStream implements Playable {
   seek(ts: number) {
     if (!this.video) return
     this.video.currentTime = Math.max(0, (ts - this.baseTs) / 1000)
+  }
+
+  // 只有目标时间落在 video.seekable 区间内才能可靠跳转。
+  // 会话刚建立时 ffmpeg 只产出少量分片，seekable 区间很窄；
+  // 转码推进后窗口变宽，此时即可就地跳转，无需重建会话。
+  canSeekTo(ts: number) {
+    const v = this.video
+    if (!v) return false
+    const target = (ts - this.baseTs) / 1000
+    if (!Number.isFinite(target) || target < 0) return false
+    const ranges = v.seekable
+    if (!ranges) return false
+    for (let i = 0; i < ranges.length; i++) {
+      if (target >= ranges.start(i) && target <= ranges.end(i)) return true
+    }
+    return false
   }
 
   setSpeed(n: number) {

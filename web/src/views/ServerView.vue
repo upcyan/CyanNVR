@@ -178,13 +178,11 @@ function goBack() {
       <van-field v-model="form.lanUrl" label="局域网地址" placeholder="如：192.168.1.100:8080" />
       <van-field v-model="form.publicUrl" label="公网地址" placeholder="如：nvr.example.com:8080" />
       <van-cell class="opt-cell" title="连接策略" label="自动：先局域网后公网">
-        <template #value>
-          <van-radio-group v-model="form.mode" direction="horizontal">
-            <van-radio name="auto">自动</van-radio>
-            <van-radio name="lan">仅局域网</van-radio>
-            <van-radio name="public">仅公网</van-radio>
-          </van-radio-group>
-        </template>
+        <van-radio-group v-model="form.mode" direction="horizontal" class="strategy-radios">
+          <van-radio name="auto">自动</van-radio>
+          <van-radio name="lan">仅局域网</van-radio>
+          <van-radio name="public">仅公网</van-radio>
+        </van-radio-group>
       </van-cell>
     </van-cell-group>
 
@@ -327,5 +325,10 @@ function goBack() {
 }
 .tls-actions {
   padding: 8px 16px 12px;
+}
+/* 关怀模式（1.4 倍缩放）下 radio 文字放大，允许换行避免溢出截断 */
+.strategy-radios {
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 </style>

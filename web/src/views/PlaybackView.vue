@@ -27,6 +27,8 @@ const playing = ref(true)
 const speed = ref(1)
 const showDevicePicker = ref(false)
 const loading = ref(false)
+// 已请求跳转、但新会话/新位置尚未生效。此期间抑制定时器回写游标。
+const seekPending = ref(false)
 
 const playerRef = ref<InstanceType<typeof PlaybackPlayer> | null>(null)
 let playable: Playable | null = null
@@ -85,6 +87,7 @@ async function rebuildPlayable() {
   const start = segments.value[0].start
   currentTs.value = start
   playing.value = true
+  seekPending.value = false
   if (isBackend() && !isDemoMode()) {
     buildSession(start)
   } else {
@@ -108,28 +111,60 @@ async function buildSession(fromTs: number) {
     playable = createPlayable({ url, baseTs: winStart })
     playable.attach(el)
     playable.setSpeed(speed.value)
+    // 新会话已就绪：游标回到真实播放位置，并恢复由播放位置驱动进度条
+    currentTs.value = playable.time
+    seekPending.value = false
   } catch {
-    /* no recordings in window */
+    // 请求失败（如窗口内无录像）：解除挂起，否则进度条会一直不跟随播放
+    seekPending.value = false
   }
 }
 
 function startTimer() {
   if (timer) return
   timer = window.setInterval(() => {
+    // 拖动中或跳转尚未生效时，绝不能用旧会话的播放位置回写 currentTs：
+    // 重建会话有防抖、ffmpeg 还要 1-3 秒才产出首个分片，这期间旧位置会把
+    // 游标拉回原处，用户感受就是「进度条拖不动」。
+    if (seekPending.value) return
     if (playing.value && playable) currentTs.value = playable.time
   }, 500)
 }
 
+// 拖动过程中持续触发：只更新游标，并尽量就地跳转。
+// 真实后端下回放是 ffmpeg 边转码边切片的 HLS，窗口未就绪时不能 seek，
+// 这种情况留给 seekend 重建会话，避免拖动时反复触发转码。
 function onSeek(ts: number) {
   currentTs.value = ts
   if (!isBackend() || isDemoMode()) {
     playable?.seek(ts)
     return
   }
+  seekPending.value = true
+  if (playable?.canSeekTo(ts)) {
+    playable.seek(ts)
+    seekPending.value = false
+  }
+}
+
+// 松手后提交最终位置：能就地跳转就直接跳，否则防抖重建会话。
+function onSeekEnd(ts: number) {
+  currentTs.value = ts
+  if (!isBackend() || isDemoMode()) {
+    playable?.seek(ts)
+    return
+  }
+  if (playable?.canSeekTo(ts)) {
+    playable.seek(ts)
+    seekPending.value = false
+    return
+  }
+  seekPending.value = true
   if (seekTimer) window.clearTimeout(seekTimer)
   seekTimer = window.setTimeout(() => {
     if (segments.value.length) buildSession(ts)
-  }, 500)
+    else seekPending.value = false
+  }, 300)
 }
 
 function onToggle() {
@@ -145,7 +180,9 @@ function onSpeed(n: number) {
 }
 
 function onSelectSegment(s: RecordingSegment) {
-  onSeek(s.start)
+  // 走 seekend：点击不像拖动那样随后一定会有抬手事件来收尾，
+  // 否则 seekPending 会一直挂起，进度条就再也不会跟随播放。
+  onSeekEnd(s.start)
 }
 
 function downloadSegment(s: RecordingSegment) {
@@ -282,8 +319,9 @@ onBeforeUnmount(() => {
             @speed="onSpeed"
             @fullscreen="onFullscreen"
           />
-          <div v-if="loading" class="loading-mask">
+          <div v-if="loading || seekPending" class="loading-mask">
             <van-loading />
+            <span v-if="seekPending && !loading" class="seek-hint">跳转中…</span>
           </div>
         </div>
 
@@ -292,7 +330,13 @@ onBeforeUnmount(() => {
             <span class="mono">{{ dateStr }} 录像</span>
             <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟</span>
           </div>
-          <TimelineBar :day-start="dayStart" :segments="segments" :value="currentTs" @seek="onSeek" />
+          <TimelineBar
+            :day-start="dayStart"
+            :segments="segments"
+            :value="currentTs"
+            @seek="onSeek"
+            @seekend="onSeekEnd"
+          />
         </div>
 
         <div class="seg-list">
@@ -350,15 +394,22 @@ onBeforeUnmount(() => {
   position: relative;
   padding: 0 12px;
   min-height: 120px;
+  overflow: hidden;
 }
 .loading-mask {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   background: rgba(0, 0, 0, 0.45);
   z-index: 2;
+}
+.seek-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
 }
 .timeline-wrap {
   margin-top: 8px;

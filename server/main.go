@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"cyannvr/server/api"
@@ -23,6 +24,19 @@ import (
 )
 
 func main() {
+	// 子命令分发：reset-password / list-users 等维护命令直接执行后退出，
+	// 不进入服务启动流程（见 cli.go）。无参数时按原行为启动服务。
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "reset-password", "reset", "list-users", "users", "help", "-h", "--help":
+			runCLI(os.Args[1:])
+			return
+		}
+	}
+
+	// 把核心版本暴露给 api 包，健康检查里会返回，便于确认运行的是哪个版本
+	api.CoreVersion = CoreVersion
+
 	cfg := config.Load()
 	if cfg.JWTSecret == "cyannvr-dev-secret-change-me" {
 		log.Printf("WARNING: using default JWT secret; set NVR_JWT_SECRET in production")
@@ -47,6 +61,26 @@ func main() {
 	seedAdmin(cfg, st)
 
 	am := auth.NewManager(cfg.JWTSecret)
+	// 改密即注销旧会话：鉴权中间件会拿该用户最后一次改密时间，
+	// 拒绝早于该时刻签发的 token（重置密码 / 修改密码后旧 token 立刻失效）。
+	//
+	// store 使用 MaxOpenConns(1)，查询串行化；而 HLS 分片、SSE 等请求都会
+	// 触发鉴权。这里加一层 5 秒 TTL 缓存：改密最迟 5 秒后生效，但把每请求
+	// 一次查库降到几乎为零，避免鉴权与录像写入抢同一个连接。
+	revokeCache := newRevokeCache(5 * time.Second)
+	am.SetRevokedAfter(func(userID string) time.Time {
+		if t, ok := revokeCache.get(userID); ok {
+			return t
+		}
+		t, err := st.PasswordChangedAt(userID)
+		if err != nil {
+			// 查询失败时保守放行，避免数据库抖动把所有人踢下线；
+			// token 自身的过期时间仍然有效。
+			return time.Time{}
+		}
+		revokeCache.set(userID, t)
+		return t
+	})
 	hub := api.NewSSEHub()
 
 	broadcast := func(eventType, deviceID, deviceName, eventID, label, desc, t string) {
@@ -98,7 +132,16 @@ func main() {
 }
 
 func seedAdmin(cfg *config.Config, st *store.Store) {
-	existing, err := st.GetUserByName("admin")
+	// 管理员用户名可通过 NVR_ADMIN_USER 定制（安装向导中配置），默认 admin。
+	// 仅首次初始化时生效：一旦该用户已存在就不再改动。
+	name := strings.TrimSpace(os.Getenv("NVR_ADMIN_USER"))
+	if name == "" {
+		name = "admin"
+	}
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	existing, err := st.GetUserByName(name)
 	if err != nil {
 		log.Printf("seed admin check: %v", err)
 		return
@@ -118,7 +161,7 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 	}
 	u := models.User{
 		ID:           "u_admin",
-		Username:     "admin",
+		Username:     name,
 		PasswordHash: hash,
 		Role:         models.RoleAdmin,
 		CreatedAt:    time.Now(),
@@ -127,7 +170,49 @@ func seedAdmin(cfg *config.Config, st *store.Store) {
 		log.Printf("seed admin: %v", err)
 		return
 	}
-	log.Printf("seeded admin user (password set via NVR_ADMIN_PASSWORD)")
+	log.Printf("seeded admin user %q (password set via NVR_ADMIN_PASSWORD)", name)
+}
+
+// revokeCache 缓存「用户最后一次改密时间」，避免每个鉴权请求都查库。
+// 代价是改密后最迟 TTL 才生效；TTL 设得很短（5 秒），实际感知为即时下线。
+type revokeCache struct {
+	mu  sync.Mutex
+	ttl time.Duration
+	m   map[string]revokeEntry
+}
+
+type revokeEntry struct {
+	at  time.Time
+	exp time.Time
+}
+
+func newRevokeCache(ttl time.Duration) *revokeCache {
+	return &revokeCache{ttl: ttl, m: make(map[string]revokeEntry)}
+}
+
+func (c *revokeCache) get(userID string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[userID]
+	if !ok || time.Now().After(e.exp) {
+		return time.Time{}, false
+	}
+	return e.at, true
+}
+
+func (c *revokeCache) set(userID string, at time.Time) {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// 用户数量极少，简单清理即可，避免长期运行后 map 无限增长
+	if len(c.m) > 256 {
+		for k, e := range c.m {
+			if now.After(e.exp) {
+				delete(c.m, k)
+			}
+		}
+	}
+	c.m[userID] = revokeEntry{at: at, exp: now.Add(c.ttl)}
 }
 
 // loadOrCreateJWTSecret returns the configured secret, or auto-generates a

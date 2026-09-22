@@ -26,10 +26,37 @@ type Claims struct {
 type Manager struct {
 	secret []byte
 	ttl    time.Duration
+	// revokedAfter 由上层注入：给定用户 ID，返回「早于此时刻签发的 token 一律失效」
+	// 的时间点（即该用户最后一次改密时间）。返回零值表示不做吊销校验。
+	// 用回调而不是直接依赖 store，是为了让 auth 包保持无存储依赖、便于测试。
+	revokedAfter func(userID string) time.Time
 }
 
 func NewManager(secret string) *Manager {
 	return &Manager{secret: []byte(secret), ttl: 24 * time.Hour}
+}
+
+// SetRevokedAfter 注册改密时间查询函数，启用「改密即注销旧会话」。
+func (m *Manager) SetRevokedAfter(fn func(userID string) time.Time) {
+	m.revokedAfter = fn
+}
+
+// revoked 判断 token 的签发时间是否早于该用户最后一次改密时间。
+func (m *Manager) Revoked(claims *Claims) bool {
+	if m.revokedAfter == nil || claims == nil {
+		return false
+	}
+	cutoff := m.revokedAfter(claims.Sub)
+	if cutoff.IsZero() {
+		return false
+	}
+	iat := claims.IssuedAt
+	if iat == nil {
+		// 没有签发时间的 token 无法判断新旧，保守拒绝
+		return true
+	}
+	// 允许 1 秒误差：同一秒内「改密 + 重新登录」不应被误判为失效
+	return iat.Time.Before(cutoff.Add(-time.Second))
 }
 
 func (m *Manager) HashPassword(pw string) (string, error) {
@@ -87,6 +114,11 @@ func (m *Manager) Middleware() gin.HandlerFunc {
 		claims, err := m.Parse(token)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		// 改密后旧 token 立即失效：早于 password_changed_at 签发的一律拒绝
+		if m.Revoked(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "密码已变更，请重新登录"})
 			return
 		}
 		c.Set(ctxUserKey, &AuthUser{ID: claims.Sub, Role: models.Role(claims.Role)})

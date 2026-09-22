@@ -73,6 +73,10 @@ func (s *Store) migrate() error {
 		`ALTER TABLE devices ADD COLUMN preview_stream TEXT`,
 		`ALTER TABLE devices ADD COLUMN record_stream TEXT`,
 		`ALTER TABLE devices ADD COLUMN conn_mode TEXT NOT NULL DEFAULT 'auto'`,
+		// password_changed_at：改密时间。早于该时刻签发的 JWT 一律失效，
+		// 用于「重置密码后把旧会话踢下线」。老库补列后为 NULL，
+		// 读取时视为零值（即不做吊销判断），避免升级后把所有人登出。
+		`ALTER TABLE users ADD COLUMN password_changed_at DATETIME`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -92,17 +96,17 @@ func (s *Store) CreateUser(u models.User) error {
 }
 
 func (s *Store) GetUserByName(name string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at FROM users WHERE username=?`, name)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users WHERE username=?`, name)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(id string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at FROM users WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers() ([]models.User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at FROM users ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -110,17 +114,40 @@ func (s *Store) ListUsers() ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		u := models.User{}
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt); err != nil {
+		var changed sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed); err != nil {
 			return nil, err
+		}
+		if changed.Valid {
+			u.PasswordChangedAt = changed.Time
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
 }
 
+// UpdateUserPassword 写入新密码哈希，并把 password_changed_at 记为当前时间。
+// 该时间戳是吊销旧 JWT 的依据：早于它签发的 token 会被鉴权中间件拒绝，
+// 从而实现「改密即踢下线」。
 func (s *Store) UpdateUserPassword(id, hash string) error {
-	_, err := s.db.Exec(`UPDATE users SET password_hash=? WHERE id=?`, hash, id)
+	_, err := s.db.Exec(
+		`UPDATE users SET password_hash=?, password_changed_at=? WHERE id=?`,
+		hash, time.Now(), id)
 	return err
+}
+
+// PasswordChangedAt 只读取改密时间这一列，供鉴权中间件每请求校验使用。
+// 从未改密（NULL）时返回零值，调用方据此跳过吊销判断。
+func (s *Store) PasswordChangedAt(id string) (time.Time, error) {
+	var changed sql.NullTime
+	err := s.db.QueryRow(`SELECT password_changed_at FROM users WHERE id=?`, id).Scan(&changed)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if changed.Valid {
+		return changed.Time, nil
+	}
+	return time.Time{}, nil
 }
 
 func (s *Store) UpdateUserRole(id string, role models.Role) error {
@@ -141,12 +168,16 @@ func (s *Store) CountAdmins() (int, error) {
 
 func scanUser(row *sql.Row) (*models.User, error) {
 	u := models.User{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	var changed sql.NullTime
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if changed.Valid {
+		u.PasswordChangedAt = changed.Time
 	}
 	return &u, nil
 }

@@ -14,7 +14,7 @@ const showTabbar = computed(() => !STANDALONE_ROUTES.includes(route.path))
 const showSidebar = computed(() => isDesktop.value && showTabbar.value)
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
-const isDesktop = ref(false)
+const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
 
 let mq: MediaQueryList | null = null
 let onMqChange: ((e: MediaQueryListEvent) => void) | null = null

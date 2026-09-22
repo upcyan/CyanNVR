@@ -31,6 +31,11 @@ func (s *Server) streamAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
+		// 与主鉴权中间件一致：改密后旧 token 不能在流媒体接口继续使用
+		if s.am.Revoked(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "密码已变更，请重新登录"})
+			return
+		}
 		c.Set("auth_user", &auth.AuthUser{ID: claims.Sub, Role: models.Role(claims.Role)})
 		c.Set("stream_token", token)
 		c.Next()

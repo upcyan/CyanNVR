@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { EventItem } from '../types'
-import { deleteEvent, fetchEvents, isBackend, isDemoMode } from '../api'
+import { deleteEvent, fetchEvents, isBackend, isDemoMode, mediaURL } from '../api'
 import { downloadEventSnapshotURL, downloadEventGIFURL } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useDeviceStore } from '../stores/devices'
@@ -112,11 +112,6 @@ async function onDelete(e: EventItem) {
   }
 }
 
-const imgBase = computed(() => {
-  const base = (window as any).__NVR_BASE__ || ''
-  return base
-})
-
 watch([deviceId, dateStr, typeFilter], () => load())
 
 onMounted(() => {
@@ -186,11 +181,11 @@ onMounted(() => {
         <div class="media">
           <img
             v-if="e.gif"
-            :src="(e.gif || '').replace('/api', imgBase + '/api')"
+            :src="mediaURL(e.gif)"
             alt="gif"
             class="gif"
           />
-          <img v-else-if="e.snapshot" :src="(e.snapshot || '').replace('/api', imgBase + '/api')" alt="snap" class="gif" />
+          <img v-else-if="e.snapshot" :src="mediaURL(e.snapshot)" alt="snap" class="gif" />
           <div v-else class="ph">
             <van-icon :name="typeMap[e.type]?.icon || 'records-o'" size="30" />
           </div>

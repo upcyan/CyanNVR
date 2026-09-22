@@ -77,6 +77,13 @@ body.light ::-webkit-scrollbar-thumb {
   flex-direction: column;
 }
 
+.app-shell .main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, 'Cascadia Mono', Consolas, monospace;
 }

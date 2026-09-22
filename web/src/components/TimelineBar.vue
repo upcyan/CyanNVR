@@ -7,7 +7,10 @@ const props = defineProps<{
   segments: RecordingSegment[]
   value: number
 }>()
-const emit = defineEmits<{ (e: 'seek', ts: number): void }>()
+const emit = defineEmits<{
+  (e: 'seek', ts: number): void
+  (e: 'seekend', ts: number): void
+}>()
 
 const trackRef = ref<HTMLElement | null>(null)
 const DAY = 86400000
@@ -24,9 +27,12 @@ function ratioFromX(clientX: number): number {
   return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
 }
 
+function tsFromX(clientX: number): number {
+  return props.dayStart + ratioFromX(clientX) * DAY
+}
+
 function handleMove(e: PointerEvent) {
-  const ts = props.dayStart + ratioFromX(e.clientX) * DAY
-  emit('seek', ts)
+  emit('seek', tsFromX(e.clientX))
 }
 
 function onDown(e: PointerEvent) {
@@ -37,8 +43,14 @@ function onDown(e: PointerEvent) {
 function onMove(e: PointerEvent) {
   if (dragging) handleMove(e)
 }
-function onUp() {
+// 松手时提交最终位置：pointermove 不一定落在抬手的那一点，
+// 只靠 move 会出现「拖到末端却停在中间」的偏差。
+function onUp(e: PointerEvent) {
+  if (!dragging) return
   dragging = false
+  const ts = tsFromX(e.clientX)
+  emit('seek', ts)
+  emit('seekend', ts)
 }
 
 const timeLabel = computed(() => {

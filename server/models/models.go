@@ -17,6 +17,9 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	Role         Role      `json:"role"`
 	CreatedAt    time.Time `json:"createdAt"`
+	// PasswordChangedAt 最后一次改密时间。早于该时刻签发的 JWT 视为失效，
+	// 用于重置/修改密码后让旧会话立即下线。零值表示从未改密（不做吊销）。
+	PasswordChangedAt time.Time `json:"passwordChangedAt,omitzero"`
 }
 
 type DeviceSource string

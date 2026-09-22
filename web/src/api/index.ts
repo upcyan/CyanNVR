@@ -33,6 +33,27 @@ export function apiBase() {
   return server.base
 }
 
+// ---- 媒体 URL（<img>/<video>/<a> 等浏览器原生请求）----
+// 浏览器对 <img src> 这类请求不会附带 Authorization 头，因此必须把 token
+// 放进 query string。后端 auth.Manager.Middleware 与 streamAuth 均支持
+// ?token= 回退，与此处对应。
+export function withToken(url: string): string {
+  if (!url) return ''
+  const token = localStorage.getItem('nvr_token')
+  if (!token || token === 'demo') return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(token)}`
+}
+
+// mediaURL 供 <img src> 使用：相对路径自动补 server.base 并附上 token。
+// 后端返回的 snapshot/gif 字段是形如 /api/events/<id>/snapshot 的相对路径，
+// 若不附 token 会被鉴权中间件拒绝（401 missing token），缩略图无法显示。
+export function mediaURL(path: string): string {
+  if (!path) return ''
+  const abs = path.startsWith('/') ? `${server.base}${path}` : path
+  return withToken(abs)
+}
+
 async function detect(): Promise<boolean> {
   try {
     const ctl = new AbortController()
@@ -194,6 +215,48 @@ export interface AuthUser {
 export async function apiLogin(username: string, password: string): Promise<{ token: string; user: AuthUser }> {
   const { data } = await http.post('/api/auth/login', { username, password })
   return data as { token: string; user: AuthUser }
+}
+
+// ---- 忘记密码 / 重置密码 ----
+// 三步：生成重置码 → 校验换 grant → 凭 grant 设新密码。
+// 重置码写在服务器数据目录的 reset-code.txt，网页上不显示，
+// 用户需通过 SSH / Docker exec / 文件管理器读取。
+
+export interface ResetRequestResult {
+  ok: boolean
+  /** 重置码文件的绝对路径，用于在界面上提示用户去哪里查看 */
+  file: string
+  /** 过期时刻（RFC3339），前端据此倒计时 */
+  expiresAt: string
+  /** 有效期（秒） */
+  ttl: number
+}
+
+export async function apiResetRequest(): Promise<ResetRequestResult> {
+  const { data } = await http.post('/api/auth/reset-request', {})
+  return data as ResetRequestResult
+}
+
+export interface ResetVerifyResult {
+  ok: boolean
+  /** 一次性临时凭证，用于设置新密码 */
+  grant: string
+  user: string
+  expiresAt: string
+  ttl: number
+}
+
+export async function apiResetVerify(code: string, username = ''): Promise<ResetVerifyResult> {
+  const { data } = await http.post('/api/auth/reset-verify', { code, username })
+  return data as ResetVerifyResult
+}
+
+export async function apiResetConfirm(
+  grant: string,
+  password: string,
+): Promise<{ ok: boolean; user: string; message: string }> {
+  const { data } = await http.post('/api/auth/reset-confirm', { grant, password })
+  return data as { ok: boolean; user: string; message: string }
 }
 
 // ---- settings ----

@@ -376,7 +376,7 @@ async function removeUser(u: ManagedUser) {
           <van-switch :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
         </template>
       </van-cell>
-      <van-cell title="字体大小" label="全局文字大小，立即生效">
+      <van-cell v-if="!s.careMode" title="字体大小" label="全局文字大小，立即生效">
         <template #value>
           <div class="font-opts">
             <span
