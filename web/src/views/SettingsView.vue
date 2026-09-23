@@ -91,9 +91,22 @@ const usedPct = computed(() => {
   return Math.round((usedGB / totalGB) * 100)
 })
 
+const appVersion = ref('')
+
+// 版本自检：底部展示服务端版本。看不到这一行 = 页面还是旧缓存。
+async function loadAboutVersion() {
+  try {
+    const { data } = await http.get('/api/health')
+    appVersion.value = data.version || ''
+  } catch {
+    appVersion.value = ''
+  }
+}
+
 onMounted(() => {
   store.loadFromServer()
   loadUsers()
+  loadAboutVersion()
 })
 
 const modeOptions = [
@@ -762,6 +775,10 @@ async function removeUser(u: ManagedUser) {
       </template>
     </van-cell-group>
 
+    <div v-if="appVersion" class="about-version">
+      CyanNVR v{{ appVersion }} · 看到此行 = 已加载最新界面（否则请强制刷新 Ctrl+Shift+R 或重开窗口）
+    </div>
+
     <div class="save-area">
       <van-button type="primary" block round :loading="saving" @click="save">
         保存设置
@@ -850,6 +867,12 @@ async function removeUser(u: ManagedUser) {
 <style scoped>
 .settings-page {
   padding-bottom: 30px;
+}
+.about-version {
+  margin: 14px 16px 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--nvr-text-2);
 }
 .progress {
   display: flex;
