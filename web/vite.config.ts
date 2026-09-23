@@ -2,7 +2,24 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// 前端版本号 = server/version.go 的 CoreVersion（构建期注入，供启动自清理
+// 与服务端 /api/health 的 version 比对，判断是否拿到了旧缓存）
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+const coreVersion = (() => {
+  try {
+    const p = fileURLToPath(new URL('../server/version.go', import.meta.url))
+    const m = readFileSync(p, 'utf8').match(/CoreVersion = "([^"]+)"/)
+    return m ? m[1] : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+})()
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(coreVersion),
+  },
   plugins: [
     vue(),
     VitePWA({
