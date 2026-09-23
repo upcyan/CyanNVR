@@ -77,6 +77,7 @@ func (s *Store) migrate() error {
 		// 用于「重置密码后把旧会话踢下线」。老库补列后为 NULL，
 		// 读取时视为零值（即不做吊销判断），避免升级后把所有人登出。
 		`ALTER TABLE users ADD COLUMN password_changed_at DATETIME`,
+		`ALTER TABLE users ADD COLUMN uid INTEGER`,
 		// 单摄保留限额：0 = 跟随全局 / 不单独限制
 		`ALTER TABLE devices ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE devices ADD COLUMN retention_size_gb INTEGER NOT NULL DEFAULT 0`,
@@ -86,30 +87,63 @@ func (s *Store) migrate() error {
 			// column already exists — fine
 		}
 	}
+	// 数字 UID 回填（幂等）：老用户按创建时间顺序编号，从现有最大值继续。
+	var zeroCount int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE COALESCE(uid,0)=0`).Scan(&zeroCount)
+	if zeroCount > 0 {
+		var maxUID int
+		_ = s.db.QueryRow(`SELECT COALESCE(MAX(uid),0) FROM users`).Scan(&maxUID)
+		rows, err := s.db.Query(`SELECT id FROM users WHERE COALESCE(uid,0)=0 ORDER BY created_at`)
+		if err == nil {
+			var ids []string
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err == nil {
+					ids = append(ids, id)
+				}
+			}
+			rows.Close()
+			for i, id := range ids {
+				_, _ = s.db.Exec(`UPDATE users SET uid=? WHERE id=?`, maxUID+i+1, id)
+			}
+		}
+	}
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid)`)
 	return nil
 }
 
 // ---- users ----
 
 func (s *Store) CreateUser(u models.User) error {
-	_, err := s.db.Exec(
-		`INSERT INTO users(id, username, password_hash, role, created_at) VALUES(?,?,?,?,?)`,
-		u.ID, u.Username, u.PasswordHash, string(u.Role), u.CreatedAt)
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var maxUID int
+		if qerr := s.db.QueryRow(`SELECT COALESCE(MAX(uid),0) FROM users`).Scan(&maxUID); qerr != nil {
+			return qerr
+		}
+		u.UID = maxUID + 1
+		_, err = s.db.Exec(
+			`INSERT INTO users(id, username, password_hash, role, created_at, uid) VALUES(?,?,?,?,?,?)`,
+			u.ID, u.Username, u.PasswordHash, string(u.Role), u.CreatedAt, u.UID)
+		if err == nil {
+			return nil
+		}
+	}
 	return err
 }
 
 func (s *Store) GetUserByName(name string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users WHERE username=?`, name)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users WHERE username=?`, name)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(id string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers() ([]models.User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at FROM users ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +152,7 @@ func (s *Store) ListUsers() ([]models.User, error) {
 	for rows.Next() {
 		u := models.User{}
 		var changed sql.NullTime
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID); err != nil {
 			return nil, err
 		}
 		if changed.Valid {
@@ -178,7 +212,7 @@ func (s *Store) CountAdmins() (int, error) {
 func scanUser(row *sql.Row) (*models.User, error) {
 	u := models.User{}
 	var changed sql.NullTime
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

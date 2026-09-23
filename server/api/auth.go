@@ -109,6 +109,7 @@ func (s *Server) me(c *gin.Context) {
 func publicUser(u *models.User) gin.H {
 	return gin.H{
 		"id":        u.ID,
+		"uid":       u.UID,
 		"username":  u.Username,
 		"role":      u.Role,
 		"createdAt": u.CreatedAt,

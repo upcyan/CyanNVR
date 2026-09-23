@@ -329,6 +329,8 @@ export async function changeOwnPassword(old: string, next: string): Promise<void
 
 export interface ManagedUser {
   id: string
+  /** 纯数字用户编号，改名不变 */
+  uid: number
   username: string
   role: 'admin' | 'operator' | 'user' | 'viewer'
   createdAt: string

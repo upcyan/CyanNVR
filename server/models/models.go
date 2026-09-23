@@ -12,7 +12,10 @@ const (
 )
 
 type User struct {
-	ID           string    `json:"id"`
+	ID string `json:"id"`
+	// UID 纯数字用户编号：创建时自动分配（现有最大值+1），改名不变；
+	// 仅供人类识别展示，会话/事件等身份判定仍走不可变的 id。
+	UID          int       `json:"uid"`
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	Role         Role      `json:"role"`

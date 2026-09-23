@@ -740,7 +740,7 @@ async function removeUser(u: ManagedUser) {
           v-for="u in users"
           :key="u.id"
           :title="u.username"
-          :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · ID ' + u.id.slice(0, 8)"
+          :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · UID ' + u.uid"
         >
           <template #right-icon>
             <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
@@ -806,8 +806,8 @@ async function removeUser(u: ManagedUser) {
       <van-cell-group inset style="margin: 0 10px">
         <van-field
           v-if="editingUser"
-          label="用户ID"
-          :model-value="editingUser.id"
+          label="用户UID"
+          :model-value="String(editingUser.uid ?? '')"
           disabled
           class="uid-field"
         />
@@ -816,23 +816,25 @@ async function removeUser(u: ManagedUser) {
           label="用户名"
           placeholder="请输入用户名"
         />
+        <div v-if="editingUser" class="field-action">
+          <van-button type="primary" size="small" round @click="renameUser">改名</van-button>
+        </div>
         <van-field
           v-model="userForm.password"
           type="password"
           label="密码"
           :placeholder="editingUser ? '至少 8 位，点下方按钮生效' : '请输入密码'"
         />
+        <div v-if="editingUser" class="field-action">
+          <van-button type="warning" plain size="small" round @click="changeUserPassword">修改密码</van-button>
+        </div>
         <van-field label="角色" :model-value="roleOptions.find((r) => r.value === userForm.role)?.label" is-link @click="showRolePicker = true" />
       </van-cell-group>
       <div class="dialog-actions">
-        <template v-if="editingUser">
-          <van-button type="primary" block round @click="renameUser">改名</van-button>
-          <van-button type="warning" plain block round @click="changeUserPassword">修改密码</van-button>
-          <van-button plain block round @click="closeUserDialog">完成（角色已随选择即时保存）</van-button>
-        </template>
+        <van-button v-if="editingUser" plain block round @click="closeUserDialog">完成（角色已随选择即时保存）</van-button>
         <van-button v-else type="primary" block round @click="saveUser">创建用户</van-button>
       </div>
-      <div v-if="editingUser" class="uid-note">用户ID 全局唯一且不随改名变化，事件与会话都以它识别身份</div>
+      <div v-if="editingUser" class="uid-note">UID 为纯数字且不随改名变化，事件与会话都以它识别身份</div>
     </van-popup>
 
     <van-popup v-model:show="showRolePicker" position="bottom" round>
@@ -958,6 +960,13 @@ async function removeUser(u: ManagedUser) {
   opacity: .8;
 }
 /* 对话框按钮区与 UID 展示 */
+/* 字段正下方的动作按钮：改名/改密 与对应输入框紧贴，免去到底部找 */
+.field-action {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 16px 10px;
+  background: #fff;
+}
 .dialog-actions {
   padding: 16px;
 }

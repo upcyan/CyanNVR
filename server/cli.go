@@ -101,9 +101,9 @@ func cliListUsers(args []string) int {
 		return 1
 	}
 	fmt.Printf("数据目录: %s\n\n", dir)
-	fmt.Printf("%-24s %-12s %s\n", "用户名", "角色", "创建时间")
+	fmt.Printf("%-6s %-24s %-12s %s\n", "UID", "用户名", "角色", "创建时间")
 	for _, u := range users {
-		fmt.Printf("%-24s %-12s %s\n", u.Username, u.Role, u.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("%-6d %-24s %-12s %s\n", u.UID, u.Username, u.Role, u.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 	return 0
 }
