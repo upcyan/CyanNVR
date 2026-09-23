@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -371,6 +371,17 @@ function openEditUser(u: ManagedUser) {
   editingUser.value = u
   userForm.value = { username: u.username, password: '', role: u.role }
   showUserDialog.value = true
+}
+
+// 行内改名图标：跳到用户名框（等同编辑，但让改名一目了然）
+function openRename(u: ManagedUser) {
+  openEditUser(u)
+  // 弹出后高亮用户名框，引导直接改名
+  nextTick(() => {
+    const el = document.querySelector<HTMLInputElement>('.dialog-quick .van-button--primary')
+    el?.classList.add('flash')
+    setTimeout(() => el?.classList.remove('flash'), 1200)
+  })
 }
 
 // 编辑模式拆成独立动作按钮：改名 / 改密码 即点即生效，
@@ -748,7 +759,7 @@ async function removeUser(u: ManagedUser) {
       <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码" />
       <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
       <template v-if="isBackend() && auth.isAdmin">
-        <div class="group-sub">用户管理 · 可增删用户、改用户名与重置密码（编辑对话框第一行即改名）</div>
+        <div class="group-sub">用户管理 · 可增删用户 · 每行铅笔=编辑，笑脸=改名，垃圾桶=删除；或进编辑改名/改密</div>
         <van-cell
           v-for="u in users"
           :key="u.id"
@@ -757,6 +768,11 @@ async function removeUser(u: ManagedUser) {
         >
           <template #right-icon>
             <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
+            <van-icon
+              name="smile-comment-o"
+              class="user-action rename"
+              @click="openRename(u)"
+            />
             <van-icon
               v-if="u.id !== auth.user?.id"
               name="delete-o"
@@ -819,6 +835,10 @@ async function removeUser(u: ManagedUser) {
       <div class="dialog-head">
         <span>{{ editingUser ? '编辑用户' : '添加用户' }}</span>
         <van-icon name="cross" size="18" @click="showUserDialog = false" />
+      </div>
+      <div v-if="editingUser" class="dialog-quick">
+        <van-button type="primary" size="small" round icon="edit" @click="renameUser">改名</van-button>
+        <van-button type="warning" plain size="small" round icon="lock" @click="changeUserPassword">改密码</van-button>
       </div>
       <van-cell-group inset style="margin: 0 10px">
         <van-field
@@ -983,6 +1003,25 @@ async function removeUser(u: ManagedUser) {
   opacity: .8;
 }
 /* 对话框按钮区与 UID 展示 */
+/* 弹窗顶部快速操作按钮 */
+.dialog-quick {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 8px 16px 0;
+}
+.dialog-quick .van-button.flash {
+  animation: btnFlash 1s ease 2;
+}
+@keyframes btnFlash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 168, 255, 0); }
+  50% { box-shadow: 0 0 0 6px rgba(46, 168, 255, .4); }
+}
+/* 行内改名图标颜色 */
+.user-action.rename {
+  color: var(--nvr-accent);
+}
+
 /* 字段正下方的动作按钮：改名/改密 与对应输入框紧贴，免去到底部找 */
 .field-action {
   display: flex;

@@ -94,11 +94,21 @@ body.light ::-webkit-scrollbar-thumb {
 }
 
 @media (min-width: 900px) {
+  /* 桌面：锁死外层页面，禁止整体滚动——侧边栏/主区各自独立，侧边栏固定 */
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
   .app-shell {
     max-width: none;
     flex-direction: row;
+    height: 100vh;
+    overflow: hidden;
   }
 
+  /* 主区自己是唯一的滚动容器 */
   .app-shell .main {
     flex: 1;
     min-width: 0;
@@ -106,6 +116,14 @@ body.light ::-webkit-scrollbar-thumb {
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+  }
+
+  .app-shell .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    flex-shrink: 0;
   }
 
   .page {

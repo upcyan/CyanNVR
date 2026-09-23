@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useSettingsStore } from './stores/settings'
 import { useDeviceStore } from './stores/devices'
 import { useNotifications } from './utils/notify'
+import { http } from './api/client'
 
 const settings = useSettingsStore()
 const route = useRoute()
@@ -15,6 +16,14 @@ const showSidebar = computed(() => isDesktop.value && showTabbar.value)
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
+// 侧边栏底部展示的版本号（自检用：能看到=已加载最新界面）
+const appVersion = ref('')
+async function loadVersion() {
+  try {
+    const { data } = await http.get('/api/health')
+    appVersion.value = data.version || ''
+  } catch { /* ignore */ }
+}
 
 let mq: MediaQueryList | null = null
 let onMqChange: ((e: MediaQueryListEvent) => void) | null = null
@@ -36,6 +45,7 @@ onMounted(() => {
   mq.addEventListener('change', onMqChange)
   applyA11y()
   connectSSE()
+  loadVersion()
 })
 
 watch(
@@ -74,25 +84,47 @@ onBeforeUnmount(() => {
             </g>
             <circle cx="41" cy="51" r="9" fill="#2ea8ff" />
           </svg>
-          <span>CyanNVR</span>
+          <div class="brand-text">
+            <span class="brand-name">CyanNVR</span>
+            <span class="brand-sub">网络视频录像机</span>
+          </div>
         </div>
+
+        <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0 }">
+          <span class="dot" />
+          <div class="status-text">
+            <b>{{ devices.onlineCount }} / {{ devices.devices.length }}</b>
+            <span>摄像头在线</span>
+          </div>
+        </div>
+
+        <div class="nav-group">导航</div>
         <nav class="nav">
           <router-link to="/live" class="nav-item" active-class="on">
-            <van-icon name="play-circle-o" size="18" />
+            <span class="nav-ico"><van-icon name="play-circle-o" size="18" /></span>
             <span>摄像机</span>
+            <span v-if="devices.onlineCount" class="nav-badge ok">{{ devices.onlineCount }}</span>
           </router-link>
           <router-link to="/playback" class="nav-item" active-class="on">
-            <van-icon name="video-o" size="18" />
+            <span class="nav-ico"><van-icon name="video-o" size="18" /></span>
             <span>录像管理</span>
           </router-link>
+        </nav>
+
+        <div class="nav-group">系统</div>
+        <nav class="nav">
           <router-link to="/settings" class="nav-item" active-class="on">
-            <van-icon name="setting-o" size="18" />
+            <span class="nav-ico"><van-icon name="setting-o" size="18" /></span>
             <span>设置</span>
           </router-link>
         </nav>
+
         <div class="side-foot">
-          <span class="dot" />
-          在线 {{ devices.onlineCount }} / {{ devices.devices.length }}
+          <span class="dot" :class="{ off: devices.devices.length > 0 && devices.onlineCount === 0 }" />
+          <div class="foot-text">
+            <span>{{ devices.onlineCount === devices.devices.length && devices.devices.length > 0 ? '全部在线' : `在线 ${devices.onlineCount}/${devices.devices.length}` }}</span>
+            <span class="ver">v{{ appVersion || '—' }}</span>
+          </div>
         </div>
       </aside>
 
@@ -144,55 +176,177 @@ onBeforeUnmount(() => {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 20px 18px 16px;
+  gap: 11px;
+  padding: 20px 18px 14px;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.brand-name {
   font-size: 17px;
   font-weight: 700;
+  letter-spacing: .3px;
+}
+.brand-sub {
+  font-size: 10px;
+  color: var(--nvr-text-2);
+  margin-top: 2px;
 }
 .logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  box-shadow: 0 2px 8px rgba(46, 168, 255, .25);
+}
+/* 顶部在线状态卡片 */
+.side-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 14px 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+}
+.side-status .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--nvr-green);
+  box-shadow: 0 0 6px var(--nvr-green);
+  flex-shrink: 0;
+}
+.side-status.warn .dot {
+  background: #ff4d4f;
+  box-shadow: 0 0 6px #ff4d4f;
+}
+.status-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.status-text b {
+  font-size: 15px;
+}
+.status-text span {
+  font-size: 11px;
+  color: var(--nvr-text-2);
+}
+/* 分组标签 */
+.nav-group {
+  padding: 12px 20px 4px;
+  font-size: 11px;
+  color: var(--nvr-text-2);
+  opacity: .7;
+  letter-spacing: 1px;
 }
 .nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 10px;
-  flex: 1;
+  padding: 2px 10px;
+}
+.nav:first-of-type {
+  flex: 0;
 }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: 11px;
+  padding: 10px 12px;
   border-radius: 10px;
   color: var(--nvr-text-2);
   text-decoration: none;
   font-size: 14px;
+  position: relative;
   transition: background 0.15s, color 0.15s;
 }
 .nav-item:hover {
   background: var(--nvr-panel-2);
   color: var(--nvr-text);
 }
+/* 图标底色块 */
+.nav-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+  transition: background .15s, border-color .15s;
+}
 .nav-item.on {
-  background: rgba(46, 168, 255, 0.12);
+  color: var(--nvr-accent);
+  background: rgba(46, 168, 255, 0.10);
+}
+.nav-item.on .nav-ico {
+  background: rgba(46, 168, 255, 0.18);
+  border-color: rgba(46, 168, 255, 0.45);
   color: var(--nvr-accent);
 }
+/* 活动项左侧高亮条 */
+.nav-item.on::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--nvr-accent);
+}
+/* 在线数徽章 */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text-2);
+}
+.nav-badge.ok {
+  background: rgba(46, 204, 143, .18);
+  color: var(--nvr-green);
+}
+/* 底部状态 */
 .side-foot {
-  padding: 14px 18px;
+  margin-top: auto;
+  padding: 12px 18px;
   font-size: 12px;
   color: var(--nvr-text-2);
   border-top: 1px solid var(--nvr-border);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .side-foot .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--nvr-green);
+  flex-shrink: 0;
+}
+.side-foot .dot.off {
+  background: #ff4d4f;
+}
+.foot-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.foot-text .ver {
+  font-size: 10px;
+  opacity: .65;
 }
 </style>
