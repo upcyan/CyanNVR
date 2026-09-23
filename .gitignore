@@ -59,3 +59,8 @@ fpk/app/ai_detect.py
 
 # Docker 用前端构建产物
 web/dist.docker/
+
+# ===== AI 助手本地记忆（含本机约定/凭据线索），禁止上传 GitHub =====
+AGENTS.md
+CLAUDE.md
+MEMORY.md
