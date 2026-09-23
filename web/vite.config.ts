@@ -7,6 +7,10 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
+      // 自毁模式：sw.js 安装即注销自身并清空预缓存，此后所有请求直达
+      // 服务器（配合后端 no-cache 头），升级刷新一次即生效，根治
+      // 「Service Worker 拦截导致 F5 仍是旧界面」的排错黑洞。
+      selfDestroying: true,
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'CyanNVR',

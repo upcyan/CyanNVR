@@ -209,6 +209,35 @@ if grep -q "bell-o" "$DIST"/assets/index-*.js 2>/dev/null; then
     error "前端产物仍含 Vant 不存在的 bell-o 图标，产物过期，请检查构建流程"
 fi
 
+# ── 彻底禁用前端缓存（构建期覆写，不依赖插件版本）──
+# 背景：Service Worker 会拦截导航并从预缓存供旧页面，普通 F5 绕不过去；
+# sw.js 无缓存头还会被浏览器启发式缓存拖延更新——局域网 NVR 排错成本
+# 远高于离线收益，直接禁用：
+#   sw.js         -> 透传型（仅承担「旧 sw 换代」的触发作用，不做任何缓存）
+#   registerSW.js -> 注销全部历史 SW 并清空 CacheStorage（解掉已卡死的客户端）
+cat > "$DIST/sw.js" <<'SWEOF'
+/* CyanNVR: 缓存已禁用 —— 透传型 Service Worker，仅用于触发旧 sw 换代 */
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });
+SWEOF
+cat > "$DIST/registerSW.js" <<'SWEOF'
+/* CyanNVR: 卸载历史 Service Worker 并清空预缓存 —— 所有请求直达服务器 */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.unregister();
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (_) { /* ignore */ }
+  });
+}
+SWEOF
+info "已覆写 sw.js/registerSW.js（缓存禁用）"
+
 # ── 2. 填充 app/ 目录 ──
 info "填充 app/ ..."
 APP_DIR="$SCRIPT_DIR/app"

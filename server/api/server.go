@@ -179,6 +179,17 @@ func (s *Server) saveSettings() {
 
 func (s *Server) Router() http.Handler {
 	r := gin.New()
+	// 禁用前端缓存（局域网应用升级频繁，缓存排错成本远高于离线收益）：
+	// 静态资源一律 no-cache——未变化时走 If-Modified-Since/304，开销可忽略；
+	// 配合内容哈希文件名，升级后刷新一次必拿到新代码。
+	// /api/ 不受影响（业务响应自带缓存语义，如 health 的30s SW 缓存已随 SW 一并移除）。
+	r.Use(func(c *gin.Context) {
+		if (c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) &&
+			!strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.Header("Cache-Control", "no-cache")
+		}
+		c.Next()
+	})
 	r.Use(gin.Logger(), gin.Recovery())
 
 	api := r.Group("/api")
