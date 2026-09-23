@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -418,7 +418,10 @@ async function changeUserPassword() {
 
 // 角色：编辑模式下选择即保存（无需再点别的按钮）
 async function onRoleConfirm(v: { selectedOptions: Array<{ text: string; value: string }> }) {
-  const role = v.selectedOptions[0]?.value || 'user'
+  const selectedRole = v.selectedOptions[0]?.value
+  const role: ManagedUser['role'] = roleOptions.some((item) => item.value === selectedRole)
+    ? selectedRole as ManagedUser['role']
+    : 'user'
   userForm.value.role = role
   showRolePicker.value = false
   if (editingUser.value && role !== editingUser.value.role) {
@@ -658,7 +661,7 @@ async function removeUser(u: ManagedUser) {
               <span class="bench-rank" :class="{ win: i === 0 }">{{ i + 1 }}</span>
               <span class="bench-name">{{ b.provider }}</span>
               <span class="bench-detail mono">{{ b.detail }}</span>
-              <van-tag v-if="i === 0" type="primary" size="small">最快</van-tag>
+              <van-tag v-if="i === 0" type="primary">最快</van-tag>
             </div>
             <div class="bench-note">均=平均毫秒/帧 · 峰=峰值 · 首帧=冷启动 · Δ=与CPU基准偏差（&lt;1 合格） · +MB=内存增量</div>
           </div>
@@ -915,6 +918,13 @@ async function removeUser(u: ManagedUser) {
   font-size: 11px;
   color: var(--nvr-text-2);
 }
+.settings-page :deep(.van-cell__title),
+.settings-page :deep(.van-cell__value) {
+  min-width: 0;
+}
+.settings-page :deep(.van-cell__label) {
+  overflow-wrap: anywhere;
+}
 .progress {
   display: flex;
   align-items: center;
@@ -923,6 +933,8 @@ async function removeUser(u: ManagedUser) {
 }
 .bar {
   width: 110px;
+  flex-shrink: 1;
+  min-width: 36px;
   height: 6px;
   border-radius: 3px;
   background: var(--nvr-panel-2);
@@ -1048,7 +1060,7 @@ async function removeUser(u: ManagedUser) {
   display: flex;
   justify-content: flex-end;
   padding: 2px 16px 10px;
-  background: #fff;
+  background: var(--van-cell-background, var(--nvr-panel));
 }
 .dialog-actions {
   padding: 16px;
@@ -1069,6 +1081,11 @@ async function removeUser(u: ManagedUser) {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+.slider-box :deep(.van-slider) {
+  flex-shrink: 1;
+  min-width: 48px;
 }
 .days {
   font-size: 12px;
@@ -1103,6 +1120,8 @@ async function removeUser(u: ManagedUser) {
   display: flex;
   align-items: flex-end;
   gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .font-opt {
   width: 36px;
@@ -1115,11 +1134,31 @@ async function removeUser(u: ManagedUser) {
   justify-content: center;
   color: var(--nvr-text-2);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .font-opt.on {
   border-color: var(--nvr-accent);
   color: var(--nvr-accent);
   background: rgba(46, 168, 255, 0.12);
+}
+@media (max-width: 480px) {
+  .settings-page :deep(.van-cell:has(.slider-box)),
+  .settings-page :deep(.van-cell:has(.font-opts)),
+  .settings-page :deep(.van-cell:has(.progress)) {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .settings-page :deep(.van-cell:has(.slider-box) .van-cell__value),
+  .settings-page :deep(.van-cell:has(.font-opts) .van-cell__value),
+  .settings-page :deep(.van-cell:has(.progress) .van-cell__value) {
+    flex: 1 0 100%;
+    text-align: left;
+  }
+  .slider-box,
+  .progress,
+  .font-opts {
+    justify-content: flex-start;
+  }
 }
 .user-action {
   margin-left: 12px;

@@ -5,11 +5,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -284,31 +283,23 @@ func benchEncoder(ffmpegPath string, kind EncoderKind, desc string) benchResult 
 	args = append(args, H264EncodeArgs(kind, "")...)
 	args = append(args, "-f", "null", "-")
 
-	var before, after syscall.Rusage
-	_ = syscall.Getrusage(syscall.RUSAGE_CHILDREN, &before)
+	cmd := exec.Command(ffmpegPath, args...)
 	start := time.Now()
-	err := exec.Command(ffmpegPath, args...).Run()
+	err := cmd.Run()
 	wall := time.Since(start)
-	_ = syscall.Getrusage(syscall.RUSAGE_CHILDREN, &after)
 
 	r := benchResult{desc: desc}
 	if err != nil {
 		return r
 	}
 	r.wallMs = float64(wall.Milliseconds())
-	cpu := timevalMs(after.Utime) - timevalMs(before.Utime) +
-		timevalMs(after.Stime) - timevalMs(before.Stime)
+	cpu := float64((cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()) / time.Millisecond)
 	r.cpuMs = cpu
 	if r.wallMs > 0 {
 		r.realtime = secs / (r.wallMs / 1000.0)
 		r.cpuPct = cpu / r.wallMs * 100
 	}
 	return r
-}
-
-// timevalMs 把 syscall.Timeval 转换为毫秒。
-func timevalMs(t syscall.Timeval) float64 {
-	return float64(t.Sec)*1000 + float64(t.Usec)/1000
 }
 
 // minThroughput 返回可接受的最低吞吐倍率（相对实时）。

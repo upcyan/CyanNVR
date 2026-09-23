@@ -31,7 +31,9 @@ let onMqChange: ((e: MediaQueryListEvent) => void) | null = null
 function applyA11y() {
   const s = settings.settings
   const zoomMap = { normal: '1', large: '1.2', xlarge: '1.4' }
-  document.documentElement.style.zoom = s.careMode ? '1.4' : zoomMap[s.fontSize]
+  // 关怀模式已有独立的大字号和大触控热区样式。若再缩放整个页面，
+  // 可用布局视口会变窄，固定导航、弹窗和表单在小屏上会被裁切。
+  document.documentElement.style.zoom = s.careMode ? '1' : zoomMap[s.fontSize]
   document.body.classList.toggle('care', s.careMode)
   document.body.classList.toggle('light', s.theme === 'light')
   document.body.classList.toggle('dark', s.theme === 'dark')

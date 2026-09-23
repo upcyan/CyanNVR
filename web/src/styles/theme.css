@@ -29,8 +29,7 @@ body,
 
 html,
 body {
-  /* 关怀模式使用 zoom 放大后，任何溢出都会被放大；
-     这里强制不允许横向滚动，杜绝页面左右错位 */
+  /* 防止长文本或第三方组件造成页面左右错位 */
   overflow-x: hidden;
   max-width: 100%;
 }
@@ -165,7 +164,7 @@ body.light ::-webkit-scrollbar-thumb {
 }
 
 /* ===== 关怀模式（适老化） =====
-   缩放由 App.vue 统一 zoom 处理，这里只负责对比度、控件尺寸与少量字号。
+   关怀模式在这里独立放大文字与触控区域，不缩放整个布局视口。
    注意：不要在组件上写死 size 属性，否则会覆盖下方 --van-switch-size。 */
 body.care {
   /* 深色主题下更高对比度（适老） */
@@ -464,6 +463,38 @@ body.care .settings-page .van-cell__label {
   font-size: 15px;
   margin-top: 4px;
 }
+body.care .settings-page .van-cell__value,
+body.care .server-page .van-cell__value {
+  min-width: 0;
+}
+body.care .settings-page .slider-box,
+body.care .settings-page .progress {
+  justify-content: flex-end;
+  max-width: 100%;
+}
+body.care .settings-page .slider-box .van-slider {
+  width: min(120px, 28vw) !important;
+}
+body.care .settings-page .bar {
+  width: min(110px, 26vw);
+}
 body.care .settings-page .van-radio-group .van-cell {
   padding: 16px;
+}
+
+@media (max-width: 360px) {
+  body.care .settings-page .van-cell,
+  body.care .server-page .van-cell {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  body.care .settings-page .van-cell__value,
+  body.care .server-page .van-cell__value {
+    flex-basis: 100%;
+    text-align: left;
+  }
+  body.care .settings-page .slider-box,
+  body.care .settings-page .progress {
+    justify-content: flex-start;
+  }
 }

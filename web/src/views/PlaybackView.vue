@@ -295,11 +295,7 @@ function pickInitialDevice(): boolean {
 }
 
 onMounted(() => {
-  const ok = pickInitialDevice()
-  if (ok) {
-    loadMonth()
-    loadSegments()
-  }
+  pickInitialDevice()
   startTimer()
 })
 
@@ -318,8 +314,8 @@ watch(deviceId, () => {
   loadMonth()
   loadSegments()
 })
+watch(ym, loadMonth)
 watch(dateStr, () => {
-  if (ym.value !== dateStr.value.slice(0, 7)) loadMonth()
   loadSegments()
 })
 watch(playerRef, () => {

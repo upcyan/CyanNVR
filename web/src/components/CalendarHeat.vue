@@ -11,10 +11,9 @@ const emit = defineEmits<{ (e: 'select', date: string): void }>()
 type Cell = { day: number; date: string; duration: number; has: boolean } | null
 
 const cells = computed<Cell[]>(() => {
-  if (!props.days.length) return []
-  const first = new Date(props.days[0].date)
-  const y = first.getFullYear()
-  const m = first.getMonth()
+  // 日历月份由当前选中日期决定；没有录像数据时也应显示完整日期。
+  const y = Number(props.selected.slice(0, 4))
+  const m = Number(props.selected.slice(5, 7)) - 1
   const dim = new Date(y, m + 1, 0).getDate()
   const startDow = (new Date(y, m, 1).getDay() + 6) % 7
   const map = new Map(props.days.map((d) => [d.date, d]))

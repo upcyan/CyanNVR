@@ -274,6 +274,11 @@ function goBack() {
 </template>
 
 <style scoped>
+.server-page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
 .actions {
   padding: 20px 16px;
 }
@@ -319,6 +324,8 @@ function goBack() {
   font-size: 12px;
   font-family: ui-monospace, Menlo, monospace;
   color: var(--nvr-text-2);
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 .qr-empty {
   padding: 12px 0;
