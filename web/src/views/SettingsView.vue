@@ -174,6 +174,7 @@ interface AIInfoPayload {
   backend?: string
   backend_chain?: string[]
   backend_fallback?: string
+  backend_bench?: string
   active?: string
   installed?: AIModelInfo[]
   catalog?: AICatalogItem[]
@@ -188,7 +189,8 @@ let aiRetryTimer: number | undefined
 /** 推理后端手动选择：auto 按可用性挑最快（本机有 CUDA 即 GPU）。 */
 const showProviderPicker = ref(false)
 const providerColumns = [
-  { text: '自动（最快可用，推荐）', value: 'auto' },
+  { text: '自动 · 预设（按顺序取最快可用，推荐）', value: 'auto' },
+  { text: '自动 · 实测（启动时实测择优）', value: 'auto-bench' },
   { text: 'CPU（软件推理）', value: 'cpu' },
   { text: 'NVIDIA CUDA', value: 'cuda' },
   { text: 'NVIDIA TensorRT（首次较慢）', value: 'tensorrt' },
@@ -196,9 +198,19 @@ const providerColumns = [
   { text: 'Intel OpenVINO', value: 'openvino' },
   { text: 'DirectML', value: 'directml' },
 ]
+const providerShort: Record<string, string> = {
+  auto: '自动·预设',
+  'auto-bench': '自动·实测',
+  cpu: 'CPU',
+  cuda: 'CUDA',
+  tensorrt: 'TensorRT',
+  rocm: 'ROCm',
+  openvino: 'OpenVINO',
+  directml: 'DirectML',
+}
 const providerLabel = computed(() => {
   const v = s.ai.provider || 'auto'
-  return providerColumns.find((c) => c.value === v)?.text || v
+  return providerShort[v] || providerColumns.find((c) => c.value === v)?.text || v
 })
 function onProviderConfirm({ selectedValues }: { selectedValues: string[] }) {
   store.set({ ai: { ...s.ai, provider: selectedValues[0] } })
@@ -218,6 +230,7 @@ const backendLabel = computed(() => {
 
 /** 发生了后端回退时给一句人话解释。 */
 const backendHint = computed(() => {
+  if (aiInfo.value.backend_bench) return `启动实测（快→慢）：${aiInfo.value.backend_bench}`
   if (aiInfo.value.backend_fallback) return `已回退：${aiInfo.value.backend_fallback}`
   if (aiError.value) return `${aiError.value}（依赖缺失时请安装 opencv-python-headless 与 onnxruntime 后重启应用，页面每 5 秒自动重试）`
   return ''

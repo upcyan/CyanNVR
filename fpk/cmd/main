@@ -53,7 +53,7 @@ fi
 # 检测 worker 读 NVR_AI_PROVIDER（auto = 按可用性挑最快，本机有 CUDA 即 GPU）。
 # 保存设置后重启应用生效；python3 缺失或配置缺失时回退 auto。
 AI_PROVIDER_VAL=$(python3 -c 'import json,sys
-_ALLOWED = {"auto","cpu","cuda","rocm","openvino","directml","tensorrt"}
+_ALLOWED = {"auto","auto-bench","cpu","cuda","rocm","openvino","directml","tensorrt"}
 try:
     v = json.load(open(sys.argv[1])).get("ai",{}).get("provider") or "auto"
     print(v if v in _ALLOWED else "auto")

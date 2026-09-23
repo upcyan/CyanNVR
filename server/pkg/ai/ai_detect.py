@@ -29,7 +29,9 @@ Env:
   NVR_AI_CONF           confidence threshold (default 0.20)
   NVR_AI_CLASSES        comma-separated label filter (empty = all)
   NVR_AI_MODELS_DIR     directory scanned by GET /models
-  NVR_AI_PROVIDER       auto|cpu|cuda|rocm|openvino|directml (default auto)
+  NVR_AI_PROVIDER       auto|auto-bench|cpu|cuda|rocm|openvino|directml|tensorrt (default auto)
+                        auto       = 按 AUTO_ORDER 顺序取第一个可用（最快可用）
+                        auto-bench = 启动时逐个 EP 跑微型基准，按实测速度择优
   NVR_AI_THREADS        intra-op 线程数，0=交给 ORT 自适应（默认 0）
   NVR_AI_INPUT_SIZE     覆盖模型输入尺寸（如 480 可显著提速，0=用模型自带）
   NVR_AI_ASSETS_BASE    模型下载源前缀（默认 ultralytics 官方 Release）
@@ -42,6 +44,7 @@ import re
 import shutil
 import socket
 import sys
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -94,6 +97,7 @@ _family = None             # "v8" | "nms"
 _backend = "none"          # 实际生效的推理后端，如 cpu / cuda
 _backend_chain = []        # 尝试过的 EP 链，便于排查
 _backend_error = ""        # 若发生回退，记录原因
+_backend_bench = ""        # auto-bench 模式的实测结果串（如 "cuda 12ms · cpu 187ms"）
 
 # 归一化后端名 -> onnxruntime execution provider 名
 PROVIDER_EP = {
@@ -468,6 +472,119 @@ def _classify_family(out_shape):
     return "v8"
 
 
+def _rss_mb():
+    """当前进程 RSS（MB），用于展示各后端的内存代价。"""
+    try:
+        with open("/proc/self/statm") as f:
+            pages = int(f.read().split()[1])
+        return pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _bench_session(sess, size, warmup=3, iters=7):
+    """微型基准：首帧（冷启动）+ 预热 + 计时，返回记分卡。
+
+    首帧单独计时：CUDA/cuDNN 的算法选择都发生在第一次推理，
+    对「启动后多久能出第一帧」这个体感指标最有参考价值。
+    """
+    name = sess.get_inputs()[0].name
+    x = np.zeros((1, 3, size, size), dtype=np.float32)
+    t0 = time.perf_counter()
+    out = sess.run(None, {name: x})
+    first_ms = (time.perf_counter() - t0) * 1000.0
+    for _ in range(max(0, warmup - 1)):
+        sess.run(None, {name: x})
+    times = []
+    last = None
+    for _ in range(iters):
+        t0 = time.perf_counter()
+        last = sess.run(None, {name: x})
+        times.append((time.perf_counter() - t0) * 1000.0)
+    return {
+        "mean": sum(times) / len(times),
+        "peak": max(times),
+        "first": first_ms,
+        "out": last[0] if last else None,
+    }
+
+
+def _bench_pick(path):
+    """auto-bench：每个可用 EP 都实测，按记分卡择优。
+
+    规则：
+      1) 资格门：能加载、能真跑、输出全有限且与 CPU 基准偏差 < 1.0
+         （抓「能创建会话但算出垃圾」的坏核，比只看不崩更严格）；
+      2) 排序：资格合格者按平均毫秒升序，最快的胜出；
+      3) TensorRT 不参与启动实测（首跑建引擎数十秒），需要时手动选择。
+    CPU 永远参与：既是兜底，也是精度基准。
+    返回 (最快会话, 记分卡字符串, 失败原因, 排序后的 EP 链)。
+    """
+    import onnxruntime as ort  # noqa: PLC0415
+
+    avail = set(ort.get_available_providers())
+    probe = []
+    for n in AUTO_ORDER:
+        ep = PROVIDER_EP.get(n)
+        if ep and ep in avail and ep not in probe:
+            probe.append(ep)
+
+    measured = {}  # label -> scorecard dict（含 sess/ep）
+    reasons = []
+    for ep in probe:
+        label = _backend_label(ep)
+        rss0 = _rss_mb()
+        try:
+            cand = _make_session(path, [ep])
+            model_size = _probe_size(cand)
+            size = AI_INPUT_SIZE if (AI_INPUT_SIZE and _input_dynamic(cand)) else model_size
+            _validate_session(cand, size)     # 真跑一帧，确认 EP 在本硬件上能执行
+            card = _bench_session(cand, size)
+            card["rss"] = max(0.0, _rss_mb() - rss0)
+            card["sess"] = cand
+            card["ep"] = ep
+            measured[label] = card
+            print(f"bench {label}: 均{card['mean']:.1f} 峰{card['peak']:.1f} "
+                  f"首帧{card['first']:.0f} ms RSS+{card['rss']:.0f}MB", flush=True)
+        except Exception as e:  # noqa: BLE001
+            reasons.append(f"{label}: {str(e)[:160]}")
+            print(f"bench {label} 不可用：{str(e)[:200]}", flush=True)
+
+    # 精度基准 = CPU 的输出；非 CPU 后端与它逐元素比对
+    ref = measured.get("cpu", {}).get("out")
+    for label, m in measured.items():
+        if ref is None or label == "cpu":
+            m["delta"] = None
+            m["ok"] = True
+            continue
+        try:
+            diff = float(np.max(np.abs(np.asarray(m["out"], np.float32)
+                                       - np.asarray(ref, np.float32))))
+        except Exception:  # noqa: BLE001
+            diff = float("inf")
+        m["delta"] = diff
+        m["ok"] = bool(np.isfinite(diff) and diff < 1.0)
+        if not m["ok"]:
+            reasons.append(f"{label}: 输出与 CPU 基准偏差过大 Δ={diff:.4g}")
+            print(f"bench {label} 精度不合格（Δ={diff:.4g}），不参与择优", flush=True)
+
+    ranked = sorted([(l, m) for l, m in measured.items() if m["ok"]],
+                    key=lambda t: t[1]["mean"])
+    if not ranked:
+        return None, "", " | ".join(reasons), []
+
+    def fmt(label, m):
+        delta = "基准" if m["delta"] is None else f"Δ{m['delta']:.3g}"
+        return (f"{label} 均{m['mean']:.0f}/峰{m['peak']:.0f}/首帧{m['first']:.0f}ms"
+                f" {delta} +{m['rss']:.0f}MB")
+
+    bench_str = " · ".join(fmt(l, m) for l, m in ranked)
+    winner_label, winner = ranked[0][0], ranked[0][1]
+    ordered = [winner["ep"]] + [m["ep"] for l, m in ranked if m["ep"] != winner["ep"]]
+    print(f"实测择优（合格按均值排序）：{bench_str} -> 使用 {winner_label}", flush=True)
+    return winner["sess"], bench_str, " | ".join(reasons), ordered
+
+
 def _load_model(path):
     """Load an ONNX detection model, picking a backend that actually works.
 
@@ -476,24 +593,32 @@ def _load_model(path):
     global _sess, _engine, _input_size, _labels, _family, _model_path
     global _backend, _backend_chain, _backend_error
 
-    chain = _ep_chain()
+    global _backend_bench
     sess = None
     reasons = []
+    bench_str = ""
 
-    # 从最优 provider 开始尝试；失败就把该 EP 摘掉再试下一个，
-    # CPU 始终留在链尾，保证任何情况下都还有可用后端。
-    for i, ep in enumerate(chain):
-        try:
-            cand = _make_session(path, chain[i:])
-            model_size = _probe_size(cand)
-            size = AI_INPUT_SIZE if (AI_INPUT_SIZE and _input_dynamic(cand)) else model_size
-            _validate_session(cand, size)
-            sess = cand
-            break
-        except Exception as e:  # noqa: BLE001
-            reasons.append(f"{_backend_label(ep)}: {str(e)[:160]}")
-            print(f"provider {_backend_label(ep)} 不可用，回退下一档：{str(e)[:200]}", flush=True)
-            sess = None
+    if AI_PROVIDER == "auto-bench":
+        # 启动实测择优：逐个 EP 建会话跑基准，用真实速度决定用哪个。
+        sess, bench_str, err, chain = _bench_pick(path)
+        if err:
+            reasons.append(err)
+    else:
+        chain = _ep_chain()
+        # 从最优 provider 开始尝试；失败就把该 EP 摘掉再试下一个，
+        # CPU 始终留在链尾，保证任何情况下都还有可用后端。
+        for i, ep in enumerate(chain):
+            try:
+                cand = _make_session(path, chain[i:])
+                model_size = _probe_size(cand)
+                size = AI_INPUT_SIZE if (AI_INPUT_SIZE and _input_dynamic(cand)) else model_size
+                _validate_session(cand, size)
+                sess = cand
+                break
+            except Exception as e:  # noqa: BLE001
+                reasons.append(f"{_backend_label(ep)}: {str(e)[:160]}")
+                print(f"provider {_backend_label(ep)} 不可用，回退下一档：{str(e)[:200]}", flush=True)
+                sess = None
 
     if sess is None:
         raise RuntimeError("无可用推理后端: " + " | ".join(reasons))
@@ -517,6 +642,7 @@ def _load_model(path):
     _backend = _backend_label(used)
     _backend_chain = chain
     _backend_error = " | ".join(reasons)
+    _backend_bench = bench_str
     print(f"loaded model {path} family={fam} input={inp.shape} out={out} "
           f"backend={_backend} size={size}", flush=True)
 
@@ -713,6 +839,7 @@ class Handler(BaseHTTPRequestHandler):
                 "backend": _backend,
                 "backend_chain": _backend_chain,
                 "backend_fallback": _backend_error,
+                "backend_bench": _backend_bench,
                 "installed": installed,
                 # 兼容旧字段：早期前端按 models 取路径列表，保留以免破坏调用方。
                 "models": [m["path"] for m in installed],
@@ -720,7 +847,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         else:
             self._reply(200, {"ok": True, "engine": _engine, "model": _model_path,
-                              "backend": _backend, "provider_setting": AI_PROVIDER,
+                              "backend": _backend, "backend_bench": _backend_bench,
+                              "provider_setting": AI_PROVIDER,
                               "threads": AI_THREADS, "input_size": _input_size,
                               "labels": sorted(set(LABEL_ZH))})
 

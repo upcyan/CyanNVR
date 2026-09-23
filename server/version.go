@@ -11,4 +11,4 @@ package main
 // 用于「代码没变但需要重新出包」的场景（改图标、改向导、改生命周期脚本等）。
 //
 // 修改本常量后，fpk 打包脚本会自动把修订号重置为 1。
-const CoreVersion = "1.4.0"
+const CoreVersion = "1.5.0"

@@ -75,9 +75,9 @@ func (s *Server) putSettings(c *gin.Context) {
 		return
 	}
 	switch in.AI.Provider {
-	case "", "auto", "cpu", "cuda", "rocm", "openvino", "directml", "tensorrt":
+	case "", "auto", "auto-bench", "cpu", "cuda", "rocm", "openvino", "directml", "tensorrt":
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ai.provider must be auto/cpu/cuda/rocm/openvino/directml/tensorrt"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ai.provider must be auto/auto-bench/cpu/cuda/rocm/openvino/directml/tensorrt"})
 		return
 	}
 	oldTLS := s.CurrentTLSConfig()
