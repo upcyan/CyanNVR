@@ -190,6 +190,22 @@ stop_process() {
     pkill -f "${TRIM_APPDEST}/ai_detect.py" 2>/dev/null
     rm -f /tmp/cyannvr-ai.sock /tmp/cyanNVR-ai.sock 2>/dev/null
 
+    # 兜底：清扫因硬退出（SIGKILL/panic/旧版无信号处理）泄漏的孤儿 ffmpeg
+    # （录像/直播/快照子进程，每个约30% CPU）。只匹配本应用数据目录下
+    # PPID=1 的 ffmpeg，绝不误伤其它应用。
+    local run_user="${TRIM_RUN_USERNAME:-cyannvr}"
+    local orphan_pids
+    orphan_pids=$(ps -u "${run_user}" -o pid=,ppid=,cmd= 2>/dev/null | \
+        awk -v d="${DATA_DIR}" '$2 == 1 && /ffmpeg/ && index($0, d) > 0 {print $1}')
+    if [ -n "${orphan_pids}" ]; then
+        log_msg "reaping orphan ffmpeg pids: ${orphan_pids}"
+        # shellcheck disable=SC2086
+        kill ${orphan_pids} 2>/dev/null
+        sleep 1
+        # shellcheck disable=SC2086
+        kill -9 ${orphan_pids} 2>/dev/null
+    fi
+
     return 0
 }
 

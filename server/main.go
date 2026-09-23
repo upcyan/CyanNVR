@@ -6,9 +6,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"cyannvr/server/api"
@@ -126,9 +128,20 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	// HTTP 放 goroutine，主线程等信号——否则 fnOS 停止/升级发来 SIGTERM 时，
+	// Go 运行时默认行为是「立即退出、跳过所有 defer」，rec.Stop() 永远不执行，
+	// 录像/直播/快照 ffmpeg 全部泄漏成孤儿（每个约30% CPU，升级几次就吃到
+	// 负载20+）。收到信号后正常 return，所有 defer 依次执行、子进程全数回收。
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, os.Interrupt)
+	sig := <-sigCh
+	log.Printf("收到信号 %s，优雅停机：回收录像/直播/快照子进程 ...", sig)
 }
 
 func seedAdmin(cfg *config.Config, st *store.Store) {
