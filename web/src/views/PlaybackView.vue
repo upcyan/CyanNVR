@@ -2,9 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
-import type { DayRecord, Device, RecordingSegment } from '../types'
+import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { createPlayback, downloadRecordingURL, fetchDaySegments, fetchMonthRecords, isBackend, isDemoMode } from '../api'
+import { createPlayback, downloadRecordingURL, fetchDaySegments, fetchEvents, fetchMonthRecords, isBackend, isDemoMode } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -22,6 +22,7 @@ const deviceId = ref('')
 const dateStr = ref(todayStr)
 const monthDays = ref<DayRecord[]>([])
 const segments = ref<RecordingSegment[]>([])
+const dayEvents = ref<EventItem[]>([])
 const currentTs = ref(0)
 const playing = ref(true)
 const speed = ref(1)
@@ -64,8 +65,10 @@ async function loadMonth() {
 async function loadSegments() {
   if (!deviceId.value) {
     segments.value = []
+    dayEvents.value = []
     return
   }
+  loadEvents() // 与分段并行加载，供时间轴着色与事件列表使用
   loading.value = true
   try {
     segments.value = await fetchDaySegments(deviceId.value, dateStr.value)
@@ -75,6 +78,54 @@ async function loadSegments() {
     loading.value = false
   }
   rebuildPlayable()
+}
+
+async function loadEvents() {
+  if (!deviceId.value) {
+    dayEvents.value = []
+    return
+  }
+  try {
+    dayEvents.value = (await fetchEvents(deviceId.value, dateStr.value, '', 0, 500)).events
+  } catch {
+    dayEvents.value = []
+  }
+}
+
+// 后端返回 RFC3339 字符串、演示模式返回毫秒数，new Date() 两者通吃。
+function evTime(e: EventItem): number {
+  return new Date(e.time).getTime()
+}
+
+const EV_TYPE_LABEL: Record<string, string> = {
+  motion: '移动侦测',
+  ai: 'AI 识别',
+  offline: '设备离线',
+  online: '设备上线',
+  manual: '手动',
+}
+
+function fmtHM(ts: number) {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// 传给时间轴的事件（统一转毫秒时间戳）
+const timelineEvents = computed(() =>
+  dayEvents.value.map((e) => ({ time: evTime(e), type: e.type })),
+)
+
+// 点击事件跳到对应时刻播放，与时间轴拖动走同一套会话重建逻辑
+function onSelectEvent(e: EventItem) {
+  const ts = Math.min(dayStart.value + 86400000 - 1000, Math.max(dayStart.value, evTime(e)))
+  currentTs.value = ts
+  onSeekEnd(ts)
+}
+
+// 事件所在录像段（供列表下载按钮使用）
+function segOfEvent(e: EventItem): RecordingSegment | undefined {
+  const ts = evTime(e)
+  return segments.value.find((s) => ts >= s.start && ts <= s.end)
 }
 
 async function rebuildPlayable() {
@@ -328,18 +379,39 @@ onBeforeUnmount(() => {
         <div class="timeline-wrap">
           <div class="tl-head">
             <span class="mono">{{ dateStr }} 录像</span>
-            <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟</span>
+            <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
           <TimelineBar
             :day-start="dayStart"
             :segments="segments"
+            :events="timelineEvents"
             :value="currentTs"
             @seek="onSeek"
             @seekend="onSeekEnd"
           />
         </div>
 
-        <div class="seg-list">
+        <!-- 事件联动：点事件跳到对应时刻播放；含事件的录像段在时间轴上已着色 -->
+        <div v-if="dayEvents.length" class="seg-list evt-list">
+          <span
+            v-for="e in dayEvents"
+            :key="e.id"
+            class="seg-item evt-item"
+            :class="{ on: Math.abs(currentTs - evTime(e)) < 20000 }"
+          >
+            <span class="evt-time mono" @click="onSelectEvent(e)">{{ fmtHM(evTime(e)) }}</span>
+            <span class="evt-badge" :class="e.type">{{ EV_TYPE_LABEL[e.type] || e.type }}</span>
+            <span class="evt-label" @click="onSelectEvent(e)">{{ e.label || e.description || '查看详情' }}</span>
+            <van-icon
+              v-if="segOfEvent(e) && isBackend() && !isDemoMode()"
+              name="down"
+              class="seg-dl"
+              @click.stop="downloadSegment(segOfEvent(e)!)"
+            />
+          </span>
+        </div>
+        <!-- 当日无事件时回退显示录像分段，保留分段跳转与下载 -->
+        <div v-else class="seg-list">
           <span
             v-for="s in segments"
             :key="s.id"
@@ -350,6 +422,7 @@ onBeforeUnmount(() => {
             <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
           </span>
           <span v-if="!segments.length" class="none">当日无录制</span>
+          <span v-else class="none">当日无事件，以上为录像分段</span>
         </div>
       </div>
     </div>
@@ -448,6 +521,44 @@ onBeforeUnmount(() => {
   color: var(--nvr-accent);
 }
 .seg-time {
+  cursor: pointer;
+}
+/* 事件联动列表 */
+.evt-list {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.evt-item {
+  width: 100%;
+  gap: 8px;
+}
+.evt-time {
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.evt-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 9px;
+  color: #fff;
+}
+.evt-badge.motion { background: #ffb020; color: #4a2c00; }
+.evt-badge.ai { background: #ff4d4f; }
+.evt-badge.manual { background: #a26bf0; }
+.evt-badge.offline { background: #8b93a7; }
+.evt-badge.online { background: #2ecc8f; color: #053b28; }
+.evt-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
 .seg-dl {

@@ -6,7 +6,43 @@ const props = defineProps<{
   dayStart: number
   segments: RecordingSegment[]
   value: number
+  /** 当日事件（time 已由调用方转为毫秒）；用于时间轴着色与刻度 */
+  events?: { time: number; type: string }[]
 }>()
+
+const EV_STYLE: Record<string, string> = {
+  motion: 'rgba(255, 176, 32, .38)',
+  ai: 'rgba(255, 77, 79, .38)',
+  manual: 'rgba(162, 107, 240, .38)',
+  offline: 'rgba(139, 147, 167, .38)',
+  online: 'rgba(46, 204, 143, .30)',
+}
+const EV_TICK: Record<string, string> = {
+  motion: '#ffb020',
+  ai: '#ff4d4f',
+  manual: '#a26bf0',
+  offline: '#8b93a7',
+  online: '#2ecc8f',
+}
+
+const evList = computed(() => props.events ?? [])
+
+// 含事件的录像段整段着色；同段多事件时按首个事件取色
+const eventRanges = computed(() => {
+  const out: { id: string; start: number; end: number; color: string }[] = []
+  for (const s of props.segments) {
+    const hit = evList.value.find((e) => e.time >= s.start && e.time <= s.end)
+    if (hit) {
+      out.push({
+        id: s.id,
+        start: s.start,
+        end: s.end,
+        color: EV_STYLE[hit.type] || EV_STYLE.motion,
+      })
+    }
+  }
+  return out
+})
 const emit = defineEmits<{
   (e: 'seek', ts: number): void
   (e: 'seekend', ts: number): void
@@ -79,6 +115,22 @@ const timeLabel = computed(() => {
           width: Math.max(0.5, pct(s.end) - pct(s.start)) + '%',
         }"
       />
+      <div
+        class="ev-range"
+        v-for="r in eventRanges"
+        :key="'er-' + r.id"
+        :style="{
+          left: pct(r.start) + '%',
+          width: Math.max(0.5, pct(r.end) - pct(r.start)) + '%',
+          background: r.color,
+        }"
+      />
+      <div
+        class="ev-tick"
+        v-for="(e, i) in evList"
+        :key="'et-' + i"
+        :style="{ left: pct(e.time) + '%', background: EV_TICK[e.type] || '#ff4d4f' }"
+      />
       <div class="cursor" :style="{ left: pct(value) + '%' }">
         <span class="knob" />
       </div>
@@ -112,10 +164,26 @@ const timeLabel = computed(() => {
   background: rgba(46, 204, 143, 0.55);
   border-right: 1px solid rgba(46, 204, 143, 0.9);
 }
+.ev-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.ev-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  transform: translateX(-1.5px);
+  pointer-events: none;
+  z-index: 2;
+}
 .cursor {
   position: absolute;
   top: 0;
   bottom: 0;
+  z-index: 3;
   width: 2px;
   background: var(--nvr-accent);
   transform: translateX(-1px);

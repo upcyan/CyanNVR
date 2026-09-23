@@ -78,16 +78,12 @@ onBeforeUnmount(() => {
         </div>
         <nav class="nav">
           <router-link to="/live" class="nav-item" active-class="on">
-            <van-icon name="video-o" size="18" />
+            <van-icon name="play-circle-o" size="18" />
             <span>摄像机</span>
           </router-link>
           <router-link to="/playback" class="nav-item" active-class="on">
-            <van-icon name="play-circle-o" size="18" />
+            <van-icon name="video-o" size="18" />
             <span>录像管理</span>
-          </router-link>
-          <router-link to="/events" class="nav-item" active-class="on">
-            <van-icon name="description-o" size="16" />
-            <span>事件记录</span>
           </router-link>
           <router-link to="/settings" class="nav-item" active-class="on">
             <van-icon name="setting-o" size="18" />
@@ -109,9 +105,8 @@ onBeforeUnmount(() => {
       </div>
 
         <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
-          <van-tabbar-item replace to="/live" icon="video-o">摄像机</van-tabbar-item>
-          <van-tabbar-item replace to="/playback" icon="play-circle-o">录像</van-tabbar-item>
-          <van-tabbar-item replace to="/events" icon="description-o">事件</van-tabbar-item>
+          <van-tabbar-item replace to="/live" icon="play-circle-o">摄像机</van-tabbar-item>
+          <van-tabbar-item replace to="/playback" icon="video-o">录像</van-tabbar-item>
           <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
         </van-tabbar>
     </div>

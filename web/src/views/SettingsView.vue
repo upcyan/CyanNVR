@@ -612,32 +612,32 @@ async function removeUser(u: ManagedUser) {
       <van-field v-model="pwd.old" type="password" label="原密码" placeholder="请输入原密码" />
       <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码" />
       <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
-    </van-cell-group>
-
-    <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
-      <van-cell
-        v-for="u in users"
-        :key="u.id"
-        :title="u.username"
-        :label="roleOptions.find((r) => r.value === u.role)?.label || u.role"
-      >
-        <template #right-icon>
-          <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
-          <van-icon
-            v-if="u.id !== auth.user?.id"
-            name="delete-o"
-            class="user-action del"
-            @click="removeUser(u)"
-          />
-        </template>
-      </van-cell>
-      <van-cell v-if="!usersLoaded" title="加载中..." />
-      <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
-      <div style="padding: 12px 16px">
-        <van-button plain block round size="small" @click="openAddUser">
-          <van-icon name="plus" style="margin-right: 4px" />添加用户
-        </van-button>
-      </div>
+      <template v-if="isBackend() && auth.isAdmin">
+        <div class="group-sub">用户管理 · 可增删用户、改用户名与重置密码（编辑对话框第一行即改名）</div>
+        <van-cell
+          v-for="u in users"
+          :key="u.id"
+          :title="u.username"
+          :label="roleOptions.find((r) => r.value === u.role)?.label || u.role"
+        >
+          <template #right-icon>
+            <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
+            <van-icon
+              v-if="u.id !== auth.user?.id"
+              name="delete-o"
+              class="user-action del"
+              @click="removeUser(u)"
+            />
+          </template>
+        </van-cell>
+        <van-cell v-if="!usersLoaded" title="加载中..." />
+        <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
+        <div style="padding: 12px 16px">
+          <van-button plain block round size="small" @click="openAddUser">
+            <van-icon name="plus" style="margin-right: 4px" />添加用户
+          </van-button>
+        </div>
+      </template>
     </van-cell-group>
 
     <div class="save-area">
@@ -737,20 +737,52 @@ async function removeUser(u: ManagedUser) {
 .bar i.warn {
   background: var(--nvr-amber);
 }
+.group-sub {
+  padding: 14px 16px 6px;
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  background: var(--nvr-panel-2);
+  border-top: 1px solid var(--nvr-border);
+}
+/* 数值输入：圆角胶囊，和整页卡片风格一致 */
 .days-input {
-  width: 84px;
-  padding: 0 4px;
+  width: 96px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
 }
-.days-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-  max-width: 230px;
-}
-.days-chips .van-tag.active {
-  opacity: 1;
+.days-input :deep(.van-field__control) {
+  text-align: right;
   font-weight: 600;
+}
+/* 快捷档位：4 列网格 + 胶囊按钮，选中态填色加投影 */
+.days-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(52px, auto));
+  gap: 6px;
+  justify-content: end;
+}
+.days-chips :deep(.van-tag) {
+  height: 28px;
+  min-width: 52px;
+  padding: 0 8px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text-2);
+  transition: all .15s ease;
+}
+.days-chips :deep(.van-tag.active) {
+  background: var(--nvr-accent);
+  border-color: var(--nvr-accent);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .3);
 }
 .slider-box {
   display: flex;

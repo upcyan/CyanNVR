@@ -17,7 +17,7 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 
 if [ -n "${MISSING}" ]; then
-    echo "CyanNVR 依赖缺失:${MISSING}；录像与 AI 检测将不可用。可用 pip3 install opencv-python-headless onnxruntime 安装后重启应用。" > "${TRIM_TEMP_LOGFILE}"
+    echo "CyanNVR 依赖缺失:${MISSING}；录像与 AI 检测将不可用。CPU：pip3 install opencv-python-headless onnxruntime；NVIDIA GPU 实测组合（Pascal 及以上）：pip3 install opencv-python-headless onnxruntime-gpu==1.18.1 numpy==1.26.4 nvidia-cudnn-cu11==8.9.6.50 nvidia-cublas-cu11 nvidia-cuda-runtime-cu11 nvidia-cuda-nvrtc-cu11 nvidia-cufft-cu11 nvidia-curand-cu11。安装后重启应用。" > "${TRIM_TEMP_LOGFILE}"
 fi
 
 exit 0
