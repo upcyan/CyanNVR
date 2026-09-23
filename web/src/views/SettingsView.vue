@@ -62,6 +62,7 @@ const showStartPicker = ref(false)
 const showEndPicker = ref(false)
 const showAIModePicker = ref(false)
 const pwd = ref({ old: '', next: '', confirm: '' })
+const showPwdDialog = ref(false)
 
 const aiModeOptions = [
   { text: '本地对象检测', value: 'local' },
@@ -140,6 +141,7 @@ async function save() {
     if (isBackend() && pwd.value.old && pwd.value.next) {
       await changeOwnPassword(pwd.value.old, pwd.value.next)
       pwd.value = { old: '', next: '', confirm: '' }
+      showPwdDialog.value = false
     }
     await store.save()
     showToast('设置已保存')
@@ -373,16 +375,7 @@ function openEditUser(u: ManagedUser) {
   showUserDialog.value = true
 }
 
-// 行内改名图标：跳到用户名框（等同编辑，但让改名一目了然）
-function openRename(u: ManagedUser) {
-  openEditUser(u)
-  // 弹出后高亮用户名框，引导直接改名
-  nextTick(() => {
-    const el = document.querySelector<HTMLInputElement>('.dialog-quick .van-button--primary')
-    el?.classList.add('flash')
-    setTimeout(() => el?.classList.remove('flash'), 1200)
-  })
-}
+// 行点击即可进入编辑（内含「改名」「改密码」按钮）
 
 // 编辑模式拆成独立动作按钮：改名 / 改密码 即点即生效，
 // 避免「改完字段点 X 关闭等于没改」的歧义。
@@ -754,41 +747,53 @@ async function removeUser(u: ManagedUser) {
       </van-popup>
     </van-cell-group>
 
+    <!-- 账户安全：只放「改我的密码」，点开即改，一级目录不再裸露三个密码框 -->
     <van-cell-group title="账户安全">
-      <van-field v-model="pwd.old" type="password" label="原密码" placeholder="请输入原密码" />
-      <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码" />
-      <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
-      <template v-if="isBackend() && auth.isAdmin">
-        <div class="group-sub">用户管理 · 可增删用户 · 每行铅笔=编辑，笑脸=改名，垃圾桶=删除；或进编辑改名/改密</div>
-        <van-cell
-          v-for="u in users"
-          :key="u.id"
-          :title="u.username"
-          :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · UID ' + u.uid"
-        >
-          <template #right-icon>
-            <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
-            <van-icon
-              name="smile-comment-o"
-              class="user-action rename"
-              @click="openRename(u)"
-            />
-            <van-icon
+      <van-cell
+        title="修改我的密码"
+        :label="`当前账号 ${auth.user?.username || ''} · 修改后需重新登录`"
+        is-link
+        @click="showPwdDialog = true"
+      >
+        <template #right-icon>
+          <van-icon name="lock" class="user-action lock" />
+        </template>
+      </van-cell>
+    </van-cell-group>
+
+    <!-- 用户管理：独立成组，管理员可见 -->
+    <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
+      <van-cell
+        v-for="u in users"
+        :key="u.id"
+        :title="u.username"
+        :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · UID ' + u.uid"
+        is-link
+        @click="openEditUser(u)"
+      >
+        <template #right-icon>
+          <span class="ua-btns">
+            <span class="ua-btn" title="编辑 / 改名 / 改密码" @click.stop="openEditUser(u)">
+              <van-icon name="edit" />
+            </span>
+            <span
               v-if="u.id !== auth.user?.id"
-              name="delete-o"
-              class="user-action del"
-              @click="removeUser(u)"
-            />
-          </template>
-        </van-cell>
-        <van-cell v-if="!usersLoaded" title="加载中..." />
-        <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
-        <div style="padding: 12px 16px">
-          <van-button plain block round size="small" @click="openAddUser">
-            <van-icon name="plus" style="margin-right: 4px" />添加用户
-          </van-button>
-        </div>
-      </template>
+              class="ua-btn danger"
+              title="删除"
+              @click.stop="removeUser(u)"
+            >
+              <van-icon name="delete-o" />
+            </span>
+          </span>
+        </template>
+      </van-cell>
+      <van-cell v-if="!usersLoaded" title="加载中..." />
+      <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
+      <div style="padding: 12px 16px">
+        <van-button plain block round size="small" @click="openAddUser">
+          <van-icon name="plus" style="margin-right: 4px" />添加用户
+        </van-button>
+      </div>
     </van-cell-group>
 
     <div v-if="appVersion" class="about-version">
@@ -811,6 +816,22 @@ async function removeUser(u: ManagedUser) {
         退出登录
       </van-button>
     </div>
+
+    <!-- 修改我的密码（从「账户安全」点入，收起一级目录的裸露字段） -->
+    <van-popup v-model:show="showPwdDialog" position="bottom" round :style="{ maxHeight: '85%' }">
+      <div class="dialog-head">
+        <span>修改我的密码</span>
+        <van-icon name="cross" size="18" @click="showPwdDialog = false" />
+      </div>
+      <van-cell-group inset style="margin: 0 10px">
+        <van-field v-model="pwd.old" type="password" label="原密码" placeholder="请输入原密码" />
+        <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码（至少8位）" />
+        <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
+      </van-cell-group>
+      <div class="dialog-actions">
+        <van-button type="primary" block round :loading="saving" @click="save">确认修改</van-button>
+      </div>
+    </van-popup>
 
     <van-popup v-model:show="showStartPicker" position="bottom" round>
       <van-time-picker
@@ -1104,6 +1125,43 @@ async function removeUser(u: ManagedUser) {
   margin-left: 12px;
   color: var(--nvr-text-2);
   font-size: 18px;
+}
+.user-action.lock {
+  color: var(--nvr-accent);
+  font-size: 18px;
+}
+/* 用户管理行内：圆形描边小按钮（比裸图标更清晰、更好点） */
+.ua-btns {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.ua-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+  color: var(--nvr-text-2);
+  font-size: 16px;
+  transition: all .15s ease;
+}
+.ua-btn:active {
+  transform: scale(.92);
+}
+.ua-btn:not(.danger):active {
+  border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+}
+.ua-btn.danger {
+  color: var(--nvr-red);
+}
+.ua-btn.danger:active {
+  background: rgba(255, 77, 79, .12);
+  border-color: var(--nvr-red);
 }
 .user-action.del:active {
   color: var(--nvr-red);

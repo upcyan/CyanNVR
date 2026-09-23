@@ -129,6 +129,10 @@ body.light ::-webkit-scrollbar-thumb {
   .page {
     padding-bottom: 0;
   }
+  /* 大字号/特大字号靠 zoom 放大（见 App.vue applyA11y），底部需更多空间 */
+  body.care .page {
+    padding-bottom: 72px;
+  }
 
   ::-webkit-scrollbar {
     width: 8px;
@@ -438,8 +442,16 @@ body.care .vbtn {
 }
 
 /* ---- 设置页 ---- */
+/* 关怀/大字号模式：zoom 放大后原留白不够，底部会被裁掉 → 加大留白 */
+body.care .page,
+body.care .settings-page {
+  padding-bottom: 96px;
+}
 body.care .settings-page .van-cell-group {
   margin-bottom: 16px;
+}
+body.care .settings-page .save-area {
+  padding-bottom: 40px;
 }
 body.care .settings-page .van-cell {
   min-height: 60px;
