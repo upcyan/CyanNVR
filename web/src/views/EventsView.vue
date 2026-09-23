@@ -300,20 +300,20 @@ onMounted(() => {
   position: relative;
 }
 /* 关怀模式：事件卡缩略图加大、删除/下载按钮触控区放大 */
-:global(body.care) .ev-card {
+:global(body.care .ev-card) {
   padding: 14px;
   gap: 14px;
 }
-:global(body.care) .ev-card .media {
+:global(body.care .ev-card .media) {
   width: 140px;
   height: 92px;
 }
-:global(body.care) .ev-card .badge {
+:global(body.care .ev-card .badge) {
   font-size: 13px;
   padding: 4px 10px;
 }
-:global(body.care) .ev-card .del,
-:global(body.care) .ev-card .dl-btn {
+:global(body.care .ev-card .del),
+:global(body.care .ev-card .dl-btn) {
   width: 36px;
   height: 36px;
   font-size: 18px;

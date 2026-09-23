@@ -141,14 +141,14 @@ function bg(c: NonNullable<Cell>) {
   opacity: 0.7;
 }
 /* 关怀模式：月份切换按钮放大 */
-:global(body.care) .calendar .cal-ym {
+:global(body.care .calendar .cal-ym) {
   font-size: 18px;
 }
-:global(body.care) .calendar .cal-today {
+:global(body.care .calendar .cal-today) {
   font-size: 14px;
   padding: 7px 16px;
 }
-:global(body.care) .calendar .cal-nav {
+:global(body.care .calendar .cal-nav) {
   font-size: 22px;
   padding: 8px;
 }

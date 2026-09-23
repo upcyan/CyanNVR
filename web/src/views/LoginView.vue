@@ -327,32 +327,32 @@ function closeReset() {
   width: 100%;
 }
 /* 关怀模式：登录页字号偏小，按钮和品牌区需放大；form 限宽让大屏更易扫读 */
-:global(body.care) .login .brand h1 {
+:global(body.care .login .brand h1) {
   font-size: 30px;
 }
-:global(body.care) .login .brand p {
+:global(body.care .login .brand p) {
   font-size: 16px;
 }
-:global(body.care) .login .tip {
+:global(body.care .login .tip) {
   font-size: 15px;
 }
-:global(body.care) .login .forgot {
+:global(body.care .login .forgot) {
   font-size: 16px;
   min-height: 44px;
 }
-:global(body.care) .login .reset h3 {
+:global(body.care .login .reset h3) {
   font-size: 22px;
 }
-:global(body.care) .login .reset-step {
+:global(body.care .login .reset-step) {
   font-size: 16px;
 }
-:global(body.care) .login .reset-desc {
+:global(body.care .login .reset-desc) {
   font-size: 15px;
 }
-:global(body.care) .login .reset-hint {
+:global(body.care .login .reset-hint) {
   font-size: 15px;
 }
-:global(body.care) .login .logo {
+:global(body.care .login .logo) {
   width: 80px;
   height: 80px;
 }
