@@ -74,6 +74,12 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tlsCertMode must be auto/manual"})
 		return
 	}
+	switch in.AI.Provider {
+	case "", "auto", "cpu", "cuda", "rocm", "openvino", "directml", "tensorrt":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ai.provider must be auto/cpu/cuda/rocm/openvino/directml/tensorrt"})
+		return
+	}
 	oldTLS := s.CurrentTLSConfig()
 	s.settingsMu.Lock()
 	if in.AI.APIKey != "" && len(in.AI.APIKey) < 20 && s.settings.AI.APIKey != "" {

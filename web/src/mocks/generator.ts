@@ -170,6 +170,7 @@ export function defaultSettings(): Settings {
     ai: {
       enabled: false,
       mode: 'local',
+      provider: 'auto',
       baseUrl: 'http://localhost:11434/v1',
       detectUrl: 'unix:/tmp/cyannvr-ai.sock',
       model: 'person-detection',

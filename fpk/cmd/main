@@ -49,6 +49,18 @@ if [ -d "${SHARE_DIR}" ] && [ "${DATA_DIR}" != "${SHARE_DIR}" ]; then
     fi
 fi
 
+# ── 推理后端选择（设置页 ai.provider）──
+# 检测 worker 读 NVR_AI_PROVIDER（auto = 按可用性挑最快，本机有 CUDA 即 GPU）。
+# 保存设置后重启应用生效；python3 缺失或配置缺失时回退 auto。
+AI_PROVIDER_VAL=$(python3 -c 'import json,sys
+_ALLOWED = {"auto","cpu","cuda","rocm","openvino","directml","tensorrt"}
+try:
+    v = json.load(open(sys.argv[1])).get("ai",{}).get("provider") or "auto"
+    print(v if v in _ALLOWED else "auto")
+except Exception:
+    print("auto")' "${DATA_DIR}/settings.json" 2>/dev/null)
+export NVR_AI_PROVIDER="${AI_PROVIDER_VAL:-auto}"
+
 # ── 运行时配置 ──
 # 端口优先级：向导值 > 已保存配置(port.conf) > 默认 18182
 PORT="18182"
@@ -94,7 +106,7 @@ export NVR_AI_ENABLED="true"
 export NVR_AI_MODE="local"
 export NVR_AI_DETECT_SCRIPT="${TRIM_APPDEST}/ai_detect.py"
 export NVR_AI_DETECT_URL="unix:/tmp/cyannvr-ai.sock"
-export NVR_AI_MODEL_PATH="${TRIM_APPDEST}/models/yolov8n.onnx"
+export NVR_AI_MODEL_PATH="${TRIM_APPDEST}/models/yolo11n.onnx"
 export NVR_AI_MODELS_DIR="${DATA_DIR}/models"
 export NVR_AI_CONF="0.20"
 export NVR_AI_CLASSES="person,car,truck,bicycle,motorcycle,bus,dog,cat"

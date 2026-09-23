@@ -62,7 +62,7 @@ RUN sed -i 's@deb.debian.org@mirrors.aliyun.com@g' /etc/apt/sources.list.d/debia
 # 注意：此文件已预下载到构建上下文 ai_models/ 目录，避免构建时拉取外部资源
 # （GitHub Releases 在国内构建环境中经常超时）。
 # models/ 被 .dockerignore 排除，所以放到 ai_models/ 下
-COPY ai_models/yolov8n.onnx /models/yolov8n.onnx
+COPY ai_models/*.onnx /models/
 
 WORKDIR /app
 COPY --from=build /out/cyannvr /app/cyannvr
@@ -74,7 +74,7 @@ ENV NVR_PORT=8080 \
     NVR_WEB=/app/dist \
     NVR_AI_DETECT_SCRIPT=/app/ai_detect.py \
     NVR_AI_DETECT_URL=unix:/tmp/cyannvr-ai.sock \
-    NVR_AI_MODEL_PATH=/models/yolov8n.onnx \
+    NVR_AI_MODEL_PATH=/models/yolo11n.onnx \
     NVR_AI_MODELS_DIR=/data/models \
     PYTHON=python3 \
     GIN_MODE=release

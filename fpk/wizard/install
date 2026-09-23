@@ -39,7 +39,7 @@
         "field": "wizard_datadir_mode",
         "label": "数据存放位置",
         "initValue": "default",
-        "helpText": "录像、快照、事件与数据库的存放位置。录像体积较大，建议放到容量充足的空间。",
+        "helpText": "录像、快照、事件与数据库的存放位置。录像体积较大，建议放到容量充足的空间。注意：升级/重装时本项即使显示为默认也不会覆盖已有数据目录，实际生效目录以保存结果提示为准。",
         "options": [
           { "label": "使用飞牛默认应用数据目录", "value": "default" },
           { "label": "自定义目录（在下方填写）", "value": "custom" }

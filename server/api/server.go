@@ -35,6 +35,7 @@ type Server struct {
 type AIConfig struct {
 	Enabled   bool    `json:"enabled"`
 	Mode      string  `json:"mode"` // "local" (on-device detect) | "openai" (vision API)
+	Provider  string   `json:"provider"` // 推理后端：auto|cpu|cuda|rocm|openvino|directml|tensorrt（重启生效）
 	BaseURL   string  `json:"baseUrl"`
 	DetectURL string  `json:"detectUrl"`
 	Model     string  `json:"model"`
@@ -97,6 +98,13 @@ func (s *Server) loadSettings() {
 		s.settings.AI.DetectURL = target
 		s.saveSettings()
 	}
+
+	// 默认检测模型升级：老配置里的出厂默认 yolov8n 切换为更准的 yolo11n
+	// （同为 nano 体积、速度同级、误报更少）；手动选过其他模型的不会命中。
+	if s.settings.AI.ModelPath == "yolov8n.onnx" {
+		s.settings.AI.ModelPath = "yolo11n.onnx"
+		s.saveSettings()
+	}
 }
 
 // isLegacyDetectURL 判断是否为旧版本遗留的本地 TCP 检测地址。
@@ -122,6 +130,7 @@ func defaultSettings() AppSettings {
 		AI: AIConfig{
 			Enabled:   false,
 			Mode:      "local",
+			Provider:  "auto",
 			BaseURL:   "http://localhost:11434/v1",
 			DetectURL: "http://localhost:11435",
 			Model:     "person-detection",

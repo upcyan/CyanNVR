@@ -93,6 +93,8 @@ export interface EventItem {
 export interface AIConfig {
   enabled: boolean
   mode: 'local' | 'openai'
+  /** 推理后端（auto=挑最快可用）；重启应用后生效 */
+  provider?: string
   baseUrl: string
   detectUrl: string
   model: string

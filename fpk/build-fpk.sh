@@ -240,8 +240,9 @@ fi
 # AI 检测脚本与预置模型
 [ -f "$PROJECT_ROOT/server/pkg/ai/ai_detect.py" ] && \
     cp "$PROJECT_ROOT/server/pkg/ai/ai_detect.py" "$APP_DIR/"
-[ -f "$PROJECT_ROOT/ai_models/yolov8n.onnx" ] && \
-    cp "$PROJECT_ROOT/ai_models/yolov8n.onnx" "$APP_DIR/models/"
+if compgen -G "$PROJECT_ROOT/ai_models/*.onnx" > /dev/null; then
+    cp "$PROJECT_ROOT"/ai_models/*.onnx "$APP_DIR/models/"
+fi
 
 # 权限归一：避免 Docker 产物带来的 000 权限
 chmod -R u+rwX "$APP_DIR"

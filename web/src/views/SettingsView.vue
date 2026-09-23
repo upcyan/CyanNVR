@@ -185,6 +185,27 @@ const aiBusy = ref('')
 const aiError = ref('')
 let aiRetryTimer: number | undefined
 
+/** 推理后端手动选择：auto 按可用性挑最快（本机有 CUDA 即 GPU）。 */
+const showProviderPicker = ref(false)
+const providerColumns = [
+  { text: '自动（最快可用，推荐）', value: 'auto' },
+  { text: 'CPU（软件推理）', value: 'cpu' },
+  { text: 'NVIDIA CUDA', value: 'cuda' },
+  { text: 'NVIDIA TensorRT（首次较慢）', value: 'tensorrt' },
+  { text: 'AMD ROCm', value: 'rocm' },
+  { text: 'Intel OpenVINO', value: 'openvino' },
+  { text: 'DirectML', value: 'directml' },
+]
+const providerLabel = computed(() => {
+  const v = s.ai.provider || 'auto'
+  return providerColumns.find((c) => c.value === v)?.text || v
+})
+function onProviderConfirm({ selectedValues }: { selectedValues: string[] }) {
+  store.set({ ai: { ...s.ai, provider: selectedValues[0] } })
+  showProviderPicker.value = false
+  showToast('已保存，重启应用后生效')
+}
+
 /** 推理后端展示名：把 EP 归一化标识换成用户看得懂的叫法。 */
 const backendLabel = computed(() => {
   const map: Record<string, string> = {
@@ -209,7 +230,10 @@ async function loadAIModels() {
     aiError.value = ''
     aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
     if (!s.ai.modelPath && aiModels.value.length) {
-      const def = aiModels.value.find(m => m.includes('yolov8n')) || aiModels.value[0]
+      const def =
+        aiModels.value.find(m => m.includes('yolo11n')) ||
+        aiModels.value.find(m => m.includes('yolov8n')) ||
+        aiModels.value[0]
       store.set({ ai: { ...s.ai, modelPath: def } })
     }
   } catch (e: any) {
@@ -515,14 +539,28 @@ async function removeUser(u: ManagedUser) {
             placeholder="unix:/tmp/cyannvr-ai.sock"
           />
           <van-cell title="通信方式" :label="aiTransportHint" />
-          <!-- 推理后端：让用户一眼看出当前是 CPU 还是 GPU 在推理 -->
-          <van-cell title="推理后端" :label="backendHint || '自动挑选本机可用的最快后端'">
+          <!-- 推理后端：点击手动切换（重启生效），标签显示当前选择 -->
+          <van-cell
+            title="推理后端"
+            is-link
+            :label="backendHint || `实际生效：${backendLabel} · 选择后重启应用生效`"
+            @click="showProviderPicker = true"
+          >
             <template #value>
               <span class="backend-tag" :class="'backend-' + (aiInfo.backend || 'none')">
-                {{ backendLabel }}
+                {{ providerLabel }}
               </span>
             </template>
           </van-cell>
+          <van-popup v-model:show="showProviderPicker" position="bottom" round>
+            <van-picker
+              title="推理后端"
+              :columns="providerColumns"
+              :model-value="[s.ai.provider || 'auto']"
+              @confirm="onProviderConfirm"
+              @cancel="showProviderPicker = false"
+            />
+          </van-popup>
           <van-field
             v-model="s.ai.modelPath"
             is-link
