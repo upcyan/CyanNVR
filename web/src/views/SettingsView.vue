@@ -33,10 +33,13 @@ const saving = ref(false)
 const retentionDaysText = ref(String(s.retentionDays || 30))
 const retentionSizeText = ref(String(s.retentionSizeGB ?? 0))
 const retentionPresets = [30, 90, 180, 365, 730, 1825, 3650]
+const showDaysPicker = ref(false)
+const daysColumns = retentionPresets.map((d) => ({ text: `${d} 天`, value: String(d) }))
 
-function setRetentionDays(d: number) {
-  retentionDaysText.value = String(d)
-  store.set({ retentionDays: d })
+function onDaysConfirm({ selectedValues }: { selectedValues: string[] }) {
+  retentionDaysText.value = selectedValues[0]
+  applyRetentionDays()
+  showDaysPicker.value = false
 }
 
 function applyRetentionDays() {
@@ -229,8 +232,20 @@ const backendLabel = computed(() => {
 })
 
 /** 发生了后端回退时给一句人话解释。 */
+// 实测结果卡片：把 backend_bench 字符串拆成按名次排列的行
+const benchRows = computed(() => {
+  const raw = aiInfo.value.backend_bench
+  if (!raw) return []
+  return raw
+    .split(' · ')
+    .map((p) => {
+      const t = p.trim().split(' ')
+      return { provider: t[0], detail: t.slice(1).join(' ') }
+    })
+    .filter((r) => r.provider)
+})
+
 const backendHint = computed(() => {
-  if (aiInfo.value.backend_bench) return `启动实测（快→慢）：${aiInfo.value.backend_bench}`
   if (aiInfo.value.backend_fallback) return `已回退：${aiInfo.value.backend_fallback}`
   if (aiError.value) return `${aiError.value}（依赖缺失时请安装 opencv-python-headless 与 onnxruntime 后重启应用，页面每 5 秒自动重试）`
   return ''
@@ -345,24 +360,75 @@ function openEditUser(u: ManagedUser) {
   showUserDialog.value = true
 }
 
-async function saveUser() {
+// 编辑模式拆成独立动作按钮：改名 / 改密码 即点即生效，
+// 避免「改完字段点 X 关闭等于没改」的歧义。
+async function renameUser() {
+  if (!editingUser.value) return
+  const nu = userForm.value.username.trim()
+  if (!nu) {
+    showToast('请填写用户名')
+    return
+  }
+  if (nu === editingUser.value.username) {
+    showToast('用户名没有变化')
+    return
+  }
   try {
-    if (editingUser.value) {
-      const patch: { password?: string; role?: string; username?: string } = { role: userForm.value.role }
-      if (userForm.value.password) patch.password = userForm.value.password
-      if (userForm.value.username && userForm.value.username !== editingUser.value.username) {
-        patch.username = userForm.value.username.trim()
-      }
-      await updateUser(editingUser.value.id, patch)
-      showToast('已更新')
-    } else {
-      if (!userForm.value.username || !userForm.value.password) {
-        showToast('请填写用户名和密码')
-        return
-      }
-      await createUser(userForm.value.username, userForm.value.password, userForm.value.role)
-      showToast('已创建')
+    await updateUser(editingUser.value.id, { username: nu, role: userForm.value.role })
+    showToast(`已改名为 ${nu}`)
+    editingUser.value = { ...editingUser.value, username: nu }
+    await loadUsers()
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '改名失败')
+  }
+}
+
+async function changeUserPassword() {
+  if (!editingUser.value) return
+  const pw = userForm.value.password
+  if (!pw || pw.length < 8) {
+    showToast('密码至少 8 个字符')
+    return
+  }
+  try {
+    await updateUser(editingUser.value.id, { password: pw, role: userForm.value.role })
+    showToast('密码已修改')
+    userForm.value.password = ''
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '修改密码失败')
+  }
+}
+
+// 角色：编辑模式下选择即保存（无需再点别的按钮）
+async function onRoleConfirm(v: { selectedOptions: Array<{ text: string; value: string }> }) {
+  const role = v.selectedOptions[0]?.value || 'user'
+  userForm.value.role = role
+  showRolePicker.value = false
+  if (editingUser.value && role !== editingUser.value.role) {
+    try {
+      await updateUser(editingUser.value.id, { role })
+      editingUser.value = { ...editingUser.value, role }
+      showToast('角色已更新')
+      await loadUsers()
+    } catch (e: any) {
+      showToast(e?.response?.data?.error || '角色更新失败')
     }
+  }
+}
+
+function closeUserDialog() {
+  showUserDialog.value = false
+}
+
+// 创建新用户（编辑动作全部走上面的独立按钮）
+async function saveUser() {
+  if (!userForm.value.username || !userForm.value.password) {
+    showToast('请填写用户名和密码')
+    return
+  }
+  try {
+    await createUser(userForm.value.username, userForm.value.password, userForm.value.role)
+    showToast('已创建')
     showUserDialog.value = false
     await loadUsers()
   } catch (e: any) {
@@ -405,9 +471,9 @@ async function removeUser(u: ManagedUser) {
           </div>
         </template>
       </van-cell>
-      <van-cell title="循环覆盖 · 保留天数" label="超过保留天数自动删除最早录像，可填 1-3650 天">
+      <van-cell title="循环覆盖 · 保留天数" label="超期自动删除最早录像；直接输入 1-3650 天，或点右侧箭头下拉选快捷档">
         <template #value>
-          <div class="slider-box">
+          <div class="days-combo">
             <van-field
               v-model="retentionDaysText"
               type="number"
@@ -417,25 +483,19 @@ async function removeUser(u: ManagedUser) {
               @blur="applyRetentionDays"
             />
             <span class="days">天</span>
+            <van-icon name="arrow-down" class="combo-arrow" @click="showDaysPicker = true" />
           </div>
         </template>
       </van-cell>
-      <van-cell title="快捷档位" label="点击即生效">
-        <template #value>
-          <div class="days-chips">
-            <van-tag
-              v-for="d in retentionPresets"
-              :key="d"
-              type="primary"
-              plain
-              :class="{ active: String(d) === retentionDaysText }"
-              @click="setRetentionDays(d)"
-            >
-              {{ d }} 天
-            </van-tag>
-          </div>
-        </template>
-      </van-cell>
+      <van-popup v-model:show="showDaysPicker" position="bottom" round>
+        <van-picker
+          title="循环覆盖保留天数"
+          :columns="daysColumns"
+          :model-value="[retentionDaysText]"
+          @confirm="onDaysConfirm"
+          @cancel="showDaysPicker = false"
+        />
+      </van-popup>
       <van-cell title="循环覆盖 · 容量限额" label="所有摄像头录像合计的磁盘上限，超出后优先删除最旧的录像；0 = 不限制">
         <template #value>
           <div class="slider-box">
@@ -574,6 +634,17 @@ async function removeUser(u: ManagedUser) {
               @cancel="showProviderPicker = false"
             />
           </van-popup>
+          <!-- 实测档：启动基准的完整结果，按名次（均值）排列 -->
+          <div v-if="benchRows.length" class="bench-card">
+            <div class="bench-title">实测结果（启动时自动执行 · 按均值排名）</div>
+            <div class="bench-row" v-for="(b, i) in benchRows" :key="b.provider">
+              <span class="bench-rank" :class="{ win: i === 0 }">{{ i + 1 }}</span>
+              <span class="bench-name">{{ b.provider }}</span>
+              <span class="bench-detail mono">{{ b.detail }}</span>
+              <van-tag v-if="i === 0" type="primary" size="small">最快</van-tag>
+            </div>
+            <div class="bench-note">均=平均毫秒/帧 · 峰=峰值 · 首帧=冷启动 · Δ=与CPU基准偏差（&lt;1 合格） · +MB=内存增量</div>
+          </div>
           <van-field
             v-model="s.ai.modelPath"
             is-link
@@ -669,7 +740,7 @@ async function removeUser(u: ManagedUser) {
           v-for="u in users"
           :key="u.id"
           :title="u.username"
-          :label="roleOptions.find((r) => r.value === u.role)?.label || u.role"
+          :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · ID ' + u.id.slice(0, 8)"
         >
           <template #right-icon>
             <van-icon name="edit-o" class="user-action" @click="openEditUser(u)" />
@@ -734,6 +805,13 @@ async function removeUser(u: ManagedUser) {
       </div>
       <van-cell-group inset style="margin: 0 10px">
         <van-field
+          v-if="editingUser"
+          label="用户ID"
+          :model-value="editingUser.id"
+          disabled
+          class="uid-field"
+        />
+        <van-field
           v-model="userForm.username"
           label="用户名"
           placeholder="请输入用户名"
@@ -741,20 +819,26 @@ async function removeUser(u: ManagedUser) {
         <van-field
           v-model="userForm.password"
           type="password"
-          :label="editingUser ? '新密码（留空不改）' : '密码'"
-          :placeholder="editingUser ? '留空则不修改' : '请输入密码'"
+          label="密码"
+          :placeholder="editingUser ? '至少 8 位，点下方按钮生效' : '请输入密码'"
         />
         <van-field label="角色" :model-value="roleOptions.find((r) => r.value === userForm.role)?.label" is-link @click="showRolePicker = true" />
       </van-cell-group>
-      <div style="padding: 16px">
-        <van-button type="primary" block round @click="saveUser">保存</van-button>
+      <div class="dialog-actions">
+        <template v-if="editingUser">
+          <van-button type="primary" block round @click="renameUser">改名</van-button>
+          <van-button type="warning" plain block round @click="changeUserPassword">修改密码</van-button>
+          <van-button plain block round @click="closeUserDialog">完成（角色已随选择即时保存）</van-button>
+        </template>
+        <van-button v-else type="primary" block round @click="saveUser">创建用户</van-button>
       </div>
+      <div v-if="editingUser" class="uid-note">用户ID 全局唯一且不随改名变化，事件与会话都以它识别身份</div>
     </van-popup>
 
     <van-popup v-model:show="showRolePicker" position="bottom" round>
       <van-picker
         :columns="roleOptions.map((r) => ({ text: r.label, value: r.value }))"
-        @confirm="(v: { selectedOptions: Array<{ text: string; value: string }> }) => { userForm.role = v.selectedOptions[0]?.value || 'user'; showRolePicker = false }"
+        @confirm="onRoleConfirm"
         @cancel="showRolePicker = false"
       />
     </van-popup>
@@ -807,33 +891,87 @@ async function removeUser(u: ManagedUser) {
   text-align: right;
   font-weight: 600;
 }
-/* 快捷档位：4 列网格 + 胶囊按钮，选中态填色加投影 */
-.days-chips {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(52px, auto));
-  gap: 6px;
-  justify-content: end;
+/* 循环覆盖：输入框 + 下拉箭头融合控件 */
+.days-combo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.days-chips :deep(.van-tag) {
-  height: 28px;
-  min-width: 52px;
-  padding: 0 8px;
-  border-radius: 14px;
+.combo-arrow {
+  padding: 6px 2px;
+  font-size: 14px;
+  color: var(--nvr-text-2);
+}
+/* 推理后端实测结果卡片 */
+.bench-card {
+  margin: 8px 16px 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+}
+.bench-title {
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  margin-bottom: 6px;
+}
+.bench-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.bench-rank {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  border: 1px solid var(--nvr-border);
-  background: var(--nvr-panel-2);
+  font-size: 11px;
+  background: var(--nvr-border);
   color: var(--nvr-text-2);
-  transition: all .15s ease;
+  flex-shrink: 0;
 }
-.days-chips :deep(.van-tag.active) {
+.bench-rank.win {
   background: var(--nvr-accent);
-  border-color: var(--nvr-accent);
   color: #fff;
+}
+.bench-name {
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, .3);
+  min-width: 48px;
+}
+.bench-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bench-note {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--nvr-text-2);
+  opacity: .8;
+}
+/* 对话框按钮区与 UID 展示 */
+.dialog-actions {
+  padding: 16px;
+}
+.dialog-actions > * + * {
+  margin-top: 10px;
+}
+.uid-field :deep(.van-field__control) {
+  font-family: monospace;
+  font-size: 12px;
+}
+.uid-note {
+  padding: 0 26px 16px;
+  font-size: 11px;
+  color: var(--nvr-text-2);
 }
 .slider-box {
   display: flex;
