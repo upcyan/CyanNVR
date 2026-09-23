@@ -87,6 +87,20 @@ function goPlayback() {
     emit('playback', props.device)
   }
 }
+const isFullscreen = ref(false)
+function toggleFullscreen() {
+  const root = document.documentElement
+  if (!document.fullscreenElement) {
+    root.requestFullscreen?.().catch(() => {})
+  } else {
+    document.exitFullscreen?.().catch(() => {})
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('fullscreenchange', () => {
+    isFullscreen.value = !!document.fullscreenElement
+  })
+}
 </script>
 
 <template>
@@ -119,6 +133,10 @@ function goPlayback() {
         <button class="vbtn" @click="goPlayback">
           <van-icon name="clock-o" size="20" />
           <span>回放</span>
+        </button>
+        <button class="vbtn" @click="toggleFullscreen">
+          <van-icon :name="isFullscreen ? 'shrink-o' : 'expand-o'" size="20" />
+          <span>{{ isFullscreen ? '退出全屏' : '全屏' }}</span>
         </button>
       </div>
     </div>

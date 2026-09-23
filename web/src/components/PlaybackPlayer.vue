@@ -50,7 +50,10 @@ const speeds = [1, 2, 4, 8]
     </div>
 
     <div v-if="hasStream" class="topbar">
-      <span class="rec" :class="{ on: playing }"><i />REC</span>
+      <span class="rec" :class="{ on: playing }">
+        <van-icon :name="playing ? 'pause-circle-o' : 'play-circle-o'" size="16" />
+        {{ playing ? '播放中' : '已暂停' }}
+      </span>
       <span class="time mono">{{ fmt(displayTime) }}</span>
     </div>
 
@@ -125,15 +128,14 @@ const speeds = [1, 2, 4, 8]
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
 }
-.rec.on i {
-  background: var(--nvr-red);
-  box-shadow: 0 0 6px var(--nvr-red);
-  animation: blink 1.2s infinite;
+.rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--nvr-amber);
 }
-@keyframes blink {
-  50% {
-    opacity: 0.35;
-  }
+.rec.on {
+  color: var(--nvr-accent);
 }
 .time {
   font-size: 12px;

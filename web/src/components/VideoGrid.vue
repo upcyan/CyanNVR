@@ -18,6 +18,11 @@ const nRows = computed(() => {
   if (props.cols && props.cols > 0) return Math.max(1, Math.ceil(props.devices.length / props.cols))
   return nCols.value
 })
+// 单元格最小高度：cols=1 时给一个固定高度让画面不至于被压扁
+const cellMinHeight = computed(() => {
+  if (!props.cols || props.cols <= 1) return '36vh'
+  return 'auto'
+})
 </script>
 
 <template>
@@ -27,6 +32,7 @@ const nRows = computed(() => {
       gridTemplateColumns: `repeat(${nCols}, 1fr)`,
       gridTemplateRows: `repeat(${nRows}, 1fr)`,
     }"
+    :class="{ 'grid-single': props.cols === 1 }"
   >
     <GridCell
       v-for="d in devices"
@@ -46,5 +52,9 @@ const nRows = computed(() => {
   gap: 6px;
   padding: 10px;
   overflow-y: auto;
+}
+/* cols=1 单列时，让每行有合理高度，画面不会被拉伸到异常形状 */
+.grid-single :deep(.cell) {
+  min-height: 36vh;
 }
 </style>

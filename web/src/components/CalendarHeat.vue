@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { DayRecord } from '../types'
 
 const props = defineProps<{
@@ -10,10 +10,25 @@ const emit = defineEmits<{ (e: 'select', date: string): void }>()
 
 type Cell = { day: number; date: string; duration: number; has: boolean } | null
 
+// 视图内的年月：父组件 selected 决定初始值；用户在本组件内左右切月后同步给父级
+const view = ref({
+  y: Number(props.selected.slice(0, 4)),
+  m: Number(props.selected.slice(5, 7)) - 1,
+})
+watch(
+  () => props.selected,
+  (v) => {
+    view.value = {
+      y: Number(v.slice(0, 4)),
+      m: Number(v.slice(5, 7)) - 1,
+    }
+  },
+)
+
+const ymText = computed(() => `${view.value.y}年${view.value.m + 1}月`)
 const cells = computed<Cell[]>(() => {
-  // 日历月份由当前选中日期决定；没有录像数据时也应显示完整日期。
-  const y = Number(props.selected.slice(0, 4))
-  const m = Number(props.selected.slice(5, 7)) - 1
+  const y = view.value.y
+  const m = view.value.m
   const dim = new Date(y, m + 1, 0).getDate()
   const startDow = (new Date(y, m, 1).getDay() + 6) % 7
   const map = new Map(props.days.map((d) => [d.date, d]))
@@ -32,6 +47,17 @@ const cells = computed<Cell[]>(() => {
   return out
 })
 
+function shiftMonth(delta: number) {
+  const d = new Date(view.value.y, view.value.m + delta, 1)
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+  emit('select', date)
+}
+function goToday() {
+  const d = new Date()
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  emit('select', date)
+}
+
 function bg(c: NonNullable<Cell>) {
   if (!c.has) return 'transparent'
   const a = 0.16 + Math.min(c.duration, 300) / 300 * 0.5
@@ -41,6 +67,12 @@ function bg(c: NonNullable<Cell>) {
 
 <template>
   <div class="calendar">
+    <div class="cal-head">
+      <van-icon name="arrow-left" size="18" class="cal-nav" @click="shiftMonth(-1)" />
+      <span class="cal-ym">{{ ymText }}</span>
+      <van-icon name="arrow" size="18" class="cal-nav" @click="shiftMonth(1)" />
+      <button class="cal-today" @click="goToday">今日</button>
+    </div>
     <div class="week">
       <span v-for="w in ['一', '二', '三', '四', '五', '六', '日']" :key="w">{{ w }}</span>
     </div>
@@ -72,6 +104,53 @@ function bg(c: NonNullable<Cell>) {
 <style scoped>
 .calendar {
   padding: 10px 12px;
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 8px;
+}
+.cal-nav {
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text-2);
+  cursor: pointer;
+}
+.cal-nav:active {
+  background: rgba(46, 168, 255, 0.18);
+  color: var(--nvr-accent);
+}
+.cal-ym {
+  flex: 1;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+.cal-today {
+  border: none;
+  background: var(--nvr-panel-2);
+  color: var(--nvr-accent);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cal-today:active {
+  opacity: 0.7;
+}
+/* 关怀模式：月份切换按钮放大 */
+:global(body.care) .calendar .cal-ym {
+  font-size: 18px;
+}
+:global(body.care) .calendar .cal-today {
+  font-size: 14px;
+  padding: 7px 16px;
+}
+:global(body.care) .calendar .cal-nav {
+  font-size: 22px;
+  padding: 8px;
 }
 .week {
   display: grid;

@@ -373,10 +373,8 @@ body.care .font-opt {
 body.care .font-opt.on {
   border-color: var(--nvr-accent);
 }
-body.care .cam-card {
-  padding: 16px;
-  border-radius: 12px;
-}
+/* 注意：不要给 .cam-card 加 padding —— 卡片内 video 用 inset:0 充满整个 box，
+   加 padding 会让视频溢出 padding 区。care 模式下通过放大内部控件来改善触达即可。 */
 body.care .cam-card .name {
   font-size: 20px;
   font-weight: 600;
@@ -480,6 +478,25 @@ body.care .settings-page .bar {
 }
 body.care .settings-page .van-radio-group .van-cell {
   padding: 16px;
+}
+/* 关怀模式下：用户行右侧圆形按钮（编辑/删除）从30×30放大到44×44，方便长辈点击 */
+body.care .settings-page .ua-btn {
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+body.care .settings-page .ua-btns {
+  gap: 12px;
+}
+/* 关怀模式下："修改我的密码"行的 lock 图标字号与 cell 标题统一 */
+body.care .settings-page .user-action.lock {
+  font-size: 22px;
+}
+/* 关怀模式下：底部"关于版本"长串文字可读 */
+body.care .settings-page .about-version {
+  font-size: 14px;
+  padding: 8px 12px;
+  line-height: 1.6;
 }
 
 @media (max-width: 360px) {
