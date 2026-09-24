@@ -238,6 +238,35 @@ if [ -f "$SCRIPT_DIR/gen-icons.py" ]; then
 fi
 [ -f "$SCRIPT_DIR/ICON.PNG" ] && [ -f "$SCRIPT_DIR/ICON_256.PNG" ] || error "缺少 ICON.PNG / ICON_256.PNG"
 
+# ── 0.5 代码格式检查 ──
+# 为什么放在打包流程里：仓库没有 CI，格式漂移只能靠「打包」这个必经步骤拦住。
+# 历史问题：多处结构体/常量块在增删字段后没重排对齐，gofmt -l 长期有输出，
+# 既干扰 git diff 评审，也让「格式是否干净」失去信号价值。
+#
+# 本机通常没有 Go 工具链（见 AGENTS.md），此时借用 Docker 镜像里的 gofmt；
+# 两者都不可用则只警告不阻断（不能因为环境缺工具就无法出包）。
+check_gofmt() {
+    local out=""
+    if command -v gofmt &>/dev/null; then
+        out=$(cd "$PROJECT_ROOT/server" && gofmt -l . 2>/dev/null)
+    elif command -v docker &>/dev/null; then
+        out=$(docker run --rm -v "$PROJECT_ROOT/server:/src" -w /src \
+            hub.rat.dev/library/golang:1.25-alpine gofmt -l . 2>/dev/null)
+    else
+        warn "未找到 gofmt 也无 Docker，跳过代码格式检查"
+        return 0
+    fi
+    if [ -n "$out" ]; then
+        warn "以下文件不符合 gofmt（建议修复后再打包）："
+        echo "$out" | sed 's/^/    /'
+        warn "修复：cd server && gofmt -w <上述文件>"
+        # 只警告不阻断：格式问题不该阻塞发版，但必须显式可见
+    else
+        info "代码格式检查通过（gofmt 无差异）"
+    fi
+}
+check_gofmt
+
 # ── 1. 前端 ──
 # 关键：必须使用「新鲜」的前端产物，否则会把修复前的旧界面打进 FPK。
 # Docker 构建在容器内执行 npm run build，不会回写主机的 web/dist，

@@ -18,7 +18,7 @@ import (
 // Runner 管理 CyanNVR 的 HTTPS 监听：
 //   - manual 模式：使用 data/tls/cert.pem + key.pem（网页端手动上传）
 //   - auto   模式：ACME 自动申请（Let's Encrypt），HTTP-01 走 80 端口，
-//                  80 不可用时退回 TLS-ALPN-01（仅需 443 可达）
+//     80 不可用时退回 TLS-ALPN-01（仅需 443 可达）
 //
 // HTTP 主服务（默认 8080）始终独立运行，HTTPS 的启停不影响局域网访问。
 type Runner struct {

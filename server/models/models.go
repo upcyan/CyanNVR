@@ -5,9 +5,9 @@ import "time"
 type Role string
 
 const (
-	RoleAdmin   Role = "admin"
-	RoleUser    Role = "user"
-	RoleViewer  Role = "viewer"
+	RoleAdmin    Role = "admin"
+	RoleUser     Role = "user"
+	RoleViewer   Role = "viewer"
 	RoleOperator Role = "operator"
 )
 
@@ -101,15 +101,15 @@ const (
 )
 
 type Event struct {
-	ID         string    `json:"id"`
-	DeviceID   string    `json:"deviceId"`
-	DeviceName string    `json:"deviceName"`
-	Type       EventType `json:"type"`
-	Label      string    `json:"label"`
-	Desc       string    `json:"description"`
-	Time       time.Time `json:"time"`
-	Snapshot   string    `json:"snapshot,omitempty"`
-	GIF        string    `json:"gif,omitempty"`
+	ID         string     `json:"id"`
+	DeviceID   string     `json:"deviceId"`
+	DeviceName string     `json:"deviceName"`
+	Type       EventType  `json:"type"`
+	Label      string     `json:"label"`
+	Desc       string     `json:"description"`
+	Time       time.Time  `json:"time"`
+	Snapshot   string     `json:"snapshot,omitempty"`
+	GIF        string     `json:"gif,omitempty"`
 	VideoStart *time.Time `json:"videoStart,omitempty"`
 	VideoEnd   *time.Time `json:"videoEnd,omitempty"`
 }

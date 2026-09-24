@@ -217,10 +217,10 @@ type encCandidate struct {
 // pickBest 对候选编码器做基准测试，返回最优者与可读的对比报告。
 //
 // 评分原则（NVR 场景）：
-//   1. 吞吐必须达标（≥ NVR_MIN_THROUGHPUT 倍实时，默认 1.2x），否则转码跟不上录像
-//   2. 达标者中优先选择 CPU 占用最低的 —— CPU 是 NVR 的稀缺资源
-//      （还需承载 AI 检测、快照、预览等）
-//   3. 若全部不达标，退而选吞吐最高者，并在日志中说明
+//  1. 吞吐必须达标（≥ NVR_MIN_THROUGHPUT 倍实时，默认 1.2x），否则转码跟不上录像
+//  2. 达标者中优先选择 CPU 占用最低的 —— CPU 是 NVR 的稀缺资源
+//     （还需承载 AI 检测、快照、预览等）
+//  3. 若全部不达标，退而选吞吐最高者，并在日志中说明
 func pickBest(ffmpegPath string, cands []encCandidate, minRT float64) (encCandidate, string) {
 	results := make([]benchResult, 0, len(cands))
 	for _, c := range cands {

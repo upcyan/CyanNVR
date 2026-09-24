@@ -121,12 +121,12 @@ func main() {
 		}
 	}
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           router,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      120 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+		Addr:           addr,
+		Handler:        router,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   120 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 	// HTTP 放 goroutine，主线程等信号——否则 fnOS 停止/升级发来 SIGTERM 时，
 	// Go 运行时默认行为是「立即退出、跳过所有 defer」，rec.Stop() 永远不执行，
