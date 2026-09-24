@@ -36,30 +36,46 @@ info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# ── 版本解析 ──
-# 版本分离：核心版本 x.y.z 来自 server/version.go，
-# FPK 修订号 r 由本脚本自动 +1，最终 fpk 版本为 x.y.z-r
+# ── 版本解析与自动 bump ──
+# 版本分离：核心版本 x.y.z 写入 server/version.go，
+# FPK 修订号 r 由本脚本维护，最终 fpk 版本为 x.y.z-r
 # （fnOS 只接受 x.y.z[-r]，四段式 x.y.z.r 会被拒绝）。
 #
+# 自动 bump 规则（依据「自上次打包以来变了什么」）：
+#   只动 fpk/            -> patch +1   （改向导、图标、生命周期脚本等）
+#   动了 server/、web/   -> minor +1   （功能或修复改动）
+#   大改动               -> 用 --bump=major 手动指定第一位 +1
+#   没有任何改动         -> 核心版本不变，只递增修订号 r 重新出包
+#
+# 判定依据是源码内容哈希（存在 version.env），不依赖 git 状态，
+# 因此在未提交的工作区上也能正确判断。
+#
 # 参数：
-#   --revision N   指定修订号（默认自动 +1）
-#   --no-bump      沿用当前修订号，不递增（用于重出同一个包）
-BUMP=1
+#   --bump=auto|major|minor|patch|none   核心版本处理方式（默认 auto）
+#   --revision N   指定 FPK 修订号（默认自动 +1）
+#   --no-bump      修订号也不递增（用于原样重出同一个包）
+BUMP_MODE="auto"
+REV_BUMP=1
 FORCE_REV=""
 for arg in "$@"; do
     case "$arg" in
-        --no-bump) BUMP=0 ;;
+        --no-bump) REV_BUMP=0 ;;
         --revision=*) FORCE_REV="${arg#*=}" ;;
+        --bump=*) BUMP_MODE="${arg#*=}" ;;
         -h|--help)
-            echo "用法: $0 [--no-bump] [--revision=N]"
-            echo "  默认每次打包自动把 FPK 修订号 +1"
+            echo "用法: $0 [--bump=auto|major|minor|patch|none] [--revision=N] [--no-bump]"
+            echo "  默认按源码变更范围自动决定核心版本，并递增 FPK 修订号"
             exit 0
             ;;
         *) error "未知参数: $arg" ;;
     esac
 done
+case "$BUMP_MODE" in
+    auto|major|minor|patch|none) ;;
+    *) error "--bump 只接受 auto|major|minor|patch|none，当前为 \"$BUMP_MODE\"" ;;
+esac
 
-# 从 server/version.go 读取核心版本（单一真相源）
+# 从 server/version.go 读取核心版本（写入目标，自动 bump 会就地更新它）
 VERSION_GO="$PROJECT_ROOT/server/version.go"
 [ -f "$VERSION_GO" ] || error "找不到 $VERSION_GO"
 CORE_VERSION=$(sed -n 's/^const CoreVersion = "\(.*\)"$/\1/p' "$VERSION_GO" | head -1)
@@ -67,25 +83,101 @@ CORE_VERSION=$(sed -n 's/^const CoreVersion = "\(.*\)"$/\1/p' "$VERSION_GO" | he
 echo "$CORE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || \
     error "CoreVersion 必须是 x.y.z 形式，当前为 \"$CORE_VERSION\""
 
-# 读取/初始化 FPK 修订号
+semver_bump() {
+    local v="$1" part="$2" maj min pat
+    IFS=. read -r maj min pat <<< "$v"
+    case "$part" in
+        major) echo "$((maj + 1)).0.0" ;;
+        minor) echo "${maj}.$((min + 1)).0" ;;
+        patch) echo "${maj}.${min}.$((pat + 1))" ;;
+    esac
+}
+
+# ── 源码内容哈希（判定变更范围）──
+# 用 git 跟踪列表取「源码」：.gitignore 已经把 app/cyannvr、app/dist、
+# manifest、package/、*.fpk、version.env 等构建产物排除在外，
+# 因此这里天然只覆盖真正的源文件（含 fpk/app/ui 这类手工维护的资源）。
+# version.go 由本脚本改写，必须排除，否则每次打包都会自我触发 minor bump。
+source_hash() {
+    local pathspec="$1"
+    {
+        git -C "$PROJECT_ROOT" ls-files -z -- $pathspec 2>/dev/null |
+            grep -zv '^server/version\.go$' |
+            tr '\0' '\n'
+    } | sort | while IFS= read -r f; do
+        [ -f "$PROJECT_ROOT/$f" ] && printf '%s  %s\n' "$(sha256sum "$PROJECT_ROOT/$f" | cut -c1-16)" "$f"
+    done | sha256sum | cut -c1-16
+}
+
+CORE_NOW=$(source_hash "server web Dockerfile")
+FPK_NOW=$(source_hash "fpk")
+[ -n "$CORE_NOW" ] || error "无法计算核心源码哈希（git 仓库状态异常？）"
+
+# 读取上次打包的状态
 FPK_REVISION=0
 FPK_REVISION_BASE=""
+
 if [ -f "$VERSION_ENV" ]; then
     # shellcheck disable=SC1090
     . "$VERSION_ENV"
 fi
 
+# 决定新的核心版本
+NEW_CORE="$CORE_VERSION"
+case "$BUMP_MODE" in
+    none)
+        info "核心版本保持不变（--bump=none）：$CORE_VERSION"
+        ;;
+    major|minor|patch)
+        NEW_CORE=$(semver_bump "$CORE_VERSION" "$BUMP_MODE")
+        info "按 --bump=$BUMP_MODE 提升核心版本：$CORE_VERSION -> $NEW_CORE"
+        ;;
+    auto)
+        if [ -z "$CORE_HASH" ]; then
+            warn "首次运行（无源码基线）：记录基线，核心版本保持 $CORE_VERSION"
+        elif [ "$CORE_NOW" != "$CORE_HASH" ]; then
+            NEW_CORE=$(semver_bump "$CORE_VERSION" minor)
+            info "检测到核心源码（server/、web/）变更 -> 核心版本 $CORE_VERSION -> $NEW_CORE"
+        elif [ "$FPK_NOW" != "$FPK_HASH" ]; then
+            NEW_CORE=$(semver_bump "$CORE_VERSION" patch)
+            info "仅 fpk/ 打包相关变更 -> 核心版本 $CORE_VERSION -> $NEW_CORE"
+        else
+            info "源码无变化 -> 核心版本保持 $CORE_VERSION（复用同一个核心版本重新出包）"
+        fi
+        ;;
+esac
+
+# 写回 version.go（核心版本的单一真相源）
+CORE_CHANGED=0
+if [ "$NEW_CORE" != "$CORE_VERSION" ]; then
+    CORE_CHANGED=1
+    # sed -i 需要往同目录写临时文件；目录不可写时的报错很晦涩
+    # （"couldn't open temporary file ... Permission denied"），这里先给出可操作的提示。
+    if [ ! -w "$(dirname "$VERSION_GO")" ]; then
+        error "$(dirname "$VERSION_GO") 目录不可写，无法更新 CoreVersion。
+  修复：sudo chown \$(id -un):\$(id -gn) $(dirname "$VERSION_GO") && chmod u+w $(dirname "$VERSION_GO")"
+    fi
+    sed -i "s|^const CoreVersion = \".*\"\$|const CoreVersion = \"${NEW_CORE}\"|" "$VERSION_GO"
+    grep -q "^const CoreVersion = \"${NEW_CORE}\"\$" "$VERSION_GO" || \
+        error "写入 $VERSION_GO 失败"
+    CORE_VERSION="$NEW_CORE"
+    info "已更新 server/version.go: CoreVersion = \"$CORE_VERSION\""
+fi
+
 # 核心版本变化 -> 修订号归零，重新从 1 开始
 if [ "$FPK_REVISION_BASE" != "$CORE_VERSION" ]; then
-    info "核心版本变化 (${FPK_REVISION_BASE:-无} -> $CORE_VERSION)，FPK 修订号重置为 1"
+    [ "$FPK_REVISION_BASE" != "" ] && \
+        info "核心版本变化 (${FPK_REVISION_BASE} -> $CORE_VERSION)，FPK 修订号重置为 1"
     FPK_REVISION=0
     FPK_REVISION_BASE="$CORE_VERSION"
+    REV_BUMP=0   # 下面直接置 1，不再叠加
+    FPK_REVISION=1
 fi
 
 if [ -n "$FORCE_REV" ]; then
     echo "$FORCE_REV" | grep -qE '^[0-9]+$' || error "--revision 必须是整数"
     FPK_REVISION="$FORCE_REV"
-elif [ "$BUMP" = "1" ]; then
+elif [ "$REV_BUMP" = "1" ]; then
     FPK_REVISION=$((FPK_REVISION + 1))
 fi
 
@@ -93,18 +185,21 @@ fi
 
 VERSION="${CORE_VERSION}-${FPK_REVISION}"
 
-# 写回修订号（--no-bump 也写回，保证 BASE 被记录）
+# 写回状态（哈希在 version.go 更新之后重算，作为下次比对的基线）
 cat > "$VERSION_ENV" <<EOF
 # CyanNVR FPK 打包版本配置（由 build-fpk.sh 自动维护，请勿手工编辑）
 #
-# 核心版本（x.y.z）定义在 server/version.go 的 CoreVersion。
-# 下面的 FPK_REVISION 是打包修订号，每次打包自动 +1；
-# 核心版本变化时自动重置为 1。
+# CORE_VERSION 与 server/version.go 的 CoreVersion 同步；
+# 本脚本按源码变更范围自动 bump（只动 fpk/ → patch，动核心 → minor），
+# FPK_REVISION 是同一核心版本下的重新出包计数。
 #
 # 完整 fpk 版本 = \${CORE_VERSION}-\${FPK_REVISION}，例如 ${CORE_VERSION}-${FPK_REVISION}
 
+CORE_VERSION=${CORE_VERSION}
 FPK_REVISION=${FPK_REVISION}
 FPK_REVISION_BASE=${FPK_REVISION_BASE}
+CORE_HASH=$(source_hash "server web Dockerfile")
+FPK_HASH=$(source_hash "fpk")
 EOF
 
 # 定位 fnpack
