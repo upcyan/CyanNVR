@@ -77,10 +77,12 @@ export async function fetchDevices(): Promise<Device[]> {
   return (data.devices ?? []) as Device[]
 }
 
-export async function addDevice(input: Partial<Device>): Promise<Device> {
+export async function addDevice(input: Partial<Device>, opts?: { force?: boolean }): Promise<Device> {
   if (isDemoMode()) return mock.addDevice(input)
   if (!backendOk) return mock.addDevice(input)
-  const { data } = await http.post('/api/devices', input)
+  const { data } = await http.post('/api/devices', input, {
+    params: opts?.force ? { force: 'true' } : undefined,
+  })
   return data.device as Device
 }
 
@@ -89,13 +91,30 @@ export async function removeDevice(id: string): Promise<void> {
   await http.delete(`/api/devices/${id}`)
 }
 
-export async function updateDevice(id: string, input: Partial<Device>): Promise<Device> {
+export async function updateDevice(id: string, input: Partial<Device>, opts?: { force?: boolean }): Promise<Device> {
   if (isDemoMode()) return mock.updateDevice(id, input)
-  const { data } = await http.put(`/api/devices/${id}`, input)
+  const { data } = await http.put(`/api/devices/${id}`, input, {
+    params: opts?.force ? { force: 'true' } : undefined,
+  })
   return data.device as Device
 }
 
-export async function testDevice(input: { ip: string; port: number; username?: string; password?: string; rtspUrl?: string }): Promise<{ ok: boolean; url?: string; error?: string }> {
+export interface TestResult {
+  ok: boolean
+  url?: string
+  error?: string
+  /** ffmpeg 探测到的视频编码，如 h264 / hevc */
+  codec?: string
+  /** 分辨率，探测成功时给出 */
+  width?: number
+  height?: number
+  /** true = 该码流是 H.265，浏览器无法直接播放 */
+  h265?: boolean
+  /** 非 H.264 时的引导文案（后端下发，含具体编码与修改路径） */
+  advice?: string
+}
+
+export async function testDevice(input: { ip: string; port: number; username?: string; password?: string; rtspUrl?: string }): Promise<TestResult> {
   const { data } = await http.post('/api/devices/test', input)
   return data
 }
@@ -103,6 +122,36 @@ export async function testDevice(input: { ip: string; port: number; username?: s
 export async function probeStreams(input: { ip: string; port: number; username?: string; password?: string }): Promise<Stream[]> {
   const { data } = await http.post('/api/devices/streams', input)
   return (data.streams ?? []) as Stream[]
+}
+
+// ---- 品牌 RTSP 模板（按品牌+通道号拼地址，接 NVR 通道免手算） ----
+
+export interface BrandTemplate {
+  id: string
+  name: string
+  needCh?: boolean
+  chHint?: string
+  mainPath?: string
+  subPath?: string
+  note?: string
+}
+
+export async function fetchBrands(): Promise<BrandTemplate[]> {
+  const { data } = await http.get('/api/devices/brands')
+  return (data.brands ?? []) as BrandTemplate[]
+}
+
+/** 按品牌+通道号生成主/子码流地址（auto/custom 返回空，由调用方自行处理） */
+export async function buildBrandUrl(input: {
+  brand: string
+  ip: string
+  port?: number
+  username?: string
+  password?: string
+  channel?: number
+}): Promise<{ main: string; sub: string }> {
+  const { data } = await http.post('/api/devices/rtsp-url', input)
+  return { main: data.main ?? '', sub: data.sub ?? '' }
 }
 
 export async function discoverDevices(): Promise<DiscoveredDevice[]> {
@@ -121,11 +170,45 @@ export function liveStreamUrl(id: string): string {
 export interface StorageInfo {
   totalGB: number
   usedGB: number
+  /** 剩余可用空间（GB），用于水位提示 */
+  freeGB: number
+}
+
+/** 运行状态总览（设置页「运行状态」用）：资源占用 / 磁盘水位 / 进程概况 */
+export interface StatusInfo {
+  version: string
+  serverTime: string
+  disk?: {
+    totalGB: number
+    usedGB: number
+    freeGB: number
+    usedPct: number
+    path: string
+    minFreeMB: number
+    low: boolean
+  }
+  process?: {
+    goroutines?: number
+    memMB?: number
+    cpuPercent?: number
+    uptimeSec?: number
+  }
+  devices?: { total: number; online: number; recording: number }
+  ffmpeg?: { total: number; workers: number }
+}
+
+export async function fetchStatus(): Promise<StatusInfo> {
+  const { data } = await http.get('/api/status')
+  return data as StatusInfo
 }
 
 export async function fetchStorageInfo(): Promise<StorageInfo> {
   const { data } = await http.get('/api/storage')
-  return { totalGB: data.totalGB ?? 0, usedGB: data.usedGB ?? 0 }
+  return {
+    totalGB: data.totalGB ?? 0,
+    usedGB: data.usedGB ?? 0,
+    freeGB: data.freeGB ?? Math.max(0, (data.totalGB ?? 0) - (data.usedGB ?? 0)),
+  }
 }
 
 // ---- recordings ----

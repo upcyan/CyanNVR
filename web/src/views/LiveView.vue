@@ -72,16 +72,47 @@ async function onActionSelect(action: { name: string }) {
   }
 }
 
-async function onAdd(input: Partial<Device>) {
-  if (editingDevice.value) {
-    await store.update(editingDevice.value.id, input)
-    showToast('设备已更新')
-  } else {
-    await store.add(input)
-    showToast('设备已添加')
+async function onAdd(input: Partial<Device>, force = false) {
+  try {
+    if (editingDevice.value) {
+      await store.update(editingDevice.value.id, input, { force })
+      showToast('设备已更新')
+    } else {
+      await store.add(input, { force })
+      showToast('设备已添加')
+    }
+    showAdd.value = false
+    editingDevice.value = null
+  } catch (err: any) {
+    // 后端 409 = 疑似重复添加（同 IP/RTSP 已存在），弹二次确认后带 force 重试
+    if (err?.response?.status === 409) {
+      const msg = err.response.data?.error || '疑似重复添加同一台摄像机'
+      try {
+        await showConfirmDialog({
+          title: '可能重复添加',
+          message: `${msg}。同一台摄像机会重复占用取流路数，可能导致两边黑屏。仍要添加吗？`,
+          confirmButtonText: '仍要添加',
+          cancelButtonText: '取消',
+        })
+      } catch {
+        return // 用户取消：弹窗保持打开，可修改后重存
+      }
+      try {
+        if (editingDevice.value) {
+          await store.update(editingDevice.value.id, input, { force: true })
+        } else {
+          await store.add(input, { force: true })
+        }
+        showAdd.value = false
+        editingDevice.value = null
+        showToast('已按确认保存')
+      } catch (e2: any) {
+        showToast(e2?.response?.data?.error || '保存失败')
+      }
+      return
+    }
+    showToast(err?.response?.data?.error || '保存失败')
   }
-  showAdd.value = false
-  editingDevice.value = null
 }
 
 function onAddClose() {
@@ -129,7 +160,11 @@ function onViewerPlayback(d: Device) {
         @enter="openViewer"
         @more="openActions"
       />
-      <div v-if="!store.devices.length" class="empty">
+      <div v-if="store.loading && !store.devices.length" class="empty">
+        <van-loading size="30" color="#2ea8ff" />
+        <p>正在加载摄像机…</p>
+      </div>
+      <div v-else-if="!store.devices.length" class="empty">
         <van-icon name="video-o" size="46" color="#3a4252" />
         <p>暂无设备</p>
         <p class="sub">点击右上角 + 添加摄像机</p>

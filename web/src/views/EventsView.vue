@@ -112,6 +112,21 @@ async function onDelete(e: EventItem) {
   }
 }
 
+// 点缩略图/信息区看大图：原先 110x72 的缩略图根本看不清发生了什么
+const showPreview = ref(false)
+const previewEvent = ref<EventItem | null>(null)
+const previewUrl = ref('')
+const previewCap = ref('')
+
+function onPreview(e: EventItem) {
+  const src = e.gif || e.snapshot
+  if (!src) return
+  previewEvent.value = e
+  previewUrl.value = mediaURL(src)
+  previewCap.value = `${e.deviceName} · ${fmtTime(new Date(e.time).getTime())}`
+  showPreview.value = true
+}
+
 watch([deviceId, dateStr, typeFilter], () => load())
 
 onMounted(() => {
@@ -178,19 +193,21 @@ onMounted(() => {
 
     <div v-else class="list">
       <div v-for="e in events" :key="e.id" class="ev-card">
-        <div class="media">
+        <div class="media" @click="onPreview(e)">
           <img
             v-if="e.gif"
             :src="mediaURL(e.gif)"
             alt="gif"
             class="gif"
+            loading="lazy"
           />
-          <img v-else-if="e.snapshot" :src="mediaURL(e.snapshot)" alt="snap" class="gif" />
+          <img v-else-if="e.snapshot" :src="mediaURL(e.snapshot)" alt="snap" class="gif" loading="lazy" />
           <div v-else class="ph">
             <van-icon :name="typeMap[e.type]?.icon || 'records-o'" size="30" />
           </div>
+          <span class="zoom" title="查看大图"><van-icon name="preview-o" size="16" /></span>
         </div>
-        <div class="info">
+        <div class="info" @click="onPreview(e)">
           <div class="row">
             <span class="badge" :class="typeMap[e.type]?.cls">{{ typeMap[e.type]?.text || e.type }}</span>
             <span class="name">{{ e.deviceName }}</span>
@@ -205,10 +222,10 @@ onMounted(() => {
           @click="onDelete(e)"
         />
         <div class="dl-btns">
-          <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图">
+          <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图" @click.stop>
             <van-icon name="down" size="14" />
           </a>
-          <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn" title="下载 GIF">
+          <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn" title="下载 GIF" @click.stop>
             <van-icon name="down" size="14" />
           </a>
         </div>
@@ -220,11 +237,25 @@ onMounted(() => {
     </div>
 
     <div v-if="!loading && events.length" class="load-more">
-      <span v-if="events.length >= total" class="all-loaded">共 {{ total }} 条</span>
+      <span v-if="events.length >= total" class="all-loaded">已加载全部 {{ total }} 条</span>
       <van-button v-else size="small" plain round :loading="loadingMore" @click="loadMore">
         加载更多（{{ events.length }}/{{ total }}）
       </van-button>
     </div>
+
+    <van-popup v-model:show="showPreview" position="center" :style="{ maxWidth: '92vw', background: '#000', borderRadius: '12px', overflow: 'hidden' }">
+      <img v-if="previewUrl" :src="previewUrl" class="preview-img" alt="事件大图" />
+      <div class="preview-bar">
+        <span class="preview-cap">{{ previewCap }}</span>
+        <a v-if="previewEvent?.snapshot" :href="downloadEventSnapshotURL(previewEvent.id)" class="dl-btn" title="下载截图">
+          <van-icon name="down" size="16" />
+        </a>
+        <a v-if="previewEvent?.gif" :href="downloadEventGIFURL(previewEvent.id)" class="dl-btn" title="下载 GIF">
+          <van-icon name="down" size="16" />
+        </a>
+        <van-icon name="cross" class="preview-close" @click="showPreview = false" />
+      </div>
+    </van-popup>
 
     <van-popup v-model:show="showDevicePicker" position="bottom" round>
       <van-picker
@@ -328,6 +359,60 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  cursor: zoom-in;
+}
+.media .zoom {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.media:hover .zoom {
+  opacity: 1;
+}
+.info {
+  cursor: zoom-in;
+}
+/* 大图预览 */
+.preview-img {
+  max-width: 88vw;
+  max-height: 76vh;
+  display: block;
+  background: #000;
+}
+.preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--nvr-panel);
+  color: var(--nvr-text);
+}
+.preview-cap {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--nvr-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-close {
+  font-size: 18px;
+  color: var(--nvr-text-2);
+  cursor: pointer;
+  padding: 4px;
 }
 .gif {
   width: 100%;

@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { Device, DiscoveredDevice, Stream } from '../types'
-import { isBackend, probeStreams, testDevice } from '../api'
+import { buildBrandUrl, fetchBrands, isBackend, probeStreams, testDevice, type BrandTemplate } from '../api'
 import VendorBadge from './VendorBadge.vue'
 
 const props = defineProps<{
@@ -21,6 +21,8 @@ const isEdit = ref(false)
 const mode = ref<'form' | 'discover'>('form')
 const testing = ref(false)
 const testResult = ref<'ok' | 'fail' | null>(null)
+// 「测试连接」返回的编码/分辨率/H.265 提示，展示在结果标签下方
+const testInfo = ref<{ codec?: string; width?: number; height?: number; advice?: string } | null>(null)
 const form = reactive({
   name: '',
   ip: '',
@@ -39,6 +41,12 @@ const form = reactive({
   recordStream: '',
 })
 const selectedIp = ref('')
+// ---- 品牌模板 + 通道号：接 NVR 通道时无需手算 RTSP 地址 ----
+const brands = ref<BrandTemplate[]>([])
+const brand = ref('auto')
+const channel = ref<number | string>(1)
+const brandMainUrl = ref('')
+const brandSubUrl = ref('')
 const streams = ref<Stream[]>([])
 const streamsLoading = ref(false)
 const showModePicker = ref(false)
@@ -46,6 +54,7 @@ const showSchedulePicker = ref(false)
 const showPreviewPicker = ref(false)
 const showRecordPicker = ref(false)
 const showAIPicker = ref(false)
+const showBrandPicker = ref(false)
 const timePick = ref<string[]>(['08', '00', '20', '00'])
 
 const modeOptions = [
@@ -108,6 +117,7 @@ function reset() {
   isEdit.value = false
   testing.value = false
   testResult.value = null
+  testInfo.value = null
   form.name = ''
   form.ip = ''
   form.port = 554
@@ -125,6 +135,60 @@ function reset() {
   form.recordStream = ''
   streams.value = []
   selectedIp.value = ''
+  brand.value = 'auto'
+  channel.value = 1
+  brandMainUrl.value = ''
+  brandSubUrl.value = ''
+}
+
+/** 加载品牌模板（只拉一次） */
+async function loadBrands() {
+  if (brands.value.length || !isBackend()) return
+  try {
+    brands.value = await fetchBrands()
+  } catch {
+    /* 拉不到就退化为「自定义地址」，不阻断添加流程 */
+  }
+}
+
+const currentBrand = computed(() => brands.value.find((b) => b.id === brand.value))
+const brandColumns = computed(() => brands.value.map((b) => ({ text: b.name, value: b.id })))
+
+/** 选好品牌/通道后预览将要使用的地址 */
+async function refreshBrandUrl() {
+  if (!isBackend() || !form.ip.trim()) {
+    brandMainUrl.value = ''
+    brandSubUrl.value = ''
+    return
+  }
+  if (brand.value === 'auto' || brand.value === 'custom') {
+    brandMainUrl.value = ''
+    brandSubUrl.value = ''
+    return
+  }
+  try {
+    const r = await buildBrandUrl({
+      brand: brand.value,
+      ip: form.ip.trim(),
+      port: Number(form.port) || 554,
+      username: form.username.trim(),
+      password: form.password,
+      channel: Math.max(1, Number(channel.value) || 1),
+    })
+    brandMainUrl.value = r.main
+    brandSubUrl.value = r.sub
+    // 选中品牌且通道有效时，直接用生成的地址，省去「测试连接」再回填
+    if (r.main) form.rtspUrl = r.main
+  } catch {
+    brandMainUrl.value = ''
+    brandSubUrl.value = ''
+  }
+}
+
+function onBrandConfirm({ selectedValues }: any) {
+  brand.value = selectedValues[0]
+  showBrandPicker.value = false
+  refreshBrandUrl()
 }
 
 async function onFetchStreams() {
@@ -162,17 +226,30 @@ async function onTest() {
   }
   testing.value = true
   testResult.value = null
+  testInfo.value = null
   try {
     const res = await testDevice({
       ip: form.ip.trim(),
       port: Number(form.port) || 554,
       username: form.username.trim(),
       password: form.password,
+      rtspUrl: form.rtspUrl || undefined,
     })
     testResult.value = res.ok ? 'ok' : 'fail'
     if (res.ok) {
       form.rtspUrl = res.url || ''
-      showToast('连接成功')
+      testInfo.value = {
+        codec: res.codec,
+        width: res.width,
+        height: res.height,
+        advice: res.advice,
+      }
+      // 非 H.264 用醒目方式提示（浏览器播不了，是用户最容易踩的坑）
+      if (res.h265 || (res.codec && res.codec !== 'h264')) {
+        showToast(res.advice || `码流为 ${res.codec}，浏览器可能无法直接播放`)
+      } else {
+        showToast('连接成功')
+      }
     } else {
       showToast(res.error || '连接失败')
     }
@@ -183,6 +260,32 @@ async function onTest() {
     testing.value = false
   }
 }
+
+/** 编码标识 → 用户可读名（与后端 codecName 保持一致的展示口径） */
+const codecDisplay: Record<string, string> = {
+  h264: 'H.264',
+  hevc: 'H.265(HEVC)',
+  mpeg4: 'MPEG-4',
+  vp8: 'VP8',
+  vp9: 'VP9',
+  av1: 'AV1',
+}
+const testSummary = computed(() => {
+  const t = testInfo.value
+  if (!t) return ''
+  const parts: string[] = []
+  if (t.codec) parts.push(codecDisplay[t.codec] || t.codec.toUpperCase())
+  if (t.width && t.height) parts.push(`${t.width}×${t.height}`)
+  return parts.join(' · ')
+})
+
+// IP / 端口 / 账号变化后，若选了具体品牌则刷新预览地址
+watch(
+  () => [form.ip, form.port, form.username] as const,
+  () => {
+    if (brand.value !== 'auto' && brand.value !== 'custom') refreshBrandUrl()
+  },
+)
 
 watch(
   () => props.editDevice,
@@ -249,6 +352,7 @@ function switchDiscover() {
 }
 
 function onOpen() {
+  loadBrands()
   if (props.editDevice) {
     // Editing: re-apply the device (watch already ran, but onOpen fires after
     // on some popup transitions — be safe).
@@ -261,6 +365,10 @@ function onOpen() {
 
 function applyDevice(d: Device) {
   isEdit.value = true
+  brand.value = 'custom' // 已有设备地址是确定的，默认按自定义展示，避免误改
+  brandMainUrl.value = ''
+  brandSubUrl.value = ''
+  loadBrands()
   mode.value = 'form'
   form.name = d.name
   form.ip = d.ip
@@ -311,6 +419,46 @@ function applyDevice(d: Device) {
               :placeholder="isEdit ? '留空则不修改' : '******'"
             />
           </van-cell-group>
+
+          <!-- 品牌模板：接 NVR 通道时按品牌+通道号自动拼地址，免手算 -->
+          <van-cell-group v-if="!isEdit" inset title="品牌与通道">
+            <van-field
+              :model-value="currentBrand?.name || '自动探测（推荐）'"
+              is-link
+              readonly
+              label="摄像头品牌"
+              @click="showBrandPicker = true"
+            />
+            <van-field
+              v-if="currentBrand?.needCh"
+              v-model="channel"
+              type="number"
+              label="通道号"
+              :placeholder="currentBrand?.chHint || '1'"
+              @blur="refreshBrandUrl"
+            />
+            <van-cell v-if="currentBrand?.note" :label="currentBrand.note" />
+            <van-cell
+              v-if="brandMainUrl"
+              title="将使用的地址"
+              :label="brandMainUrl"
+            >
+              <template #right-icon>
+                <van-icon name="passed" color="#2ecc8f" />
+              </template>
+            </van-cell>
+            <van-cell v-if="brandSubUrl" title="子码流" :label="brandSubUrl" />
+          </van-cell-group>
+
+          <van-popup v-model:show="showBrandPicker" position="bottom" round>
+            <van-picker
+              title="摄像头品牌"
+              :columns="brandColumns"
+              :model-value="[brand]"
+              @confirm="onBrandConfirm"
+              @cancel="showBrandPicker = false"
+            />
+          </van-popup>
 
           <van-cell-group inset title="录像策略">
             <van-cell title="启用录像" label="关闭后仅直播不录像">
@@ -449,11 +597,16 @@ function applyDevice(d: Device) {
             测试连接
           </van-button>
           <van-tag v-if="testResult === 'ok'" type="success" style="margin-top: 8px; display: inline-block">
-            连接正常
+            连接正常{{ testSummary ? ' · ' + testSummary : '' }}
           </van-tag>
           <van-tag v-else-if="testResult === 'fail'" type="danger" style="margin-top: 8px; display: inline-block">
             连接失败
           </van-tag>
+          <!-- 编码非 H.264 时的可操作提示：说明后果 + 修改路径 -->
+          <div v-if="testInfo?.advice" class="codec-advice">
+            <van-icon name="warning-o" size="14" />
+            <span>{{ testInfo.advice }}</span>
+          </div>
           <van-button type="primary" block round style="margin-top: 14px" @click="submitForm">
             保存
           </van-button>
@@ -516,6 +669,24 @@ function applyDevice(d: Device) {
 }
 .body {
   padding: 0 10px 24px;
+}
+/* H.265 等非 H.264 码流的引导提示 */
+.codec-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  color: var(--nvr-amber, #ffb054);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.codec-advice .van-icon {
+  margin-top: 3px;
+  flex-shrink: 0;
 }
 .discover-tip {
   display: flex;

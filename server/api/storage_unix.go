@@ -24,5 +24,6 @@ func (s *Server) storageInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"totalGB": mathRound(toGB(total)),
 		"usedGB":  mathRound(toGB(used)),
+		"freeGB":  mathRound(toGB(free)),
 	})
 }

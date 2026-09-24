@@ -18,8 +18,12 @@ function hash(s: string) {
   return h
 }
 
+// HLS 首帧未出时显示加载态，避免格子里一片死黑让人以为是空画面
+const videoReady = ref(false)
+
 function attach() {
   if (playable || !videoEl.value || !props.device.online) return
+  videoReady.value = false
   playable = createPlayable({
     url: props.streamUrl,
     seed: hash(props.device.id),
@@ -47,8 +51,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="cell" :class="{ offline: !device.online }" @click="emit('click')">
-    <video ref="videoEl" class="video" muted playsinline v-show="device.online" />
+    <video
+      ref="videoEl"
+      class="video"
+      muted
+      playsinline
+      v-show="device.online"
+      @loadeddata="videoReady = true"
+      @playing="videoReady = true"
+    />
     <div class="noise" v-if="device.online" />
+    <div v-if="device.online && !videoReady" class="empty loading">
+      <van-loading size="24" color="#2ea8ff" />
+      <span>画面加载中…</span>
+    </div>
     <div class="overlay">
       <span class="name">{{ device.name }}</span>
       <span class="badge live" v-if="device.online">LIVE</span>
@@ -130,5 +146,10 @@ onBeforeUnmount(() => {
   gap: 6px;
   color: var(--nvr-text-2);
   font-size: 12px;
+}
+.empty.loading {
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.25);
+  pointer-events: none;
 }
 </style>

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,16 +43,16 @@ type deviceReq struct {
 	Source   string `json:"source"` // rtsp | test
 	RTSPURL  string `json:"rtspUrl"`
 
-	RecordEnabled   *bool `json:"recordEnabled"`
+	RecordEnabled   *bool           `json:"recordEnabled"`
 	RecordMode      string          `json:"recordMode"`
 	RetentionDays   *int            `json:"retentionDays"`
 	RetentionSizeGB *int            `json:"retentionSizeGB"`
-	ScheduleStart string          `json:"scheduleStart"`
-	ScheduleEnd   string          `json:"scheduleEnd"`
-	AIEnabled     *bool           `json:"aiEnabled"`
-	Streams       []models.Stream `json:"streams"`
-	PreviewStream string          `json:"previewStream"`
-	RecordStream  string          `json:"recordStream"`
+	ScheduleStart   string          `json:"scheduleStart"`
+	ScheduleEnd     string          `json:"scheduleEnd"`
+	AIEnabled       *bool           `json:"aiEnabled"`
+	Streams         []models.Stream `json:"streams"`
+	PreviewStream   string          `json:"previewStream"`
+	RecordStream    string          `json:"recordStream"`
 }
 
 func (r *deviceReq) applyTo(d *models.Device) {
@@ -104,6 +104,19 @@ func (s *Server) createDevice(c *gin.Context) {
 	}
 	if req.Port == 0 {
 		req.Port = 554
+	}
+	// 重复添加检测：同一台摄像头（IP+端口，或归一化后的 RTSP 地址）存两条会
+	// 重复占用相机的并发取流路数（常见仅 3~6 路），最终两边都黑屏。
+	// 未带 force=true 时只警告不拦截——确实需要两路（不同账号/路径）可二次确认。
+	if src == models.SourceRTSP && c.Query("force") != "true" {
+		if dupName := s.findDuplicateDevice(req, ""); dupName != "" {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "疑似重复添加：与已有设备「" + dupName + "」的 IP+端口（或 RTSP 地址）相同",
+				"code":     "duplicate_device",
+				"conflict": dupName,
+			})
+			return
+		}
 	}
 	name := req.Name
 	if name == "" {
@@ -179,6 +192,17 @@ func (s *Server) updateDevice(c *gin.Context) {
 		d.RTSPURL = req.RTSPURL
 	}
 	req.applyTo(d)
+	// 编辑也可能把地址改成与另一台相同，一并查重（排除自身）。
+	if d.Source == models.SourceRTSP && c.Query("force") != "true" {
+		if dupName := s.findDuplicateDeviceFor(d); dupName != "" {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":    "疑似重复添加：与已有设备「" + dupName + "」的 IP+端口（或 RTSP 地址）相同",
+				"code":     "duplicate_device",
+				"conflict": dupName,
+			})
+			return
+		}
+	}
 	if err := s.st.UpdateDevice(*d); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -200,14 +224,32 @@ func (s *Server) testDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	url := req.RTSPURL
-	if url != "" {
-		ok, errMsg := ffmpeg.TestRTSPErr(s.cfg.Ffmpeg, url)
-		if ok {
-			c.JSON(http.StatusOK, gin.H{"ok": true, "url": url})
-		} else {
-			c.JSON(http.StatusOK, gin.H{"ok": false, "url": url, "error": errMsg})
+	// probeURL 测试一条 RTSP 地址并组装响应：连通性之外附带编码/分辨率
+	// 与 H.265 提示，让「测试连接」一步就能发现浏览器播不了的摄像头。
+	probeURL := func(u string) (gin.H, string) {
+		ok, errMsg, codec, width, height := ffmpeg.TestRTSPProbe(s.cfg.Ffmpeg, u)
+		resp := gin.H{"ok": ok, "url": u}
+		if codec != "" {
+			resp["codec"] = codec
 		}
+		if width > 0 && height > 0 {
+			resp["width"] = width
+			resp["height"] = height
+		}
+		if ok && codec != "" && codec != "h264" {
+			resp["h265"] = codec == "hevc"
+			resp["advice"] = "该码流为 " + codecName(codec) +
+				"，浏览器无法直接播放（录像会自动转码，但更耗资源）。" +
+				"建议到摄像头后台「配置 → 视频/音频 → 视频」把主/子码流都改为 H.264。"
+		}
+		return resp, errMsg
+	}
+	if url := req.RTSPURL; url != "" {
+		resp, errMsg := probeURL(url)
+		if !resp["ok"].(bool) {
+			resp["error"] = errMsg
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 	port := req.Port
@@ -227,18 +269,174 @@ func (s *Server) testDevice(c *gin.Context) {
 		"/main",
 	} {
 		u := buildRTSPURL(req.IP, port, req.Username, req.Password, path)
-		ok, errMsg := ffmpeg.TestRTSPErr(s.cfg.Ffmpeg, u)
-		if ok {
-			c.JSON(http.StatusOK, gin.H{"ok": true, "url": u})
+		resp, errMsg := probeURL(u)
+		if resp["ok"].(bool) {
+			c.JSON(http.StatusOK, resp)
 			return
 		}
 		lastErr = errMsg
+		// 主机级失败（网络不可达/被拒/超时/认证失败）换路径也没用——
+		// 问题不在 URL 路径上。继续试剩余 6 条只会把等待时间翻好几倍，
+		// 这里直接返回首次的明确原因。
+		if isHostLevelProbeErr(errMsg) {
+			resp["error"] = errMsg
+			c.JSON(http.StatusOK, resp)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"ok":    false,
 		"url":   buildRTSPURL(req.IP, port, req.Username, req.Password, "/stream1"),
 		"error": lastErr,
 	})
+}
+
+// isHostLevelProbeErr 判断探测错误是否属于「主机/凭据层面」——
+// 这类错误与具体码流路径无关，逐条换路径重试没有意义。
+func isHostLevelProbeErr(msg string) bool {
+	for _, k := range []string{
+		"网络不可达", "连接被拒绝", "连接超时", "探测超时", "认证失败",
+		"ffmpeg 未安装", "地址格式错误",
+	} {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// findDuplicateDevice 判断「将要创建的设备」是否与已有设备指向同一台摄像头。
+func (s *Server) findDuplicateDevice(req deviceReq, excludeID string) string {
+	prov := models.Device{
+		ID:       excludeID,
+		IP:       req.IP,
+		Port:     req.Port,
+		Username: req.Username,
+		RTSPURL:  req.RTSPURL,
+		Streams:  req.Streams,
+		Source:   models.SourceRTSP,
+	}
+	return s.findDuplicateDeviceFor(&prov)
+}
+
+// findDuplicateDeviceFor 以设备对象比对，供编辑（update）流程排除自身后查重。
+func (s *Server) findDuplicateDeviceFor(d *models.Device) string {
+	devs, err := s.st.ListDevices()
+	if err != nil {
+		return ""
+	}
+	mine := deviceIdentityKeys(d)
+	if len(mine) == 0 {
+		return ""
+	}
+	for _, other := range devs {
+		if other.ID == d.ID || other.Source != models.SourceRTSP {
+			continue
+		}
+		if keysIntersect(mine, deviceIdentityKeys(&other)) {
+			return other.Name
+		}
+	}
+	return ""
+}
+
+// deviceIdentityKeys 返回一台设备的全部「身份键」，用于查重：
+//
+//	host:<ip>:<port>              同 IP+端口（NVR 多通道也共享同一取流会话上限，
+//	                              同地址同样值得提醒）
+//	rtsp://<host>:<port>/<path>   归一化取流地址（去凭证/query；路径才是真正的
+//	                              码流标识，可区分同一台 NVR 的不同通道）
+//
+// 之所以返回的是集合而不是单个值：新设备可能只填了 IP（键只有 host:…），而库里
+// 已有设备带完整 RTSP 地址（键是 rtsp://…），用单值比较会永远判不出重复。
+func deviceIdentityKeys(d *models.Device) []string {
+	if d.Source == models.SourceTest {
+		return nil
+	}
+	seen := map[string]bool{}
+	add := func(k string) {
+		if k != "" {
+			seen[k] = true
+		}
+	}
+	port := d.Port
+	if port == 0 {
+		port = 554
+	}
+	if d.IP != "" {
+		add("host:" + net.JoinHostPort(d.IP, strconv.Itoa(port)))
+	}
+	for _, st := range d.Streams {
+		add(normalizeRTSP(st.URL))
+	}
+	if d.RTSPURL != "" {
+		add(normalizeRTSP(d.RTSPURL))
+	} else if d.IP != "" {
+		// 未填显式地址时，按录像实际会用的默认地址参与比对，
+		// 否则「只填 IP 再加一次」永远匹配不上已有设备。
+		add(normalizeRTSP(defaultRTSP(d)))
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
+
+// keysIntersect 判断两组身份键是否有交集。
+func keysIntersect(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, k := range a {
+		set[k] = true
+	}
+	for _, k := range b {
+		if set[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeRTSP 把 RTSP 地址规整成可比较的 key：
+// 去掉 userinfo、query、fragment，host 小写、path 去掉末尾斜杠。
+// 这样 "rtsp://User:Pass@Cam/stream1" 与 "rtsp://cam/stream1" 判为同一台。
+func normalizeRTSP(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Scheme = "rtsp"
+	u.Host = strings.ToLower(u.Host)
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	if u.Path == "" {
+		u.Path = "/stream1"
+	}
+	return u.String()
+}
+
+// codecName 把 ffmpeg 编码标识翻成用户看得懂的名字。
+func codecName(codec string) string {
+	switch codec {
+	case "hevc":
+		return "H.265(HEVC)"
+	case "h264":
+		return "H.264"
+	case "mpeg4":
+		return "MPEG-4"
+	case "vp9":
+		return "VP9"
+	case "vp8":
+		return "VP8"
+	case "av1":
+		return "AV1"
+	}
+	return strings.ToUpper(codec)
 }
 
 func buildRTSPURL(ip string, port int, user, pass, path string) string {
@@ -362,17 +560,33 @@ func defaultRTSP(d *models.Device) string {
 	return u.String()
 }
 
+// deviceSnapshot 返回摄像机当前画面（JPEG）。
+//
+// 行为：优先复用 3 秒内的 current.jpg（避免客户端轮询时反复起 ffmpeg）；
+// 文件不存在或已过期时，按需抓一帧（AI 关闭时不会有常驻抓帧进程，
+// 这个接口是唯一的取图途径）。并发请求由 recorder 侧合并为一次抓帧。
 func (s *Server) deviceSnapshot(c *gin.Context) {
 	id := safePathID(c.Param("id"))
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
 		return
 	}
-	path := filepath.Join(s.cfg.SnapDir, id, "current.jpg")
-	if !fileExists(path) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no snapshot"})
+	// 设备必须存在，否则会为不存在的 ID 白白起 ffmpeg
+	if d, err := s.st.GetDevice(id); err != nil || d == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
 		return
 	}
+	path, err := s.rec.GrabSnapshot(id, 3*time.Second)
+	if err != nil || path == "" {
+		msg := "no snapshot"
+		if err != nil {
+			msg = err.Error()
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": msg})
+		return
+	}
+	// 快照是实时画面，禁止中间层缓存，否则客户端会一直看到旧帧
+	c.Header("Cache-Control", "no-store")
 	c.File(path)
 }
 
@@ -414,10 +628,10 @@ func (s *Server) deviceMonth(c *gin.Context) {
 	first := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
 	last := first.AddDate(0, 1, 0)
 	type dayInfo struct {
-		Date       string `json:"date"`
-		Has        bool   `json:"hasRecording"`
-		Duration   int    `json:"duration"`
-		Segments   int    `json:"segments"`
+		Date     string `json:"date"`
+		Has      bool   `json:"hasRecording"`
+		Duration int    `json:"duration"`
+		Segments int    `json:"segments"`
 	}
 	out := []dayInfo{}
 	for day := first; day.Before(last); day = day.AddDate(0, 0, 1) {

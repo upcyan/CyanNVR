@@ -19,12 +19,16 @@ export const useDeviceStore = defineStore('devices', {
       try {
         const list = await fetchDevices()
         this.devices = Array.isArray(list) ? list : []
+      } catch (err) {
+        // 首屏偶发 401（登录竞态）不应让 Promise 变成未处理拒绝：
+        // 保留已有数据，等 10 秒后的轮询自动重试即可。
+        console.warn('[devices] load failed, will retry by polling:', err)
       } finally {
         this.loading = false
       }
     },
-    async add(input: Partial<Device>) {
-      const d = await addDevice(input)
+    async add(input: Partial<Device>, opts?: { force?: boolean }) {
+      const d = await addDevice(input, opts)
       this.devices.push(d)
       return d
     },
@@ -32,8 +36,8 @@ export const useDeviceStore = defineStore('devices', {
       await removeDevice(id)
       this.devices = this.devices.filter((d) => d.id !== id)
     },
-    async update(id: string, input: Partial<Device>) {
-      const d = await updateDevice(id, input)
+    async update(id: string, input: Partial<Device>, opts?: { force?: boolean }) {
+      const d = await updateDevice(id, input, opts)
       const idx = this.devices.findIndex((x) => x.id === id)
       if (idx >= 0) this.devices[idx] = { ...this.devices[idx], ...d }
       return d

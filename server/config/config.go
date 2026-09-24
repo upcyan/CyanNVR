@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 type Config struct {
 	Port      string
@@ -16,6 +19,9 @@ type Config struct {
 	RetentionDays       int
 	RetentionSizeGB     int // 录像总容量上限（GB），0 = 不限制
 	SnapshotIntervalSec int
+	// MinFreeMB 录像盘最低剩余空间（MB）。低于该水位时暂停录像并优先清理，
+	// 空间恢复后自动继续——防止录像把整块系统盘写满拖垮 NAS。
+	MinFreeMB int
 
 	AIEnabled   bool
 	AIMode      string // "local" | "openai"
@@ -39,6 +45,12 @@ func env(key, def string) string {
 
 func Load() *Config {
 	dataDir := env("NVR_DATA", "./data")
+	minFreeMB := 512
+	if v := os.Getenv("NVR_MIN_FREE_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			minFreeMB = n
+		}
+	}
 	return &Config{
 		Port:                env("NVR_PORT", "8080"),
 		DataDir:             dataDir,
@@ -51,10 +63,11 @@ func Load() *Config {
 		JWTSecret:           env("NVR_JWT_SECRET", ""),
 		RetentionDays:       30,
 		SnapshotIntervalSec: 10,
+		MinFreeMB:           minFreeMB,
 
-		AIEnabled:   env("NVR_AI_ENABLED", "false") == "true",
-		AIMode:      env("NVR_AI_MODE", "local"),
-		AIBaseURL:   env("NVR_AI_BASE_URL", "http://localhost:11434/v1"),
+		AIEnabled: env("NVR_AI_ENABLED", "false") == "true",
+		AIMode:    env("NVR_AI_MODE", "local"),
+		AIBaseURL: env("NVR_AI_BASE_URL", "http://localhost:11434/v1"),
 		// 默认使用 Unix Domain Socket 与内置检测进程通信：
 		// 不经网络协议栈、不占端口、不对外暴露（此前默认绑 0.0.0.0 存在暴露风险）
 		AIDetectURL: env("NVR_AI_DETECT_URL", "unix:/tmp/cyannvr-ai.sock"),

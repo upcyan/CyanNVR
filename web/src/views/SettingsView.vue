@@ -10,10 +10,12 @@ import {
   changeOwnPassword,
   createUser,
   deleteUser,
+  fetchStatus,
   fetchUsers,
   isBackend,
   updateUser,
   type ManagedUser,
+  type StatusInfo,
 } from '../api'
 
 const store = useSettingsStore()
@@ -91,6 +93,53 @@ const usedPct = computed(() => {
   if (!totalGB) return 0
   return Math.round((usedGB / totalGB) * 100)
 })
+
+// ---- 运行状态：资源占用 / 进程概况（点开才拉取，打开期间每 5 秒刷新） ----
+const status = ref<StatusInfo | null>(null)
+const statusLoading = ref(false)
+const statusErr = ref('')
+const showStatus = ref(false)
+let statusTimer: number | undefined
+
+async function loadStatus() {
+  if (!isBackend()) return
+  statusLoading.value = true
+  statusErr.value = ''
+  try {
+    status.value = await fetchStatus()
+  } catch (e: any) {
+    statusErr.value = e?.response?.data?.error || '读取失败'
+  } finally {
+    statusLoading.value = false
+  }
+}
+
+// CPU 是「两次采样之间的占用」，单次调用拿不到，因此连采两次
+async function openStatus() {
+  showStatus.value = true
+  await loadStatus()
+  await new Promise((r) => setTimeout(r, 1200))
+  await loadStatus()
+  closeStatusTimer()
+  statusTimer = window.setInterval(loadStatus, 5000)
+}
+function closeStatusTimer() {
+  if (statusTimer) {
+    window.clearInterval(statusTimer)
+    statusTimer = undefined
+  }
+}
+
+const fmtUptime = (sec?: number) => {
+  if (sec === undefined || sec === null) return '—'
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return `${d} 天 ${h} 小时`
+  if (h > 0) return `${h} 小时 ${m} 分`
+  return `${m} 分`
+}
+onUnmounted(closeStatusTimer)
 
 const appVersion = ref('')
 
@@ -491,6 +540,17 @@ async function removeUser(u: ManagedUser) {
           </div>
         </template>
       </van-cell>
+      <van-cell
+        v-if="isBackend()"
+        title="运行状态"
+        label="CPU / 内存占用、磁盘水位、录像与进程概况"
+        is-link
+        @click="openStatus"
+      >
+        <template #right-icon>
+          <van-icon name="bar-chart-o" class="user-action" />
+        </template>
+      </van-cell>
       <van-cell title="循环覆盖 · 保留天数" label="超期自动删除最早录像；直接输入 1-3650 天，或点右侧箭头下拉选快捷档">
         <template #value>
           <div class="days-combo">
@@ -833,6 +893,65 @@ async function removeUser(u: ManagedUser) {
       </van-cell-group>
       <div class="dialog-actions">
         <van-button type="primary" block round :loading="saving" @click="save">确认修改</van-button>
+      </div>
+    </van-popup>
+
+    <van-popup v-model:show="showStatus" position="bottom" round :style="{ maxHeight: '80%' }" @closed="closeStatusTimer">
+      <div class="dialog-head">
+        <span>运行状态</span>
+        <van-icon name="cross" size="18" @click="showStatus = false" />
+      </div>
+      <div class="status-body">
+        <div v-if="statusLoading && !status" class="status-loading">
+          <van-loading size="20" />
+          <span>读取中…</span>
+        </div>
+        <div v-else-if="statusErr" class="status-err">{{ statusErr }}</div>
+        <template v-else-if="status">
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="k">CPU 占用</span>
+              <span class="v">{{ status.process?.cpuPercent !== undefined ? status.process.cpuPercent + '%' : '采样中…' }}</span>
+            </div>
+            <div class="status-item">
+              <span class="k">内存占用</span>
+              <span class="v">{{ status.process?.memMB !== undefined ? status.process.memMB + ' MB' : '—' }}</span>
+            </div>
+            <div class="status-item">
+              <span class="k">运行时长</span>
+              <span class="v">{{ fmtUptime(status.process?.uptimeSec) }}</span>
+            </div>
+            <div class="status-item">
+              <span class="k">ffmpeg 进程</span>
+              <span class="v">{{ status.ffmpeg?.total ?? '—' }} 个</span>
+            </div>
+            <div class="status-item">
+              <span class="k">摄像机</span>
+              <span class="v">{{ status.devices?.online ?? 0 }} / {{ status.devices?.total ?? 0 }} 在线</span>
+            </div>
+            <div class="status-item">
+              <span class="k">磁盘可用</span>
+              <span class="v" :class="{ warn: status.disk?.low }">{{ status.disk?.freeGB ?? '—' }} GB</span>
+            </div>
+          </div>
+          <div v-if="status.disk" class="status-disk">
+            <div class="progress">
+              <div class="bar">
+                <i :style="{ width: (status.disk.usedPct || 0) + '%' }" :class="{ warn: (status.disk.usedPct || 0) > 85 }" />
+              </div>
+              <span>{{ status.disk.usedPct }}%</span>
+            </div>
+            <div class="disk-path mono">{{ status.disk.path }}</div>
+          </div>
+          <!-- 水位告警：低于该阈值服务会自动暂停录像，这里明确告知用户 -->
+          <div v-if="status.disk?.low" class="status-warn">
+            <van-icon name="warning-o" size="14" />
+            <span>可用空间已低于最低水位 {{ status.disk.minFreeMB }}MB，录像已暂停；请清理磁盘或调低「容量限额」。</span>
+          </div>
+          <div class="status-note">
+            版本 v{{ status.version }} · 数据每 5 秒刷新 · CPU 为两次采样之间的平均占用
+          </div>
+        </template>
       </div>
     </van-popup>
 
@@ -1212,6 +1331,92 @@ async function removeUser(u: ManagedUser) {
   padding: 16px;
   font-weight: 600;
   font-size: 16px;
+}
+
+/* ---- 运行状态弹层 ---- */
+.status-body {
+  padding: 0 16px 20px;
+}
+.status-loading,
+.status-err {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--nvr-text-2);
+  font-size: 13px;
+}
+.status-err {
+  color: var(--nvr-red);
+}
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+  min-width: 0;
+}
+.status-item .k {
+  font-size: 12px;
+  color: var(--nvr-text-2);
+}
+.status-item .v {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-item .v.warn {
+  color: var(--nvr-amber);
+}
+.status-disk {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.status-disk .progress {
+  justify-content: flex-start;
+}
+.disk-path {
+  font-size: 11px;
+  color: var(--nvr-text-2);
+  overflow-wrap: anywhere;
+}
+.status-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  color: var(--nvr-amber);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.status-warn .van-icon {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.status-note {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--nvr-text-2);
+  text-align: center;
+  line-height: 1.6;
 }
 
 @media (min-width: 900px) {

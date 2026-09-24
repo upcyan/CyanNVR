@@ -19,9 +19,9 @@ import (
 )
 
 type Server struct {
-	cfg *config.Config
-	st  *store.Store
-	rec *recorder.Manager
+	cfg   *config.Config
+	st    *store.Store
+	rec   *recorder.Manager
 	hls   *hls.Hls
 	am    *auth.Manager
 	hub   *SSEHub
@@ -34,8 +34,8 @@ type Server struct {
 
 type AIConfig struct {
 	Enabled   bool    `json:"enabled"`
-	Mode      string  `json:"mode"` // "local" (on-device detect) | "openai" (vision API)
-	Provider  string   `json:"provider"` // 推理后端：auto|cpu|cuda|rocm|openvino|directml|tensorrt（重启生效）
+	Mode      string  `json:"mode"`     // "local" (on-device detect) | "openai" (vision API)
+	Provider  string  `json:"provider"` // 推理后端：auto|cpu|cuda|rocm|openvino|directml|tensorrt（重启生效）
 	BaseURL   string  `json:"baseUrl"`
 	DetectURL string  `json:"detectUrl"`
 	Model     string  `json:"model"`
@@ -48,19 +48,19 @@ type AIConfig struct {
 }
 
 type AppSettings struct {
-	RetentionDays   int    `json:"retentionDays"`
-	RetentionSizeGB int    `json:"retentionSizeGB"` // 录像总容量上限（GB），0 = 不限制
-	RecordMode      string `json:"recordMode"`
-	ScheduleStart string   `json:"scheduleStart"`
-	ScheduleEnd   string   `json:"scheduleEnd"`
-	MotionPush    bool     `json:"motionPush"`
-	OfflinePush   bool     `json:"offlinePush"`
-	HTTPS         bool     `json:"https"`
-	HTTPSPort     int      `json:"httpsPort"`
-	TLSCertMode   string   `json:"tlsCertMode"` // "auto"(ACME) | "manual"
-	TLSDomain     string   `json:"tlsDomain"`
-	ACMEEmail     string   `json:"acmeEmail"`
-	AI            AIConfig `json:"ai"`
+	RetentionDays   int      `json:"retentionDays"`
+	RetentionSizeGB int      `json:"retentionSizeGB"` // 录像总容量上限（GB），0 = 不限制
+	RecordMode      string   `json:"recordMode"`
+	ScheduleStart   string   `json:"scheduleStart"`
+	ScheduleEnd     string   `json:"scheduleEnd"`
+	MotionPush      bool     `json:"motionPush"`
+	OfflinePush     bool     `json:"offlinePush"`
+	HTTPS           bool     `json:"https"`
+	HTTPSPort       int      `json:"httpsPort"`
+	TLSCertMode     string   `json:"tlsCertMode"` // "auto"(ACME) | "manual"
+	TLSDomain       string   `json:"tlsDomain"`
+	ACMEEmail       string   `json:"acmeEmail"`
+	AI              AIConfig `json:"ai"`
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
@@ -220,6 +220,9 @@ func (s *Server) Router() http.Handler {
 	protected.DELETE("/devices/:id", s.requireAdmin, s.deleteDevice)
 	protected.POST("/devices/test", s.requireOperator, s.testDevice)
 	protected.POST("/devices/streams", s.requireOperator, s.probeStreams)
+	// 品牌 RTSP 地址模板：让用户按「品牌 + 通道号」选，无需手算地址
+	protected.GET("/devices/brands", s.rtspBrands)
+	protected.POST("/devices/rtsp-url", s.requireOperator, s.rtspURLForBrand)
 	protected.POST("/devices/discover", s.requireOperator, s.discoverDevices)
 	protected.POST("/devices/:id/probe", s.requireOperator, s.probeDevice)
 	protected.GET("/devices/:id/snapshot", s.deviceSnapshot)
@@ -241,6 +244,9 @@ func (s *Server) Router() http.Handler {
 	protected.POST("/tls/manual-cert", s.requireAdmin, s.uploadManualCert)
 	protected.POST("/tls/reload", s.requireAdmin, s.reloadTLS)
 	protected.GET("/storage", s.storageInfo)
+	// 运行状态总览：资源占用 / 磁盘水位 / 设备与 ffmpeg 概况。
+	// 与只回版本的 /api/health 分工不同，供设置页「运行状态」使用。
+	protected.GET("/status", s.statusInfo)
 	protected.GET("/ai/models", s.requireOperator, s.listAIModels)
 	protected.POST("/ai/load", s.requireOperator, s.loadAIModel)
 	// 后端状态只读，所有登录用户都能看到「当前用的是 CPU 还是 GPU」

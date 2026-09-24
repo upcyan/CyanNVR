@@ -12,6 +12,9 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 LOG_FILE="${TRIM_PKGVAR}/cyanNVR.log"
 PID_FILE="${TRIM_PKGVAR}/cyanNVR.pid"
+# 日志轮转阈值与保留份数（环境变量可覆盖，便于排查时临时放大）
+LOG_MAX_BYTES="${NVR_LOG_MAX_BYTES:-5242880}"   # 5MB
+LOG_KEEP="${NVR_LOG_KEEP:-3}"
 
 # ── 数据目录 ──
 # 优先级：已保存配置(datadir.conf) > 向导值 > 飞牛默认 TRIM_PKGVAR。
@@ -143,6 +146,27 @@ start_process() {
     fi
 
     mkdir -p "${DATA_DIR}"/{live,recordings,snapshots,events,models}
+
+    # ── 日志轮转 ──
+    # 服务把 ffmpeg stderr 也写进同一个日志文件，长时间运行会持续增长
+    # （实测曾达 68MB）。超过阈值就滚动：app.log → app.log.1 → ... ，
+    # 最多保留 N 份，最旧的删除。轮转在启动时做一次，避免运行中截断
+    # 正在写入的文件的句柄问题。
+    rotate_log() {
+        [ -f "${LOG_FILE}" ] || return 0
+        local size
+        size=$(stat -c%s "${LOG_FILE}" 2>/dev/null || echo 0)
+        [ "${size}" -lt "${LOG_MAX_BYTES}" ] && return 0
+        local i="${LOG_KEEP}"
+        while [ "$i" -gt 1 ]; do
+            [ -f "${LOG_FILE}.$((i - 1))" ] && mv -f "${LOG_FILE}.$((i - 1))" "${LOG_FILE}.${i}"
+            i=$((i - 1))
+        done
+        mv -f "${LOG_FILE}" "${LOG_FILE}.1"
+        : > "${LOG_FILE}"
+        log_msg "日志已轮转（原大小 $((size / 1024 / 1024))MB，保留 ${LOG_KEEP} 份）"
+    }
+    rotate_log
 
     log_msg "Starting CyanNVR on port ${PORT} ..."
     bash -c "${CMD}" >> "${LOG_FILE}" 2>&1 &

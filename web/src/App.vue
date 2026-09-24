@@ -39,7 +39,15 @@ function applyA11y() {
   document.body.classList.toggle('dark', s.theme === 'dark')
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 关键时序：登录后首次进入受保护路由时，pinia auth store 可能还没把
+  // nvr_token 写进 localStorage（登录动作与 App 挂载存在竞争）。此时
+  // devices.load() 会发出不带 Authorization 的 /api/devices → 401 →
+  // 拦截器清空 token 并跳回登录页，表现为「登录成功却看到暂无设备」。
+  // 这里等一小会儿直到 token 就位再加载设备，避免首屏 401。
+  for (let i = 0; i < 40 && !localStorage.getItem('nvr_token'); i++) {
+    await new Promise((r) => setTimeout(r, 50))
+  }
   devices.load().then(() => devices.startPolling())
   mq = window.matchMedia('(min-width: 900px)')
   isDesktop.value = mq.matches
@@ -111,6 +119,10 @@ onBeforeUnmount(() => {
             <span class="nav-ico"><van-icon name="video-o" size="18" /></span>
             <span>录像管理</span>
           </router-link>
+          <router-link to="/events" class="nav-item" active-class="on">
+            <span class="nav-ico"><van-icon name="bell" size="18" /></span>
+            <span>事件中心</span>
+          </router-link>
         </nav>
 
         <div class="nav-group">系统</div>
@@ -141,6 +153,7 @@ onBeforeUnmount(() => {
         <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
           <van-tabbar-item replace to="/live" icon="play-circle-o">摄像机</van-tabbar-item>
           <van-tabbar-item replace to="/playback" icon="video-o">录像</van-tabbar-item>
+          <van-tabbar-item replace to="/events" icon="bell">事件</van-tabbar-item>
           <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
         </van-tabbar>
     </div>

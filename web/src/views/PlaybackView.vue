@@ -115,6 +115,102 @@ const timelineEvents = computed(() =>
   dayEvents.value.map((e) => ({ time: evTime(e), type: e.type })),
 )
 
+// ---- 分段三级折叠：时段(上午/下午) → 小时 → 分段 ----
+// 一天最多 24 小时、上百个分段；平铺渲染会很长且难定位。
+// 按「小时」折叠后，默认只展开当前播放所在的那一小时。
+interface SegGroup {
+  key: string
+  hourLabel: string
+  start: number
+  end: number
+  segs: RecordingSegment[]
+  durationMin: number
+}
+
+interface HalfGroup {
+  key: string
+  title: string
+  hours: SegGroup[]
+  segCount: number
+  durationMin: number
+}
+
+const groupMode = ref(true) // 默认折叠；用户可关掉看平铺
+const openHours = ref<string[]>([])
+
+const halfGroups = computed<HalfGroup[]>(() => {
+  const byHalf = new Map<string, Map<number, SegGroup>>()
+  for (const seg of segments.value) {
+    const d = new Date(seg.start)
+    const halfKey = d.getHours() < 12 ? 'am' : 'pm'
+    const h = d.getHours()
+    let hours = byHalf.get(halfKey)
+    if (!hours) {
+      hours = new Map()
+      byHalf.set(halfKey, hours)
+    }
+    let g = hours.get(h)
+    if (!g) {
+      g = {
+        key: `${halfKey}-${h}`,
+        hourLabel: `${String(h).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:59`,
+        start: seg.start,
+        end: seg.end,
+        segs: [],
+        durationMin: 0,
+      }
+      hours.set(h, g)
+    }
+    g.segs.push(seg)
+    g.start = Math.min(g.start, seg.start)
+    g.end = Math.max(g.end, seg.end)
+    g.durationMin += Math.round((seg.end - seg.start) / 60000)
+  }
+  const order = ['am', 'pm']
+  const titles: Record<string, string> = { am: '上午', pm: '下午' }
+  const out: HalfGroup[] = []
+  for (const hk of order) {
+    const hours = byHalf.get(hk)
+    if (!hours) continue
+    const list = [...hours.values()].sort((a, b) => a.start - b.start)
+    out.push({
+      key: hk,
+      title: titles[hk],
+      hours: list,
+      segCount: list.reduce((a, g) => a + g.segs.length, 0),
+      durationMin: list.reduce((a, g) => a + g.durationMin, 0),
+    })
+  }
+  return out
+})
+
+const fmtDur = (min: number) => {
+  if (min < 60) return `${min} 分钟`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return m ? `${h} 小时 ${m} 分` : `${h} 小时`
+}
+
+// 播放位置所在的小时 key，用于自动展开
+const currentHourKey = computed(() => {
+  if (!currentTs.value) return ''
+  const h = new Date(currentTs.value).getHours()
+  return `${h < 12 ? 'am' : 'pm'}-${h}`
+})
+
+// 切换分段/日期后，自动展开当前小时，让用户立刻看到正在播放的那一段
+watch([segments, currentHourKey], () => {
+  const k = currentHourKey.value
+  if (k && !openHours.value.includes(k)) openHours.value = [k]
+}, { immediate: true })
+
+/** 在折叠模式下点击小时头：展开/收起 */
+function toggleHour(key: string) {
+  openHours.value = openHours.value.includes(key)
+    ? openHours.value.filter((k) => k !== key)
+    : [...openHours.value, key]
+}
+
 // 点击事件跳到对应时刻播放，与时间轴拖动走同一套会话重建逻辑
 function onSelectEvent(e: EventItem) {
   const ts = Math.min(dayStart.value + 86400000 - 1000, Math.max(dayStart.value, evTime(e)))
@@ -128,6 +224,9 @@ function segOfEvent(e: EventItem): RecordingSegment | undefined {
   return segments.value.find((s) => ts >= s.start && ts <= s.end)
 }
 
+// 初次建立回放会话时，选到「当日最早的录像段」而不是第一段的起点：
+// 第一段可能在凌晨（00:46），用户一进页面就看到半夜画面且时间轴游标
+// 在最左边，直觉上会以为「今天没录上」。默认从有代表性的最早时段播放。
 async function rebuildPlayable() {
   playable?.destroy()
   playable = null
@@ -135,7 +234,7 @@ async function rebuildPlayable() {
   await nextTick()
   const el = playerRef.value?.getVideoEl()
   if (!el || !device.value || !segments.value.length) return
-  const start = segments.value[0].start
+  const start = earliestInterestingStart()
   currentTs.value = start
   playing.value = true
   seekPending.value = false
@@ -146,6 +245,17 @@ async function rebuildPlayable() {
     playable.attach(el)
     playable.setSpeed(speed.value)
   }
+}
+
+// 在已排序的录像段里挑一个更「可看」的起点：
+// 优先取 06:00 之后的第一段（避免默认停在深夜），否则退回第一段。
+function earliestInterestingStart(): number {
+  const day = dayStart.value
+  const morning = day + 6 * 3600000
+  for (const s of segments.value) {
+    if (s.end > morning) return Math.max(s.start, morning) < s.end ? Math.max(s.start, morning) : s.start
+  }
+  return segments.value[0].start
 }
 
 async function buildSession(fromTs: number) {
@@ -388,6 +498,9 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 事件联动：点事件跳到对应时刻播放；含事件的录像段在时间轴上已着色 -->
+        <!-- 事件与分段不再互斥：当天有事件时，事件列表在上、按小时折叠的分段在下。
+             原先用 v-if/v-else 二选一，导致「有事件的那天看不到分段列表」——
+             而恰恰是有事件的日子更需要按时间翻找录像。 -->
         <div v-if="dayEvents.length" class="seg-list evt-list">
           <span
             v-for="e in dayEvents"
@@ -406,19 +519,63 @@ onBeforeUnmount(() => {
             />
           </span>
         </div>
-        <!-- 当日无事件时回退显示录像分段，保留分段跳转与下载 -->
-        <div v-else class="seg-list">
-          <span
-            v-for="s in segments"
-            :key="s.id"
-            class="seg-item"
-            :class="{ on: currentTs >= s.start && currentTs <= s.end }"
-          >
-            <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
-            <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
-          </span>
+        <!-- 分段列表：默认按「上午/下午 → 小时」折叠；段多时避免超长平铺 -->
+        <div class="seg-wrap">
+          <div v-if="segments.length" class="seg-toolbar">
+            <span class="seg-count">
+              当日 {{ segments.length }} 段 · {{ fmtDur(totalMinutes) }}
+            </span>
+            <span class="seg-mode" @click="groupMode = !groupMode">
+              <van-icon :name="groupMode ? 'bars' : 'wap-nav'" size="14" />
+              {{ groupMode ? '按小时折叠' : '平铺显示' }}
+            </span>
+          </div>
+
+          <template v-if="groupMode">
+            <div v-for="half in halfGroups" :key="half.key" class="half-block">
+              <div class="half-head">
+                <span class="half-title">{{ half.title }}</span>
+                <span class="half-meta">{{ half.segCount }} 段 · {{ fmtDur(half.durationMin) }}</span>
+              </div>
+              <div v-for="h in half.hours" :key="h.key" class="hour-block">
+                <div class="hour-head" :class="{ open: openHours.includes(h.key) }" @click="toggleHour(h.key)">
+                  <van-icon :name="openHours.includes(h.key) ? 'arrow-down' : 'arrow'" size="13" />
+                  <span class="hour-label mono">{{ h.hourLabel }}</span>
+                  <span class="hour-meta">{{ h.segs.length }} 段 · {{ fmtDur(h.durationMin) }}</span>
+                </div>
+                <div v-show="openHours.includes(h.key)" class="seg-list">
+                  <span
+                    v-for="s in h.segs"
+                    :key="s.id"
+                    class="seg-item"
+                    :class="{ on: currentTs >= s.start && currentTs <= s.end }"
+                  >
+                    <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
+                    <van-icon
+                      v-if="isBackend() && !isDemoMode()"
+                      name="down"
+                      class="seg-dl"
+                      @click.stop="downloadSegment(s)"
+                    />
+                  </span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="seg-list">
+            <span
+              v-for="s in segments"
+              :key="s.id"
+              class="seg-item"
+              :class="{ on: currentTs >= s.start && currentTs <= s.end }"
+            >
+              <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
+              <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
+            </span>
+          </div>
+
           <span v-if="!segments.length" class="none">当日无录制</span>
-          <span v-else class="none">当日无事件，以上为录像分段</span>
         </div>
       </div>
     </div>
@@ -494,6 +651,89 @@ onBeforeUnmount(() => {
 .tl-head span:first-child {
   color: var(--nvr-text);
   font-weight: 600;
+}
+.seg-wrap {
+  padding: 4px 14px 14px;
+}
+/* 工具栏：段数统计 + 折叠/平铺切换 */
+.seg-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 8px;
+  font-size: 12px;
+  color: var(--nvr-text-2);
+}
+.seg-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seg-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+  cursor: pointer;
+}
+.seg-mode:active {
+  color: var(--nvr-accent);
+}
+/* 上午 / 下午 */
+.half-block + .half-block {
+  margin-top: 10px;
+}
+.half-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 2px;
+}
+.half-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.half-meta {
+  font-size: 11px;
+  color: var(--nvr-text-2);
+}
+/* 小时行 */
+.hour-block {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--nvr-border);
+  margin-bottom: 6px;
+}
+.hour-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  background: var(--nvr-panel-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+.hour-head.open {
+  color: var(--nvr-accent);
+}
+.hour-label {
+  font-weight: 600;
+}
+.hour-meta {
+  margin-left: auto;
+  color: var(--nvr-text-2);
+  font-size: 11px;
+}
+.seg-wrap .seg-list {
+  padding: 8px 10px 10px;
+  background: var(--nvr-panel);
 }
 .seg-list {
   display: flex;

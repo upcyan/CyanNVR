@@ -16,6 +16,8 @@ const emit = defineEmits<{
 
 const videoEl = ref<HTMLVideoElement | null>(null)
 let playable: Playable | null = null
+// 进入大画面后 HLS 出帧前给明确加载态，而不是全黑一片
+const videoReady = ref(false)
 
 function hash(s: string) {
   let h = 0
@@ -26,6 +28,7 @@ function hash(s: string) {
 async function openStream() {
   playable?.destroy()
   playable = null
+  videoReady.value = false
   if (!props.device?.online) return
   await nextTick()
   if (videoEl.value && props.device) {
@@ -41,6 +44,7 @@ async function openStream() {
 function closeStream() {
   playable?.destroy()
   playable = null
+  videoReady.value = false
 }
 
 watch(
@@ -119,7 +123,18 @@ if (typeof document !== 'undefined') {
         </span>
       </div>
       <div class="vbody">
-        <video ref="videoEl" muted playsinline v-show="device?.online" />
+        <video
+          ref="videoEl"
+          muted
+          playsinline
+          v-show="device?.online"
+          @loadeddata="videoReady = true"
+          @playing="videoReady = true"
+        />
+        <div v-if="device?.online && !videoReady" class="voffline">
+          <van-loading size="30" color="#2ea8ff" />
+          <span>画面加载中…</span>
+        </div>
         <div v-if="!device?.online" class="voffline">
           <van-icon name="warning-o" size="36" />
           <span>摄像机已离线</span>

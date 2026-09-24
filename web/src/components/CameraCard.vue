@@ -15,6 +15,10 @@ const emit = defineEmits<{
 const rootRef = ref<HTMLElement | null>(null)
 const videoEl = ref<HTMLVideoElement | null>(null)
 const visible = ref(false)
+// HLS 首帧尚未解码时 video 保持黑屏，卡片看起来像「画面坏了」。
+// 用事件标记就绪状态，未就绪期间显示加载占位，出帧后淡出。
+const videoReady = ref(false)
+let loadTimer = 0
 let playable: Playable | null = null
 let observer: IntersectionObserver | null = null
 
@@ -26,6 +30,13 @@ function hash(s: string) {
 
 function attach() {
   if (playable || !videoEl.value || !props.device.online || !visible.value) return
+  videoReady.value = false
+  // 12 秒仍未出帧：提示可能原因（如无版权解码器/分辨率过高），
+  // 避免用户对着无限转圈干等。
+  window.clearTimeout(loadTimer)
+  loadTimer = window.setTimeout(() => {
+    if (!videoReady.value) loadTimeout.value = true
+  }, 12000)
   playable = createPlayable({
     url: props.streamUrl,
     seed: hash(props.device.id),
@@ -34,9 +45,20 @@ function attach() {
   playable.attach(videoEl.value)
 }
 
+const loadTimeout = ref(false)
+
+function onVideoReady() {
+  videoReady.value = true
+  loadTimeout.value = false
+  window.clearTimeout(loadTimer)
+}
+
 function detach() {
+  window.clearTimeout(loadTimer)
+  loadTimeout.value = false
   playable?.destroy()
   playable = null
+  videoReady.value = false
   if (videoEl.value) videoEl.value.srcObject = null
 }
 
@@ -73,9 +95,28 @@ onBeforeUnmount(() => {
     :class="{ offline: !device.online, live: device.online }"
     @click="device.online && emit('enter', device)"
   >
-    <video ref="videoEl" class="bg" muted playsinline v-show="device.online" />
+    <video
+      ref="videoEl"
+      class="bg"
+      muted
+      playsinline
+      v-show="device.online"
+      @loadeddata="onVideoReady"
+      @playing="onVideoReady"
+    />
     <div class="shade top" />
     <div class="shade bottom" />
+    <!-- 在线但首帧未出：给明确的加载态，而不是一块死黑 -->
+    <div v-if="device.online && !videoReady" class="center loading-tip">
+      <template v-if="!loadTimeout">
+        <van-loading size="26" color="#2ea8ff" />
+        <span>画面加载中…</span>
+      </template>
+      <template v-else>
+        <van-icon name="warning-o" size="26" color="#ffb054" />
+        <span>加载较慢，检查浏览器解码支持或降低摄像头分辨率</span>
+      </template>
+    </div>
 
     <div class="hd">
       <span class="cam-icon"><van-icon name="video-o" size="16" /></span>
@@ -213,6 +254,16 @@ onBeforeUnmount(() => {
   gap: 8px;
   color: rgba(255, 255, 255, 0.6);
   font-size: 13px;
+}
+.loading-tip {
+  flex-direction: column;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  text-align: center;
+  padding: 0 24px;
 }
 .more {
   position: absolute;

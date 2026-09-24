@@ -20,7 +20,7 @@ type loginReq struct {
 // loginRateLimiter is a simple per-IP sliding-window limiter for the login
 // endpoint: max 10 attempts per minute per IP.
 type loginRateLimiter struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	attempts map[string][]time.Time
 }
 
