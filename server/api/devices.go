@@ -682,6 +682,19 @@ func (s *Server) createPlayback(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": "/api/stream/playback/" + sess.Name + "/index.m3u8", "session": sess.Name})
 }
 
+// stopPlayback 结束一个回放会话并回收其转码进程。
+// 前端在离开回放页/切换设备时调用，避免转码进程在后台白跑
+// （单次回放要转码整个请求窗口，实测可占 80% CPU）。
+func (s *Server) stopPlayback(c *gin.Context) {
+	name := safePathID(c.Param("session"))
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session"})
+		return
+	}
+	stopped := s.hls.StopPlayback(name)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "stopped": stopped})
+}
+
 // playbackNeedsTranscode reports whether recorded segments must be re-encoded
 // to h264 so the browser can play them back (e.g. HEVC cameras).
 func (s *Server) playbackNeedsTranscode(d *models.Device) bool {

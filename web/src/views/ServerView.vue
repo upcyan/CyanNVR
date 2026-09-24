@@ -274,10 +274,17 @@ function goBack() {
 </template>
 
 <style scoped>
+/* 单表单页：居中窄栏比铺满更好读（输入框过长反而难扫视），
+   但 760px 在 2K 屏上偏窄，宽屏放宽到 900px。 */
 .server-page {
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
+}
+@media (min-width: 1400px) {
+  .server-page {
+    max-width: 900px;
+  }
 }
 .actions {
   padding: 20px 16px;

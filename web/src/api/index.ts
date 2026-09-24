@@ -245,6 +245,16 @@ export async function createPlayback(
   return `${server.base}${data.url}${token ? `?token=${token}` : ''}`
 }
 
+/** 结束回放会话：停止服务端转码进程，避免离开页面后仍在占 CPU */
+export async function stopPlayback(session: string): Promise<void> {
+  if (!session || isDemoMode() || !backendOk) return
+  try {
+    await http.post(`/api/playback/${session}/stop`)
+  } catch {
+    /* 停止失败无妨：服务端有 TTL 兜底回收 */
+  }
+}
+
 // ---- events ----
 
 export async function fetchEvents(deviceId = '', date = '', type = '', offset = 0, limit = 50): Promise<{ events: EventItem[]; total: number }> {

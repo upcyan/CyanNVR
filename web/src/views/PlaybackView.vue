@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { createPlayback, downloadRecordingURL, fetchDaySegments, fetchEvents, fetchMonthRecords, isBackend, isDemoMode } from '../api'
+import { apiBase, createPlayback, downloadRecordingURL, fetchDaySegments, fetchEvents, fetchMonthRecords, isBackend, isDemoMode, stopPlayback } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -30,6 +30,10 @@ const showDevicePicker = ref(false)
 const loading = ref(false)
 // 已请求跳转、但新会话/新位置尚未生效。此期间抑制定时器回写游标。
 const seekPending = ref(false)
+// 当前回放会话名：离开页面/换会话时通知服务端停掉转码进程
+let currentSession = ''
+// 回放准备失败的原因（如「无录像」「转码超时」），显示给用户
+const playError = ref('')
 
 const playerRef = ref<InstanceType<typeof PlaybackPlayer> | null>(null)
 let playable: Playable | null = null
@@ -237,10 +241,13 @@ async function rebuildPlayable() {
   const start = earliestInterestingStart()
   currentTs.value = start
   playing.value = true
-  seekPending.value = false
   if (isBackend() && !isDemoMode()) {
+    // 首屏也要显示「正在准备回放」：H.265 源需服务端转码，
+    // 实测首个分片要约 18 秒，没有提示用户会以为页面坏了。
+    seekPending.value = true
     buildSession(start)
   } else {
+    seekPending.value = false
     playable = createPlayable({ seed: hashStr(deviceId.value), label: device.value.name, baseTs: start })
     playable.attach(el)
     playable.setSpeed(speed.value)
@@ -249,11 +256,18 @@ async function rebuildPlayable() {
 
 // 在已排序的录像段里挑一个更「可看」的起点：
 // 优先取 06:00 之后的第一段（避免默认停在深夜），否则退回第一段。
+//
+// 关键：必须落在**真实存在的录像段内**。此前实现是「取 06:00 后的第一段、
+// 并把起点截到 06:00」，当 06:00~首段之间有长时间空档时（例如当天服务重启过、
+// 录像从 10:01 才开始），算出的时间点会落进空档 → 后端返回
+// "no recordings in range" → 回放页一直转圈。
+// 这里改为：找到 06:00 之后的第一段后，起点直接取该段自身的 start。
 function earliestInterestingStart(): number {
   const day = dayStart.value
   const morning = day + 6 * 3600000
   for (const s of segments.value) {
-    if (s.end > morning) return Math.max(s.start, morning) < s.end ? Math.max(s.start, morning) : s.start
+    // 段的结束时间在 06:00 之后，说明这段属于「白天」，从它开头看即可
+    if (s.end > morning) return s.start
   }
   return segments.value[0].start
 }
@@ -265,6 +279,12 @@ async function buildSession(fromTs: number) {
   if (winEnd <= winStart) return
   try {
     const url = await createPlayback(deviceId.value, winStart, winEnd)
+    // 从 URL 中解析会话名：/api/stream/playback/<session>/index.m3u8
+    const m = /\/playback\/([^/]+)\//.exec(url)
+    const prev = currentSession
+    currentSession = m ? m[1] : ''
+    // 换会话时停掉上一个，避免多个转码进程同时占编码器
+    if (prev && prev !== currentSession) stopPlayback(prev)
     if (token !== sessionToken) return
     const el = playerRef.value?.getVideoEl()
     if (!el) return
@@ -275,9 +295,14 @@ async function buildSession(fromTs: number) {
     // 新会话已就绪：游标回到真实播放位置，并恢复由播放位置驱动进度条
     currentTs.value = playable.time
     seekPending.value = false
-  } catch {
-    // 请求失败（如窗口内无录像）：解除挂起，否则进度条会一直不跟随播放
+    playError.value = ''
+  } catch (e: any) {
+    // 请求失败：可能是「窗口内无录像」，也可能是后端等首个分片超时
+    // （HEVC 源需转码，实测首片要数秒）。把后端给的原因显示出来，
+    // 否则用户只看到进度条不动，无从判断。
     seekPending.value = false
+    const msg = e?.response?.data?.error
+    if (msg) playError.value = msg
   }
 }
 
@@ -437,6 +462,18 @@ onBeforeUnmount(() => {
   if (seekTimer) window.clearTimeout(seekTimer)
   playable?.destroy()
   playable = null
+  // 离开回放页立即结束服务端会话：转码是「一次性顺序转码整个请求窗口」，
+  // 不主动停就会在后台白跑十几分钟并持续占用编码器（实测 80% CPU）。
+  // 用 sendBeacon 而非普通请求：页面卸载时 fetch 可能被浏览器取消。
+  if (currentSession && isBackend() && !isDemoMode()) {
+    const token = localStorage.getItem('nvr_token')
+    const url = `${apiBase()}/api/playback/${currentSession}/stop${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const ok = navigator.sendBeacon?.(url)
+    // sendBeacon 以 POST 发送空体，不带 Authorization 头，因此后端
+    // 通过 query 里的 token 鉴权；不支持时退回普通请求。
+    if (!ok) stopPlayback(currentSession)
+    currentSession = ''
+  }
 })
 </script>
 
@@ -476,9 +513,10 @@ onBeforeUnmount(() => {
             @speed="onSpeed"
             @fullscreen="onFullscreen"
           />
-          <div v-if="loading || seekPending" class="loading-mask">
-            <van-loading />
-            <span v-if="seekPending && !loading" class="seek-hint">跳转中…</span>
+          <div v-if="loading || seekPending || playError" class="loading-mask">
+            <van-loading v-if="loading || seekPending" />
+            <span v-if="seekPending && !loading" class="seek-hint">正在准备回放…</span>
+            <span v-else-if="playError && !loading" class="seek-hint err">{{ playError }}</span>
           </div>
         </div>
 
@@ -632,6 +670,12 @@ onBeforeUnmount(() => {
   gap: 8px;
   background: rgba(0, 0, 0, 0.45);
   z-index: 2;
+}
+.seek-hint.err {
+  color: var(--nvr-amber, #ffb054);
+  max-width: 80%;
+  text-align: center;
+  line-height: 1.6;
 }
 .seek-hint {
   font-size: 12px;

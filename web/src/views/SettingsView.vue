@@ -7,7 +7,6 @@ import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
 import { http } from '../api/client'
 import {
-  changeOwnPassword,
   createUser,
   deleteUser,
   fetchStatus,
@@ -63,8 +62,6 @@ function applyRetentionSize() {
 const showStartPicker = ref(false)
 const showEndPicker = ref(false)
 const showAIModePicker = ref(false)
-const pwd = ref({ old: '', next: '', confirm: '' })
-const showPwdDialog = ref(false)
 
 const aiModeOptions = [
   { text: '本地对象检测', value: 'local' },
@@ -180,18 +177,10 @@ function onEndConfirm(c: string[]) {
   showEndPicker.value = false
 }
 
+// 保存设置（不含密码：改密码统一走「用户管理 → 编辑用户」）
 async function save() {
-  if (pwd.value.next !== pwd.value.confirm) {
-    showToast('两次输入的新密码不一致')
-    return
-  }
   saving.value = true
   try {
-    if (isBackend() && pwd.value.old && pwd.value.next) {
-      await changeOwnPassword(pwd.value.old, pwd.value.next)
-      pwd.value = { old: '', next: '', confirm: '' }
-      showPwdDialog.value = false
-    }
     await store.save()
     showToast('设置已保存')
   } catch (e: any) {
@@ -525,7 +514,8 @@ async function removeUser(u: ManagedUser) {
   <div class="page settings-page">
     <van-nav-bar title="设置" left-arrow @click-left="goBack" />
 
-    <van-cell-group title="存储管理">
+    <div class="set-block">
+      <van-cell-group title="存储管理">
       <van-cell
         v-if="store.storage.totalGB > 0"
         title="存储空间"
@@ -592,8 +582,10 @@ async function removeUser(u: ManagedUser) {
         </template>
       </van-cell>
     </van-cell-group>
+    </div>
 
-    <van-cell-group title="录像策略">
+    <div class="set-block">
+      <van-cell-group title="录像策略">
       <van-radio-group :model-value="s.recordMode" @update:model-value="setMode">
         <van-cell v-for="o in modeOptions" :key="o.value" clickable @click="setMode(o.value)">
           <template #title>
@@ -613,8 +605,10 @@ async function removeUser(u: ManagedUser) {
         </template>
       </van-cell>
     </van-cell-group>
+    </div>
 
-    <van-cell-group title="通知">
+    <div class="set-block">
+      <van-cell-group title="通知">
       <van-cell title="移动侦测告警" label="检测到移动时推送通知">
         <template #right-icon>
           <van-switch :model-value="s.motionPush" @update:model-value="store.set({ motionPush: $event })" />
@@ -626,8 +620,10 @@ async function removeUser(u: ManagedUser) {
         </template>
       </van-cell>
     </van-cell-group>
+    </div>
 
-    <van-cell-group title="显示与无障碍">
+    <div class="set-block">
+      <van-cell-group title="显示与无障碍">
       <van-cell title="深色模式" label="切换界面主题">
         <template #right-icon>
           <van-switch :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
@@ -660,8 +656,10 @@ async function removeUser(u: ManagedUser) {
         </template>
       </van-cell>
     </van-cell-group>
+    </div>
 
-    <van-cell-group title="服务器">
+    <div class="set-block">
+      <van-cell-group title="服务器">
       <van-cell
         title="服务器地址"
         label="局域网 / 公网连接，自动判断"
@@ -669,8 +667,10 @@ async function removeUser(u: ManagedUser) {
         @click="$router.push('/server')"
       />
     </van-cell-group>
+    </div>
 
-    <van-cell-group title="AI 画面识别">
+    <div class="set-block">
+      <van-cell-group title="AI 画面识别">
       <van-cell title="启用 AI 识别" label="本地对象检测（默认），或切换云端视觉模型">
         <template #right-icon>
           <van-switch :model-value="s.ai.enabled" @update:model-value="store.set({ ai: { ...s.ai, enabled: $event } })" />
@@ -809,23 +809,12 @@ async function removeUser(u: ManagedUser) {
         />
       </van-popup>
     </van-cell-group>
+    </div>
 
-    <!-- 账户安全：只放「改我的密码」，点开即改，一级目录不再裸露三个密码框 -->
-    <van-cell-group title="账户安全">
-      <van-cell
-        title="修改我的密码"
-        :label="`当前账号 ${auth.user?.username || ''} · 修改后需重新登录`"
-        is-link
-        @click="showPwdDialog = true"
-      >
-        <template #right-icon>
-          <van-icon name="lock" class="user-action lock" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-
-    <!-- 用户管理：独立成组，管理员可见 -->
-    <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
+    <!-- 用户管理：独立成组，管理员可见。改密码统一走此处的「编辑用户」，
+         不再单设「账户安全 → 修改我的密码」（与编辑自己那条重复）。 -->
+    <div class="set-block">
+      <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
       <van-cell
         v-for="u in users"
         :key="u.id"
@@ -858,6 +847,7 @@ async function removeUser(u: ManagedUser) {
         </van-button>
       </div>
     </van-cell-group>
+    </div>
 
     <div v-if="appVersion" class="about-version">
       CyanNVR v{{ appVersion }} · 看到此行 = 已加载最新界面（否则请强制刷新 Ctrl+Shift+R 或重开窗口）
@@ -879,22 +869,6 @@ async function removeUser(u: ManagedUser) {
         退出登录
       </van-button>
     </div>
-
-    <!-- 修改我的密码（从「账户安全」点入，收起一级目录的裸露字段） -->
-    <van-popup v-model:show="showPwdDialog" position="bottom" round :style="{ maxHeight: '85%' }">
-      <div class="dialog-head">
-        <span>修改我的密码</span>
-        <van-icon name="cross" size="18" @click="showPwdDialog = false" />
-      </div>
-      <van-cell-group inset style="margin: 0 10px">
-        <van-field v-model="pwd.old" type="password" label="原密码" placeholder="请输入原密码" />
-        <van-field v-model="pwd.next" type="password" label="新密码" placeholder="请输入新密码（至少8位）" />
-        <van-field v-model="pwd.confirm" type="password" label="确认密码" placeholder="再次输入新密码" />
-      </van-cell-group>
-      <div class="dialog-actions">
-        <van-button type="primary" block round :loading="saving" @click="save">确认修改</van-button>
-      </div>
-    </van-popup>
 
     <van-popup v-model:show="showStatus" position="bottom" round :style="{ maxHeight: '80%' }" @closed="closeStatusTimer">
       <div class="dialog-head">
@@ -979,10 +953,6 @@ async function removeUser(u: ManagedUser) {
         <span>{{ editingUser ? '编辑用户' : '添加用户' }}</span>
         <van-icon name="cross" size="18" @click="showUserDialog = false" />
       </div>
-      <div v-if="editingUser" class="dialog-quick">
-        <van-button type="primary" size="small" round icon="edit" @click="renameUser">改名</van-button>
-        <van-button type="warning" plain size="small" round icon="lock" @click="changeUserPassword">改密码</van-button>
-      </div>
       <van-cell-group inset style="margin: 0 10px">
         <van-field
           v-if="editingUser"
@@ -991,6 +961,7 @@ async function removeUser(u: ManagedUser) {
           disabled
           class="uid-field"
         />
+        <!-- 用户名 + 改名：按钮贴在对应字段下方并右对齐，改完立即生效 -->
         <van-field
           v-model="userForm.username"
           label="用户名"
@@ -1155,20 +1126,6 @@ async function removeUser(u: ManagedUser) {
   opacity: .8;
 }
 /* 对话框按钮区与 UID 展示 */
-/* 弹窗顶部快速操作按钮 */
-.dialog-quick {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  padding: 8px 16px 0;
-}
-.dialog-quick .van-button.flash {
-  animation: btnFlash 1s ease 2;
-}
-@keyframes btnFlash {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 168, 255, 0); }
-  50% { box-shadow: 0 0 0 6px rgba(46, 168, 255, .4); }
-}
 /* 行内改名图标颜色 */
 .user-action.rename {
   color: var(--nvr-accent);
@@ -1419,11 +1376,53 @@ async function removeUser(u: ManagedUser) {
   line-height: 1.6;
 }
 
+/* PC 宽屏：设置项原本一字排开在 760px 窄栏里，2K 屏上只占中间一小条。
+ *
+ * 注意 `.page`（全局 theme.css）是 `display:flex; flex-direction:column`，
+ * flex 容器会忽略 column-count，所以这里必须显式覆盖 display。
+ * 采用 flex-wrap + 固定基宽：每个「标题 + 分组」由 JS 包成 .set-block，
+ * 这样成组元素永远在同一列内（Grid/multicol 会把 Vant 渲染成兄弟节点的
+ * 标题与内容拆到不同列）。 */
 @media (min-width: 900px) {
   .settings-page {
-    max-width: 760px;
-    margin: 0 auto;
     width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0 20px;
+  }
+}
+@media (min-width: 1200px) {
+  .settings-page {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 0 20px;
+  }
+  /* 导航栏独占一行 */
+  .settings-page > .van-nav-bar {
+    flex: 0 0 100%;
+  }
+  /* 每个分栏块占 1/2 宽（两列） */
+  .settings-page :deep(.set-block) {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .settings-page :deep(.set-block) > .van-cell-group {
+    margin-bottom: 6px;
+  }
+  .settings-page :deep(.set-block) > .van-cell-group,
+  .settings-page :deep(.set-block) .van-cell {
+    max-width: none;
+  }
+}
+@media (min-width: 1700px) {
+  /* 超宽屏三列 */
+  .settings-page :deep(.set-block) {
+    flex: 1 1 calc(33.333% - 14px);
   }
 }
 /* 推理后端标签：GPU 类后端用醒目色，CPU 用中性色，避免用户误以为已开硬件加速 */

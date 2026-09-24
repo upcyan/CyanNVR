@@ -230,6 +230,8 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/devices/:id/recordings/:date/:time/download", s.downloadRecording)
 	protected.GET("/devices/:id/month", s.deviceMonth)
 	protected.POST("/devices/:id/playback", s.createPlayback)
+	// 结束回放会话：前端离开页面时调用，立即停掉转码进程
+	protected.POST("/playback/:session/stop", s.stopPlayback)
 
 	protected.GET("/events", s.listEvents)
 	protected.GET("/events/:id/snapshot", s.eventSnapshot)
