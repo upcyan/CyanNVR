@@ -36,18 +36,22 @@ info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# ── 版本解析与自动 bump ──
+# ── 版本解析与 bump 规则 ──
 # 版本分离：核心版本 x.y.z 写入 server/version.go，
 # FPK 修订号 r 由本脚本维护，最终 fpk 版本为 x.y.z-r
 # （fnOS 只接受 x.y.z[-r]，四段式 x.y.z.r 会被拒绝）。
 #
-# 自动 bump 规则（依据「自上次打包以来变了什么」）：
-#   只动 fpk/            -> patch +1   （改向导、图标、生命周期脚本等）
-#   动了 server/、web/   -> minor +1   （功能或修复改动）
-#   大改动               -> 用 --bump=major 手动指定第一位 +1
-#   没有任何改动         -> 核心版本不变，只递增修订号 r 重新出包
+# bump 规则（脚本只自动做 patch，minor/major 由人工指定）：
+#   只动 fpk/ 或源码无变化 -> 核心版本不变，仅递增修订号 r 重新出包
+#   动了 server/、web/     -> patch +1（默认 auto 行为）
+#   成规模的功能改动       -> 打包时加 --bump=minor，中间位 +1（x.y.0）
+#   大改动                 -> 打包时加 --bump=major，第一位 +1（y.0.0）
 #
-# 判定依据是源码内容哈希（存在 version.env），不依赖 git 状态，
+# 为什么 minor/major 不自动判定：「这次改动算小改还是大改」是语义判断，
+# 无法从源码哈希差异里可靠推断（改动 3 行也可能是重要特性）。因此 auto
+# 保守地只升 patch，并在检测到核心变更时提示可用 --bump=minor 重跑。
+#
+# 判定依据是源码内容哈希（记录在 version.env），不依赖 git 提交状态，
 # 因此在未提交的工作区上也能正确判断。
 #
 # 参数：
@@ -64,7 +68,12 @@ for arg in "$@"; do
         --bump=*) BUMP_MODE="${arg#*=}" ;;
         -h|--help)
             echo "用法: $0 [--bump=auto|major|minor|patch|none] [--revision=N] [--no-bump]"
-            echo "  默认按源码变更范围自动决定核心版本，并递增 FPK 修订号"
+            echo "  auto  : 核心源码有变更 -> patch+1；只动 fpk/ 或无变化 -> 核心版本不变"
+            echo "  minor : 中间位 +1（x.y.0），用于成规模的功能改动"
+            echo "  major : 第一位 +1（y.0.0），用于大改动"
+            echo "  patch : 末位 +1（x.y.z）"
+            echo "  none  : 核心版本保持不变"
+            echo "  默认每次打包都会递增 FPK 修订号 r"
             exit 0
             ;;
         *) error "未知参数: $arg" ;;
@@ -93,11 +102,11 @@ semver_bump() {
     esac
 }
 
-# ── 源码内容哈希（判定变更范围）──
+# ── 源码内容哈希（判定核心源码是否变化）──
 # 用 git 跟踪列表取「源码」：.gitignore 已经把 app/cyannvr、app/dist、
 # manifest、package/、*.fpk、version.env 等构建产物排除在外，
 # 因此这里天然只覆盖真正的源文件（含 fpk/app/ui 这类手工维护的资源）。
-# version.go 由本脚本改写，必须排除，否则每次打包都会自我触发 minor bump。
+# version.go 由本脚本改写，必须排除，否则每次打包都会自我触发 bump。
 source_hash() {
     local pathspec="$1"
     {
@@ -109,8 +118,10 @@ source_hash() {
     done | sha256sum | cut -c1-16
 }
 
+# 只对核心源码取哈希：fpk/ 的改动（向导、图标、生命周期脚本）不影响应用功能，
+# 按规则不 bump 核心版本，因此无需参与判定。
+# FPK_HASH 仍会被记录到 version.env，仅用于诊断。
 CORE_NOW=$(source_hash "server web Dockerfile")
-FPK_NOW=$(source_hash "fpk")
 [ -n "$CORE_NOW" ] || error "无法计算核心源码哈希（git 仓库状态异常？）"
 
 # 读取上次打包的状态
@@ -123,6 +134,10 @@ if [ -f "$VERSION_ENV" ]; then
 fi
 
 # 决定新的核心版本
+#
+# auto 只负责 patch：核心源码变了就 +1；只动 fpk/ 或完全没变则不动核心版本。
+# minor / major 交由人工判断（--bump=minor / --bump=major）——
+# 「这次改动算小改还是大改」是语义判断，脚本无法从哈希差异可靠推断。
 NEW_CORE="$CORE_VERSION"
 case "$BUMP_MODE" in
     none)
@@ -136,13 +151,13 @@ case "$BUMP_MODE" in
         if [ -z "$CORE_HASH" ]; then
             warn "首次运行（无源码基线）：记录基线，核心版本保持 $CORE_VERSION"
         elif [ "$CORE_NOW" != "$CORE_HASH" ]; then
-            NEW_CORE=$(semver_bump "$CORE_VERSION" minor)
-            info "检测到核心源码（server/、web/）变更 -> 核心版本 $CORE_VERSION -> $NEW_CORE"
-        elif [ "$FPK_NOW" != "$FPK_HASH" ]; then
             NEW_CORE=$(semver_bump "$CORE_VERSION" patch)
-            info "仅 fpk/ 打包相关变更 -> 核心版本 $CORE_VERSION -> $NEW_CORE"
+            info "检测到核心源码（server/、web/）变更 -> 核心版本 $CORE_VERSION -> $NEW_CORE（patch）"
+            info "  若本次是成规模的功能改动，请改用 --bump=minor 重跑以取得正确的版本号"
         else
-            info "源码无变化 -> 核心版本保持 $CORE_VERSION（复用同一个核心版本重新出包）"
+            # 只动 fpk/（向导、图标、生命周期脚本）或完全没变：
+            # 都不是应用功能变化，核心版本保持，仅递增修订号 r 重新出包。
+            info "核心源码无变化 -> 核心版本保持 $CORE_VERSION（仅递增 FPK 修订号重新出包）"
         fi
         ;;
 esac
