@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -33,6 +33,8 @@ const saving = ref(false)
 // ---- 循环覆盖：保留天数（1-3650）与总容量限额（GB，0 = 不限制） ----
 const retentionDaysText = ref(String(s.retentionDays || 30))
 const retentionSizeText = ref(String(s.retentionSizeGB ?? 0))
+watch(() => s.retentionDays, value => { retentionDaysText.value = String(value) })
+watch(() => s.retentionSizeGB, value => { retentionSizeText.value = String(value ?? 0) })
 const retentionPresets = [30, 90, 180, 365, 730, 1825, 3650]
 const showDaysPicker = ref(false)
 const daysColumns = retentionPresets.map((d) => ({ text: `${d} 天`, value: String(d) }))
@@ -168,12 +170,12 @@ function timeToColumns(t: string): string[] {
 function columnsToTime(c: string[]): string {
   return `${c[0]}:${c[1]}`
 }
-function onStartConfirm(c: string[]) {
-  store.set({ scheduleStart: columnsToTime(c) })
+function onStartConfirm({ selectedValues }: { selectedValues: string[] }) {
+  store.set({ scheduleStart: columnsToTime(selectedValues) })
   showStartPicker.value = false
 }
-function onEndConfirm(c: string[]) {
-  store.set({ scheduleEnd: columnsToTime(c) })
+function onEndConfirm({ selectedValues }: { selectedValues: string[] }) {
+  store.set({ scheduleEnd: columnsToTime(selectedValues) })
   showEndPicker.value = false
 }
 
@@ -514,6 +516,110 @@ async function removeUser(u: ManagedUser) {
   <div class="page settings-page">
     <van-nav-bar title="设置" left-arrow @click-left="goBack" />
 
+    <div class="settings-columns">
+      <section class="settings-column" aria-label="显示、通知与账户">
+    <div class="set-block">
+      <van-cell-group title="显示与无障碍">
+      <van-cell title="深色模式" label="切换界面主题">
+        <template #right-icon>
+          <van-switch aria-label="深色模式" :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
+        </template>
+      </van-cell>
+      <van-cell v-if="!s.careMode" title="字体大小" label="立即生效" class="opt-cell">
+        <template #value>
+          <div class="font-opts">
+            <button
+              v-for="o in fontSizeOptions"
+              :key="o.value"
+              class="font-opt"
+              type="button"
+              :class="{ on: s.fontSize === o.value }"
+              :aria-pressed="s.fontSize === o.value"
+              :aria-label="o.label + '字体'"
+              @click="setFontSize(o.value)"
+            >
+              {{ o.label }}
+            </button>
+          </div>
+        </template>
+      </van-cell>
+      <van-cell title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
+        <template #right-icon>
+          <van-switch aria-label="关怀模式" :model-value="s.careMode" @update:model-value="setCareMode" />
+        </template>
+      </van-cell>
+      <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
+        <template #right-icon>
+          <van-switch aria-label="演示模式" :model-value="s.demoMode" @update:model-value="setDemoMode" />
+        </template>
+      </van-cell>
+    </van-cell-group>
+    </div>
+
+    <div class="set-block">
+      <van-cell-group title="通知">
+      <van-cell title="移动侦测告警" label="检测到移动时推送通知">
+        <template #right-icon>
+          <van-switch aria-label="移动侦测告警" :model-value="s.motionPush" @update:model-value="store.set({ motionPush: $event })" />
+        </template>
+      </van-cell>
+      <van-cell title="设备离线提醒" label="设备断线时推送通知">
+        <template #right-icon>
+          <van-switch aria-label="设备离线提醒" :model-value="s.offlinePush" @update:model-value="store.set({ offlinePush: $event })" />
+        </template>
+      </van-cell>
+    </van-cell-group>
+    </div>
+
+    <div class="set-block">
+      <van-cell-group title="服务器">
+      <van-cell
+        title="服务器地址"
+        label="局域网 / 公网连接，自动判断"
+        is-link
+        @click="$router.push('/server')"
+      />
+    </van-cell-group>
+    </div>
+
+    <div class="set-block">
+      <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
+      <van-cell
+        v-for="u in users"
+        :key="u.id"
+        :title="u.username"
+        :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · UID ' + u.uid"
+        is-link
+        @click="openEditUser(u)"
+      >
+        <template #right-icon>
+          <span class="ua-btns">
+            <span class="ua-btn" title="编辑 / 改名 / 改密码" @click.stop="openEditUser(u)">
+              <van-icon name="edit" />
+            </span>
+            <span
+              v-if="u.id !== auth.user?.id"
+              class="ua-btn danger"
+              title="删除"
+              @click.stop="removeUser(u)"
+            >
+              <van-icon name="delete-o" />
+            </span>
+          </span>
+        </template>
+      </van-cell>
+      <van-cell v-if="!usersLoaded" title="加载中..." />
+      <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
+      <div style="padding: 12px 16px">
+        <van-button plain block round size="small" @click="openAddUser">
+          <van-icon name="plus" style="margin-right: 4px" />添加用户
+        </van-button>
+      </div>
+    </van-cell-group>
+    </div>
+
+      </section>
+      <section class="settings-column" aria-label="存储、录像与识别">
     <div class="set-block">
       <van-cell-group title="存储管理">
       <van-cell
@@ -553,12 +659,12 @@ async function removeUser(u: ManagedUser) {
               @blur="applyRetentionDays"
             />
             <span class="days">天</span>
-            <van-icon name="arrow-down" class="combo-arrow" @click="showDaysPicker = true" />
+            <button type="button" class="combo-arrow control-button" aria-label="选择保留天数" @click="showDaysPicker = true"><van-icon name="arrow-down" /></button>
           </div>
         </template>
       </van-cell>
       <van-popup v-model:show="showDaysPicker" position="bottom" round>
-        <van-picker
+        <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
           title="循环覆盖保留天数"
           :columns="daysColumns"
           :model-value="[retentionDaysText]"
@@ -599,73 +705,11 @@ async function removeUser(u: ManagedUser) {
       </van-radio-group>
       <van-cell v-if="s.recordMode === 'schedule'" title="录像时间段">
         <template #value>
-          <span class="time-field mono" @click="showStartPicker = true">{{ s.scheduleStart }}</span>
+          <button class="time-field mono control-button" aria-label="录像开始时间" @click="showStartPicker = true">{{ s.scheduleStart }}</button>
           <span class="time-sep">-</span>
-          <span class="time-field mono" @click="showEndPicker = true">{{ s.scheduleEnd }}</span>
+          <button class="time-field mono control-button" aria-label="录像结束时间" @click="showEndPicker = true">{{ s.scheduleEnd }}</button>
         </template>
       </van-cell>
-    </van-cell-group>
-    </div>
-
-    <div class="set-block">
-      <van-cell-group title="通知">
-      <van-cell title="移动侦测告警" label="检测到移动时推送通知">
-        <template #right-icon>
-          <van-switch :model-value="s.motionPush" @update:model-value="store.set({ motionPush: $event })" />
-        </template>
-      </van-cell>
-      <van-cell title="设备离线提醒" label="设备断线时推送通知">
-        <template #right-icon>
-          <van-switch :model-value="s.offlinePush" @update:model-value="store.set({ offlinePush: $event })" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-    </div>
-
-    <div class="set-block">
-      <van-cell-group title="显示与无障碍">
-      <van-cell title="深色模式" label="切换界面主题">
-        <template #right-icon>
-          <van-switch :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
-        </template>
-      </van-cell>
-      <van-cell title="字体大小" label="全局文字大小，立即生效；关怀模式下整体已放大，仍可微调">
-        <template #value>
-          <div class="font-opts">
-            <span
-              v-for="o in fontSizeOptions"
-              :key="o.value"
-              class="font-opt"
-              :class="{ on: s.fontSize === o.value && !s.careMode }"
-              :style="{ fontSize: o.size + 'px' }"
-              @click="setFontSize(o.value)"
-            >
-              A
-            </span>
-          </div>
-        </template>
-      </van-cell>
-      <van-cell title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
-        <template #right-icon>
-          <van-switch :model-value="s.careMode" @update:model-value="setCareMode" />
-        </template>
-      </van-cell>
-      <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
-        <template #right-icon>
-          <van-switch :model-value="s.demoMode" @update:model-value="setDemoMode" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-    </div>
-
-    <div class="set-block">
-      <van-cell-group title="服务器">
-      <van-cell
-        title="服务器地址"
-        label="局域网 / 公网连接，自动判断"
-        is-link
-        @click="$router.push('/server')"
-      />
     </van-cell-group>
     </div>
 
@@ -673,12 +717,12 @@ async function removeUser(u: ManagedUser) {
       <van-cell-group title="AI 画面识别">
       <van-cell title="启用 AI 识别" label="本地对象检测（默认），或切换云端视觉模型">
         <template #right-icon>
-          <van-switch :model-value="s.ai.enabled" @update:model-value="store.set({ ai: { ...s.ai, enabled: $event } })" />
+          <van-switch aria-label="启用 AI 识别" :model-value="s.ai.enabled" @update:model-value="store.set({ ai: { ...s.ai, enabled: $event } })" />
         </template>
       </van-cell>
       <template v-if="s.ai.enabled">
         <van-field
-          v-model="s.ai.mode"
+          :model-value="aiModeOptions.find(option => option.value === s.ai.mode)?.text || '本地对象检测'"
           is-link
           readonly
           label="识别引擎"
@@ -706,7 +750,7 @@ async function removeUser(u: ManagedUser) {
             </template>
           </van-cell>
           <van-popup v-model:show="showProviderPicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="推理后端"
               :columns="providerColumns"
               :model-value="[s.ai.provider || 'auto']"
@@ -734,7 +778,7 @@ async function removeUser(u: ManagedUser) {
             @click="showAIModelPicker = true"
           />
           <van-popup v-model:show="showAIModelPicker" position="bottom" round>
-            <van-picker title="检测模型" :columns="aiModelColumns" :model-value="[s.ai.modelPath || '' ]" @confirm="onAIModelConfirm" @cancel="showAIModelPicker = false" />
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5" title="检测模型" :columns="aiModelColumns" :model-value="[s.ai.modelPath || '' ]" @confirm="onAIModelConfirm" @cancel="showAIModelPicker = false" />
           </van-popup>
           <!-- 可下载模型：镜像只内置 yolov8n，其余按需拉取，避免镜像膨胀 -->
           <template v-if="downloadable.length">
@@ -800,7 +844,7 @@ async function removeUser(u: ManagedUser) {
         />
       </template>
       <van-popup v-model:show="showAIModePicker" position="bottom" round>
-        <van-picker
+        <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
           title="识别引擎"
           :columns="aiModeOptions"
           :model-value="[s.ai.mode]"
@@ -811,46 +855,10 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <!-- 用户管理：独立成组，管理员可见。改密码统一走此处的「编辑用户」，
-         不再单设「账户安全 → 修改我的密码」（与编辑自己那条重复）。 -->
-    <div class="set-block">
-      <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
-      <van-cell
-        v-for="u in users"
-        :key="u.id"
-        :title="u.username"
-        :label="(roleOptions.find((r) => r.value === u.role)?.label || u.role) + ' · UID ' + u.uid"
-        is-link
-        @click="openEditUser(u)"
-      >
-        <template #right-icon>
-          <span class="ua-btns">
-            <span class="ua-btn" title="编辑 / 改名 / 改密码" @click.stop="openEditUser(u)">
-              <van-icon name="edit" />
-            </span>
-            <span
-              v-if="u.id !== auth.user?.id"
-              class="ua-btn danger"
-              title="删除"
-              @click.stop="removeUser(u)"
-            >
-              <van-icon name="delete-o" />
-            </span>
-          </span>
-        </template>
-      </van-cell>
-      <van-cell v-if="!usersLoaded" title="加载中..." />
-      <van-cell v-if="usersLoaded && !users.length" title="暂无用户" />
-      <div style="padding: 12px 16px">
-        <van-button plain block round size="small" @click="openAddUser">
-          <van-icon name="plus" style="margin-right: 4px" />添加用户
-        </van-button>
-      </div>
-    </van-cell-group>
+      </section>
     </div>
-
     <div v-if="appVersion" class="about-version">
-      CyanNVR v{{ appVersion }} · 看到此行 = 已加载最新界面（否则请强制刷新 Ctrl+Shift+R 或重开窗口）
+      CyanNVR v{{ appVersion }}
     </div>
 
     <div class="save-area">
@@ -930,7 +938,7 @@ async function removeUser(u: ManagedUser) {
     </van-popup>
 
     <van-popup v-model:show="showStartPicker" position="bottom" round>
-      <van-time-picker
+      <van-time-picker v-picker-desktop :option-height="56" :visible-option-num="5"
         :columns-type="['hour', 'minute']"
         :model-value="timeToColumns(s.scheduleStart)"
         title="开始时间"
@@ -939,7 +947,7 @@ async function removeUser(u: ManagedUser) {
       />
     </van-popup>
     <van-popup v-model:show="showEndPicker" position="bottom" round>
-      <van-time-picker
+      <van-time-picker v-picker-desktop :option-height="56" :visible-option-num="5"
         :columns-type="['hour', 'minute']"
         :model-value="timeToColumns(s.scheduleEnd)"
         title="结束时间"
@@ -989,7 +997,7 @@ async function removeUser(u: ManagedUser) {
     </van-popup>
 
     <van-popup v-model:show="showRolePicker" position="bottom" round>
-      <van-picker
+      <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
         :columns="roleOptions.map((r) => ({ text: r.label, value: r.value }))"
         @confirm="onRoleConfirm"
         @cancel="showRolePicker = false"
@@ -1006,7 +1014,7 @@ async function removeUser(u: ManagedUser) {
   margin: 14px 16px 0;
   text-align: center;
   /* 11px 低于本页最小可读字号，抬到 12px 与其余说明文字齐平 */
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .settings-page :deep(.van-cell__title),
@@ -1020,7 +1028,7 @@ async function removeUser(u: ManagedUser) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .bar {
   width: 110px;
@@ -1043,7 +1051,7 @@ async function removeUser(u: ManagedUser) {
 }
 .group-sub {
   padding: 14px 16px 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   background: var(--nvr-panel-2);
   border-top: 1px solid var(--nvr-border);
@@ -1068,7 +1076,7 @@ async function removeUser(u: ManagedUser) {
 }
 .combo-arrow {
   padding: 6px 2px;
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 /* 推理后端实测结果卡片 */
@@ -1080,7 +1088,7 @@ async function removeUser(u: ManagedUser) {
   border: 1px solid var(--nvr-border);
 }
 .bench-title {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   margin-bottom: 6px;
 }
@@ -1089,7 +1097,7 @@ async function removeUser(u: ManagedUser) {
   align-items: center;
   gap: 8px;
   padding: 4px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .bench-rank {
   width: 18px;
@@ -1098,7 +1106,7 @@ async function removeUser(u: ManagedUser) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   background: var(--nvr-border);
   color: var(--nvr-text-2);
   flex-shrink: 0;
@@ -1114,7 +1122,7 @@ async function removeUser(u: ManagedUser) {
 .bench-detail {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1122,7 +1130,7 @@ async function removeUser(u: ManagedUser) {
 }
 .bench-note {
   margin-top: 6px;
-  font-size: 10px;
+  font-size: calc(10px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   opacity: .8;
 }
@@ -1147,11 +1155,11 @@ async function removeUser(u: ManagedUser) {
 }
 .uid-field :deep(.van-field__control) {
   font-family: monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .uid-note {
   padding: 0 26px 16px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .slider-box {
@@ -1165,7 +1173,7 @@ async function removeUser(u: ManagedUser) {
   min-width: 48px;
 }
 .days {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   min-width: 44px;
 }
@@ -1174,7 +1182,7 @@ async function removeUser(u: ManagedUser) {
 }
 .mode-desc {
   display: block;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   margin-top: 2px;
 }
@@ -1183,7 +1191,7 @@ async function removeUser(u: ManagedUser) {
   border-radius: 6px;
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .time-sep {
   margin: 0 6px;
@@ -1201,8 +1209,10 @@ async function removeUser(u: ManagedUser) {
   flex-wrap: wrap;
 }
 .font-opt {
-  width: 36px;
-  height: 36px;
+  min-width: 60px;
+  min-height: 44px;
+  padding: 8px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   border-radius: 8px;
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel-2);
@@ -1240,11 +1250,11 @@ async function removeUser(u: ManagedUser) {
 .user-action {
   margin-left: 12px;
   color: var(--nvr-text-2);
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
 }
 .user-action.lock {
   color: var(--nvr-accent);
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
 }
 /* 用户管理行内：圆形描边小按钮（比裸图标更清晰、更好点） */
 .ua-btns {
@@ -1262,7 +1272,7 @@ async function removeUser(u: ManagedUser) {
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   color: var(--nvr-text-2);
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
   transition: all .15s ease;
 }
 .ua-btn:active {
@@ -1288,7 +1298,7 @@ async function removeUser(u: ManagedUser) {
   justify-content: space-between;
   padding: 16px;
   font-weight: 600;
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
 }
 
 /* ---- 运行状态弹层 ---- */
@@ -1303,7 +1313,7 @@ async function removeUser(u: ManagedUser) {
   gap: 8px;
   padding: 28px 0;
   color: var(--nvr-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .status-err {
   color: var(--nvr-red);
@@ -1324,11 +1334,11 @@ async function removeUser(u: ManagedUser) {
   min-width: 0;
 }
 .status-item .k {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .status-item .v {
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -1348,7 +1358,7 @@ async function removeUser(u: ManagedUser) {
   justify-content: flex-start;
 }
 .disk-path {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   overflow-wrap: anywhere;
 }
@@ -1362,7 +1372,7 @@ async function removeUser(u: ManagedUser) {
   background: rgba(255, 176, 32, 0.12);
   border: 1px solid rgba(255, 176, 32, 0.4);
   color: var(--nvr-amber);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 1.6;
 }
 .status-warn .van-icon {
@@ -1371,67 +1381,72 @@ async function removeUser(u: ManagedUser) {
 }
 .status-note {
   margin-top: 14px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   text-align: center;
   line-height: 1.6;
 }
 
-/* PC 宽屏：设置项原本一字排开在 760px 窄栏里，2K 屏上只占中间一小条。
- *
- * 注意 `.page`（全局 theme.css）是 `display:flex; flex-direction:column`，
- * flex 容器会忽略 column-count，所以这里必须显式覆盖 display。
- * 采用 flex-wrap + 固定基宽：每个「标题 + 分组」由 JS 包成 .set-block，
- * 这样成组元素永远在同一列内（Grid/multicol 会把 Vant 渲染成兄弟节点的
- * 标题与内容拆到不同列）。 */
+.settings-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.settings-column { min-width: 0; }
+.set-block:empty { display: none; }
 @media (min-width: 900px) {
   .settings-page {
     width: 100%;
-    max-width: none;
+    padding: 0 24px 20px;
     margin: 0;
-    padding: 0 20px;
+    max-width: none;
   }
+  .settings-page > .van-nav-bar { flex-shrink: 0; }
+  .settings-columns {
+    width: 100%;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  .settings-page .save-area {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 14px 0;
+    background: var(--nvr-bg);
+    border-top: 1px solid var(--nvr-border);
+  }
+  .save-area .van-button {
+    width: auto;
+    min-width: 160px;
+    margin-top: 0 !important;
+  }
+  .set-block { margin-bottom: 20px; }
+  .set-block :deep(.van-cell-group) {
+    border: 1px solid var(--nvr-border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .settings-page :deep(.van-cell__title) { min-width: 0; }
+  .settings-page :deep(.van-cell__label) { line-height: 1.6; }
 }
 @media (min-width: 1200px) {
-  .settings-page {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    align-content: flex-start;
-    gap: 0 20px;
-  }
-  /* 导航栏独占一行 */
-  .settings-page > .van-nav-bar {
-    flex: 0 0 100%;
-  }
-  /* 每个分栏块占 1/2 宽（两列） */
-  .settings-page :deep(.set-block) {
-    flex: 1 1 calc(50% - 10px);
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .settings-page :deep(.set-block) > .van-cell-group {
-    margin-bottom: 6px;
-  }
-  .settings-page :deep(.set-block) > .van-cell-group,
-  .settings-page :deep(.set-block) .van-cell {
-    max-width: none;
-  }
-}
-@media (min-width: 1700px) {
-  /* 超宽屏三列 */
-  .settings-page :deep(.set-block) {
-    flex: 1 1 calc(33.333% - 14px);
-  }
+  .settings-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  .settings-page :deep(.van-cell:has(.days-combo)),
+  .settings-page :deep(.van-cell:has(.slider-box)) { flex-wrap: wrap; gap: 10px; }
+  .settings-page :deep(.van-cell:has(.days-combo) > .van-cell__value),
+  .settings-page :deep(.van-cell:has(.slider-box) > .van-cell__value) { flex: 0 0 100%; }
+  .settings-page .slider-box { justify-content: flex-start; }
 }
 /* 推理后端标签：GPU 类后端用醒目色，CPU 用中性色，避免用户误以为已开硬件加速 */
 .backend-tag {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 18px;
   white-space: nowrap;
   color: #fff;

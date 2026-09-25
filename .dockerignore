@@ -1,7 +1,6 @@
 server/data/
 server/cyannvr.exe*
 web/node_modules/
-web/dist/
 models/
 data/
 .git/

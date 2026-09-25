@@ -401,7 +401,7 @@ function applyDevice(d: Device) {
   >
     <div class="header">
       <span>{{ isEdit ? '编辑设备' : mode === 'form' ? '添加设备' : '自动发现' }}</span>
-      <van-icon name="cross" size="18" @click="close" />
+      <button class="control-button" aria-label="关闭设备设置" @click="close"><van-icon name="cross" size="18" /></button>
     </div>
 
     <div class="body">
@@ -451,7 +451,7 @@ function applyDevice(d: Device) {
           </van-cell-group>
 
           <van-popup v-model:show="showBrandPicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="摄像头品牌"
               :columns="brandColumns"
               :model-value="[brand]"
@@ -509,7 +509,7 @@ function applyDevice(d: Device) {
           </van-cell-group>
 
           <van-popup v-model:show="showAIPicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="AI 智能识别"
               :columns="aiModeOptions"
               :model-value="[form.aiEnabled]"
@@ -547,7 +547,7 @@ function applyDevice(d: Device) {
           </van-cell-group>
 
           <van-popup v-model:show="showPreviewPicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="预览码流"
               :columns="streamColumns"
               :model-value="[form.previewStream]"
@@ -556,7 +556,7 @@ function applyDevice(d: Device) {
             />
           </van-popup>
           <van-popup v-model:show="showRecordPicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="录像码流"
               :columns="streamColumns"
               :model-value="[form.recordStream]"
@@ -566,7 +566,7 @@ function applyDevice(d: Device) {
           </van-popup>
 
           <van-popup v-model:show="showModePicker" position="bottom" round>
-            <van-picker
+            <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               title="录像模式"
               :columns="modeOptions"
               :model-value="[form.recordMode]"
@@ -575,7 +575,7 @@ function applyDevice(d: Device) {
             />
           </van-popup>
           <van-popup v-model:show="showSchedulePicker" position="bottom" round>
-            <van-time-picker
+            <van-time-picker v-picker-desktop :option-height="56" :visible-option-num="5"
               v-model="timePick"
               title="定时时段"
               :min-hour="0"
@@ -665,7 +665,7 @@ function applyDevice(d: Device) {
   justify-content: space-between;
   padding: 16px;
   font-weight: 600;
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
 }
 .body {
   padding: 0 10px 24px;
@@ -681,7 +681,7 @@ function applyDevice(d: Device) {
   background: rgba(255, 176, 32, 0.12);
   border: 1px solid rgba(255, 176, 32, 0.4);
   color: var(--nvr-amber, #ffb054);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 1.6;
 }
 .codec-advice .van-icon {
@@ -693,7 +693,7 @@ function applyDevice(d: Device) {
   align-items: center;
   justify-content: center;
   padding: 10px 0 14px;
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 /* 发现结果一行：设备名 + 厂商徽章 */
@@ -726,6 +726,6 @@ function applyDevice(d: Device) {
 }
 .dev-mac {
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
 }
 </style>

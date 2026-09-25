@@ -48,7 +48,7 @@ function toggleType(v: string) {
 const today = new Date()
 const p2 = (n: number) => String(n).padStart(2, '0')
 
-const filterOpen = ref('')
+const filterOpen = ref<string[]>([])
 const showDevicePicker = ref(false)
 const showDatePicker = ref(false)
 const datePickModel = ref([p2(today.getFullYear()), p2(today.getMonth() + 1), p2(today.getDate())])
@@ -155,7 +155,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <van-collapse v-if="!loading && events.length" v-model="filterOpen" class="filter-collapse">
+    <van-collapse v-model="filterOpen" class="filter-collapse">
       <van-collapse-item name="filter">
         <template #title>
           <van-icon name="filter-o" style="margin-right: 4px" />
@@ -163,23 +163,27 @@ onMounted(() => {
         </template>
         <div class="filter-row">
           <div class="filter-item">
-            <label>设备</label>
             <van-field
-              v-model="deviceId"
+              :model-value="deviceColumns.find(d => d.value === deviceId)?.text || '全部设备'"
+              label="筛选设备"
               is-link
               readonly
               placeholder="全部设备"
               @click="showDevicePicker = true"
+              @keydown.enter.prevent="showDevicePicker = true"
+              @keydown.space.prevent="showDevicePicker = true"
             />
           </div>
           <div class="filter-item">
-            <label>日期</label>
             <van-field
               v-model="dateStr"
+              label="筛选日期"
               is-link
               readonly
               placeholder="全部日期"
               @click="showDatePicker = true"
+              @keydown.enter.prevent="showDatePicker = true"
+              @keydown.space.prevent="showDatePicker = true"
             />
           </div>
           <van-button v-if="deviceId || dateStr" plain size="small" @click="deviceId = ''; dateStr = ''">
@@ -215,12 +219,13 @@ onMounted(() => {
           <div class="desc">{{ e.description || e.label || '事件记录' }}</div>
           <div class="time mono">{{ fmtTime(e.time) }}</div>
         </div>
-        <van-icon
+        <button
           v-if="(isBackend() || isDemoMode()) && auth.canEdit"
-          name="delete-o"
-          class="del"
+          type="button"
+          class="del control-button"
+          :aria-label="'删除' + e.deviceName + '的事件'"
           @click="onDelete(e)"
-        />
+        ><van-icon name="delete-o" /></button>
         <div class="dl-btns">
           <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图" @click.stop>
             <van-icon name="down" size="14" />
@@ -234,6 +239,7 @@ onMounted(() => {
     <div v-if="!loading && !events.length" class="empty">
       <van-icon name="records-o" size="46" color="#3a4252" />
       <p>暂无事件</p>
+      <van-button v-if="deviceId || dateStr || typeFilter" plain @click="deviceId = ''; dateStr = ''; typeFilter = ''">清除筛选</van-button>
     </div>
 
     <div v-if="!loading && events.length" class="load-more">
@@ -253,12 +259,12 @@ onMounted(() => {
         <a v-if="previewEvent?.gif" :href="downloadEventGIFURL(previewEvent.id)" class="dl-btn" title="下载 GIF">
           <van-icon name="down" size="16" />
         </a>
-        <van-icon name="cross" class="preview-close" @click="showPreview = false" />
+        <button class="preview-close control-button" aria-label="关闭事件预览" @click="showPreview = false"><van-icon name="cross" /></button>
       </div>
     </van-popup>
 
     <van-popup v-model:show="showDevicePicker" position="bottom" round>
-      <van-picker
+      <van-picker v-picker-desktop :option-height="56" :visible-option-num="5"
         :columns="deviceColumns"
         @confirm="onDevicePick"
         @cancel="showDevicePicker = false"
@@ -266,7 +272,7 @@ onMounted(() => {
     </van-popup>
 
     <van-popup v-model:show="showDatePicker" position="bottom" round>
-      <van-date-picker
+      <van-date-picker v-picker-desktop :option-height="56" :visible-option-num="5"
         v-model="datePickModel"
         :min-date="new Date(2020, 0, 1)"
         :max-date="new Date()"
@@ -297,7 +303,7 @@ onMounted(() => {
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel);
   color: var(--nvr-text-2);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .type-chips .chip.on {
   background: rgba(46, 168, 255, 0.15);
@@ -310,11 +316,11 @@ onMounted(() => {
   padding: 4px 0 16px;
 }
 .all-loaded {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .reload {
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   color: var(--nvr-accent);
 }
 .list {
@@ -340,14 +346,14 @@ onMounted(() => {
   height: 92px;
 }
 :global(body.care .ev-card .badge) {
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   padding: 4px 10px;
 }
 :global(body.care .ev-card .del),
 :global(body.care .ev-card .dl-btn) {
   width: 36px;
   height: 36px;
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
 }
 .media {
   width: 110px;
@@ -402,14 +408,14 @@ onMounted(() => {
 .preview-cap {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .preview-close {
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   cursor: pointer;
   padding: 4px;
@@ -425,6 +431,8 @@ onMounted(() => {
 }
 .info {
   flex: 1;
+  padding-right: 44px;
+  padding-bottom: 34px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -436,7 +444,7 @@ onMounted(() => {
   gap: 8px;
 }
 .badge {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   padding: 2px 8px;
   border-radius: 999px;
   color: #fff;
@@ -448,14 +456,14 @@ onMounted(() => {
 .badge.online { background: var(--nvr-green); }
 .badge.manual { background: var(--nvr-text-2); }
 .name {
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .desc {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -463,7 +471,8 @@ onMounted(() => {
   overflow: hidden;
 }
 .time {
-  font-size: 11px;
+  overflow-wrap: anywhere;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .del {
@@ -494,6 +503,22 @@ onMounted(() => {
   color: var(--nvr-text-2);
   text-decoration: none;
 }
+@media (max-width: 600px) {
+  .ev-card {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .ev-card .media { grid-column: 1; grid-row: 1; width: 100%; }
+  .ev-card .info { grid-column: 2; grid-row: 1; padding: 0; }
+  .ev-card .row { flex-wrap: wrap; gap: 6px; }
+  .ev-card .name { white-space: normal; overflow-wrap: anywhere; }
+  .ev-card .del { position: static; grid-column: 2; grid-row: 2; justify-self: end; }
+  .ev-card .dl-btns { position: static; grid-column: 1; grid-row: 2; }
+  :global(body.care .events-page .ev-card .media) { width: 100%; }
+  :global(body.care .events-page .ev-card .del),
+  :global(body.care .events-page .ev-card .dl-btn) { width: 44px; height: 44px; }
+}
 .dl-btn:active {
   color: var(--nvr-accent);
 }
@@ -503,7 +528,7 @@ onMounted(() => {
   color: var(--nvr-text-2);
 }
 .empty p {
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .filter-collapse {
   margin: 0 12px 12px;
@@ -521,7 +546,7 @@ onMounted(() => {
   min-width: 120px;
 }
 .filter-item label {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   margin-bottom: 2px;
   display: block;

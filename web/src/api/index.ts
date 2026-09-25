@@ -262,14 +262,18 @@ export async function fetchEvents(deviceId = '', date = '', type = '', offset = 
     const devs = await mock.fetchDevices()
     const all = mock.recentEvents(devs).map((e) => ({
       id: e.id,
-      deviceId: '',
+      deviceId: devs.find(d => d.name === e.deviceName)?.id || '',
       deviceName: e.deviceName,
       type: e.type,
       label: e.type === 'motion' ? '移动侦测' : e.type === 'offline' ? '离线' : '上线',
       description: e.text,
       time: e.time,
     }))
-    const filtered = type ? all.filter((e) => e.type === type) : all
+    const filtered = all.filter(e => {
+      const when = new Date(e.time)
+      const day = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`
+      return (!type || e.type === type) && (!deviceId || e.deviceId === deviceId) && (!date || day === date)
+    })
     return { events: filtered.slice(offset, offset + limit), total: filtered.length }
   }
   if (!backendOk) return { events: [], total: 0 }

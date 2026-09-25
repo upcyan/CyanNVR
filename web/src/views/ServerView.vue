@@ -295,7 +295,7 @@ function goBack() {
   border-radius: 10px;
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .result pre {
   margin: 0;
@@ -304,7 +304,7 @@ function goBack() {
 }
 .tip {
   padding: 16px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   line-height: 1.6;
 }
@@ -322,13 +322,13 @@ function goBack() {
 }
 .qr-text {
   margin: 12px 0 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   text-align: center;
 }
 .qr-url {
   margin: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   font-family: ui-monospace, Menlo, monospace;
   color: var(--nvr-text-2);
   overflow-wrap: anywhere;

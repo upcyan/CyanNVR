@@ -210,7 +210,7 @@ function onViewerPlayback(d: Device) {
                 @click="gridCols = opt.value"
               >{{ opt.label }}</button>
             </div>
-            <van-icon name="cross" size="20" @click="showMulti = false" />
+            <button class="control-button" aria-label="关闭多画面" @click="showMulti = false"><van-icon name="cross" size="20" /></button>
           </div>
         </div>
         <VideoGrid :devices="onlineDevices" :cols="gridCols" :stream-url-for="streamUrlFor" @cell="openViewer" />
@@ -237,12 +237,12 @@ function onViewerPlayback(d: Device) {
 }
 .hd h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: calc(22px * var(--nvr-font-scale, 1));
   font-weight: 700;
   line-height: 1.2;
 }
 .hd-sub {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   white-space: nowrap;
 }
@@ -278,11 +278,11 @@ function onViewerPlayback(d: Device) {
 }
 .empty p {
   margin: 12px 0 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 .empty .sub {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .multi {
   height: 100%;
@@ -295,7 +295,7 @@ function onViewerPlayback(d: Device) {
   justify-content: space-between;
   padding: 16px;
   color: #fff;
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
   font-weight: 600;
 }
 .mhd-right {
@@ -314,7 +314,7 @@ function onViewerPlayback(d: Device) {
   border: none;
   background: transparent;
   color: rgba(255, 255, 255, 0.65);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   padding: 5px 10px;
   border-radius: 6px;
   cursor: pointer;

@@ -97,7 +97,7 @@ const title = computed(() => `${meta.value.name}（${vendorSourceLabel(props.sou
 }
 
 .name {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--van-text-color-2, #646566);
   white-space: nowrap;
 }

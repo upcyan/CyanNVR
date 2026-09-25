@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .name {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   background: rgba(0, 0, 0, 0.35);
@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
   border-radius: 4px;
 }
 .badge {
-  font-size: 10px;
+  font-size: calc(10px * var(--nvr-font-scale, 1));
   padding: 2px 6px;
   border-radius: 4px;
   color: #fff;
@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 6px;
   color: var(--nvr-text-2);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .empty.loading {
   color: rgba(255, 255, 255, 0.55);

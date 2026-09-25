@@ -328,29 +328,29 @@ function closeReset() {
 }
 /* 关怀模式：登录页字号偏小，按钮和品牌区需放大；form 限宽让大屏更易扫读 */
 :global(body.care .login .brand h1) {
-  font-size: 30px;
+  font-size: calc(30px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .brand p) {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .tip) {
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .forgot) {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
   min-height: 44px;
 }
 :global(body.care .login .reset h3) {
-  font-size: 22px;
+  font-size: calc(22px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .reset-step) {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .reset-desc) {
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .reset-hint) {
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 :global(body.care .login .logo) {
   width: 80px;
@@ -367,12 +367,12 @@ function closeReset() {
 }
 .brand h1 {
   margin: 16px 0 4px;
-  font-size: 26px;
+  font-size: calc(26px * var(--nvr-font-scale, 1));
 }
 .brand p {
   margin: 0;
   color: var(--nvr-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .form {
   width: 100%;
@@ -386,7 +386,7 @@ function closeReset() {
 }
 .tip {
   margin-top: 24px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-amber);
   text-align: center;
 }
@@ -400,7 +400,7 @@ function closeReset() {
   background: none;
   border: none;
   color: var(--nvr-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   text-decoration: underline;
   cursor: pointer;
 }
@@ -412,18 +412,18 @@ function closeReset() {
 }
 .reset h3 {
   margin: 0 0 16px;
-  font-size: 17px;
+  font-size: calc(17px * var(--nvr-font-scale, 1));
   text-align: center;
 }
 .reset-step {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   font-weight: 600;
   color: var(--nvr-accent);
 }
 .reset-desc {
   margin: 0 0 14px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 1.7;
   color: var(--nvr-text-2);
 }
@@ -445,12 +445,12 @@ function closeReset() {
   border: 1px solid var(--nvr-border);
 }
 .reset-file .lbl {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .reset-file .path {
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   word-break: break-all;
 }
 .again {
@@ -464,7 +464,7 @@ function closeReset() {
 }
 .reset-hint {
   margin: 18px 0 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 1.8;
   color: var(--nvr-text-2);
   text-align: center;
@@ -482,7 +482,7 @@ function closeReset() {
     padding: 24px 12px;
   }
   .brand h1 {
-    font-size: 22px;
+    font-size: calc(22px * var(--nvr-font-scale, 1));
   }
   .logo {
     width: 56px;
@@ -495,10 +495,10 @@ function closeReset() {
     padding: 16px 10px;
   }
   .brand h1 {
-    font-size: 20px;
+    font-size: calc(20px * var(--nvr-font-scale, 1));
   }
   .brand p {
-    font-size: 12px;
+    font-size: calc(12px * var(--nvr-font-scale, 1));
   }
 }
 </style>

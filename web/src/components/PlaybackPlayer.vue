@@ -12,6 +12,8 @@ const emit = defineEmits<{
   (e: 'toggle'): void
   (e: 'speed', n: number): void
   (e: 'fullscreen'): void
+  (e: 'ended'): void
+  (e: 'error'): void
 }>()
 
 const videoEl = ref<HTMLVideoElement | null>(null)
@@ -43,6 +45,8 @@ const speeds = [1, 2, 4, 8]
       playsinline
       v-show="hasStream"
       @click="emit('toggle')"
+      @ended="emit('ended')"
+      @error="emit('error')"
     />
     <div v-if="!hasStream" class="empty">
       <van-icon name="warning-o" size="40" />
@@ -58,23 +62,26 @@ const speeds = [1, 2, 4, 8]
     </div>
 
     <div v-if="hasStream" class="controls">
-      <div class="btn" @click="emit('toggle')">
+      <button type="button" class="btn" :aria-label="playing ? '暂停回放' : '播放回放'" @click="emit('toggle')">
         <van-icon :name="playing ? 'pause-circle-o' : 'play-circle-o'" size="26" />
-      </div>
+      </button>
       <div class="speeds">
-        <span
+        <button
           v-for="s in speeds"
           :key="s"
           class="sp"
+          type="button"
+          :aria-label="s + '倍速'"
+          :aria-pressed="speed === s"
           :class="{ on: speed === s }"
           @click="emit('speed', s)"
         >
           {{ s }}x
-        </span>
+        </button>
       </div>
-      <div class="btn" @click="emit('fullscreen')">
+      <button type="button" class="btn" aria-label="切换全屏" @click="emit('fullscreen')">
         <van-icon name="expand-o" size="22" />
-      </div>
+      </button>
     </div>
   </div>
 </template>
@@ -102,7 +109,7 @@ const speeds = [1, 2, 4, 8]
   justify-content: center;
   gap: 8px;
   color: var(--nvr-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .topbar {
   position: absolute;
@@ -116,7 +123,7 @@ const speeds = [1, 2, 4, 8]
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent);
 }
 .rec {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: rgba(255, 255, 255, 0.55);
   display: flex;
   align-items: center;
@@ -138,7 +145,7 @@ const speeds = [1, 2, 4, 8]
   color: var(--nvr-accent);
 }
 .time {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
@@ -149,11 +156,17 @@ const speeds = [1, 2, 4, 8]
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 6px;
+  flex-wrap: wrap;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), transparent);
 }
 .btn {
+  border: 0;
+  background: transparent;
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
   color: #fff;
   display: flex;
   align-items: center;
@@ -166,14 +179,18 @@ const speeds = [1, 2, 4, 8]
   flex: 1;
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 .sp {
-  padding: 3px 10px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 3px 6px;
+  background: transparent;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.35);
   color: rgba(255, 255, 255, 0.85);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   cursor: pointer;
 }
 .sp.on {

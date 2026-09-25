@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
@@ -40,11 +40,27 @@ let playable: Playable | null = null
 let timer: number | null = null
 let seekTimer: number | null = null
 let sessionToken = 0
+let loadToken = 0
+let monthToken = 0
+let active = true
+let sessionEnd = 0
+const jumpTime = ref('12:00:00')
+
+function releasePlayback() {
+  sessionToken++
+  if (seekTimer) window.clearTimeout(seekTimer)
+  seekTimer = null
+  playable?.destroy()
+  playable = null
+  if (currentSession) void stopPlayback(currentSession)
+  currentSession = ''
+  seekPending.value = false
+}
 
 function fmtRange(a: number, b: number) {
   const f = (ts: number) => {
     const d = new Date(ts)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
   }
   return `${f(a)}-${f(b)}`
 }
@@ -55,44 +71,58 @@ const ym = computed(() => dateStr.value.slice(0, 7))
 const totalMinutes = computed(() => Math.round(segments.value.reduce((a, s) => a + (s.end - s.start), 0) / 60000))
 
 async function loadMonth() {
+  const token = ++monthToken
   if (!deviceId.value) {
     monthDays.value = []
     return
   }
   try {
-    monthDays.value = await fetchMonthRecords(deviceId.value, ym.value)
+    const days = await fetchMonthRecords(deviceId.value, ym.value)
+    if (token === monthToken && active) monthDays.value = days
   } catch {
-    monthDays.value = []
+    if (token === monthToken) monthDays.value = []
   }
 }
 
 async function loadSegments() {
+  if (!active) return
+  const token = ++loadToken
+  releasePlayback()
+  segments.value = []
+  dayEvents.value = []
+  currentTs.value = dayStart.value
+  playError.value = ''
+  playing.value = false
   if (!deviceId.value) {
     segments.value = []
     dayEvents.value = []
     return
   }
-  loadEvents() // 与分段并行加载，供时间轴着色与事件列表使用
+  loadEvents(token)
   loading.value = true
   try {
-    segments.value = await fetchDaySegments(deviceId.value, dateStr.value)
-  } catch {
-    segments.value = []
+    const result = await fetchDaySegments(deviceId.value, dateStr.value)
+    if (token !== loadToken || !active) return
+    segments.value = result.sort((a, b) => a.start - b.start)
+  } catch (e: any) {
+    if (token !== loadToken || !active) return
+    playError.value = e?.response?.data?.error || '录像加载失败，请重试'
   } finally {
-    loading.value = false
+    if (token === loadToken) loading.value = false
   }
-  rebuildPlayable()
+  if (token === loadToken && active) rebuildPlayable()
 }
 
-async function loadEvents() {
+async function loadEvents(token: number) {
   if (!deviceId.value) {
     dayEvents.value = []
     return
   }
   try {
-    dayEvents.value = (await fetchEvents(deviceId.value, dateStr.value, '', 0, 500)).events
+    const result = await fetchEvents(deviceId.value, dateStr.value, '', 0, 500)
+    if (token === loadToken && active) dayEvents.value = result.events
   } catch {
-    dayEvents.value = []
+    if (token === loadToken) dayEvents.value = []
   }
 }
 
@@ -168,7 +198,7 @@ const halfGroups = computed<HalfGroup[]>(() => {
     g.segs.push(seg)
     g.start = Math.min(g.start, seg.start)
     g.end = Math.max(g.end, seg.end)
-    g.durationMin += Math.round((seg.end - seg.start) / 60000)
+    g.durationMin += (seg.end - seg.start) / 60000
   }
   const order = ['am', 'pm']
   const titles: Record<string, string> = { am: '上午', pm: '下午' }
@@ -189,6 +219,7 @@ const halfGroups = computed<HalfGroup[]>(() => {
 })
 
 const fmtDur = (min: number) => {
+  min = Math.round(min)
   if (min < 60) return `${min} 分钟`
   const h = Math.floor(min / 60)
   const m = min % 60
@@ -237,7 +268,7 @@ async function rebuildPlayable() {
   // 等待 DOM 更新完成再取 video 元素，避免 ref 尚未就绪导致画面空白
   await nextTick()
   const el = playerRef.value?.getVideoEl()
-  if (!el || !device.value || !segments.value.length) return
+  if (!active || !el || !device.value || !segments.value.length) return
   const start = earliestInterestingStart()
   currentTs.value = start
   playing.value = true
@@ -274,35 +305,49 @@ function earliestInterestingStart(): number {
 
 async function buildSession(fromTs: number) {
   const token = ++sessionToken
-  const winStart = Math.max(dayStart.value, fromTs - 120000)
-  const winEnd = Math.min(dayStart.value + 86400000, fromTs + 600000)
+  const winStart = Math.max(dayStart.value, fromTs)
+  // 不把录像空档拼接成连续时间：时间轴与视频必须保持同一时钟。
+  let coverageEnd = fromTs
+  for (const segment of segments.value) {
+    if (segment.end <= fromTs) continue
+    if (segment.start > coverageEnd + 1000) break
+    coverageEnd = Math.max(coverageEnd, segment.end)
+  }
+  const winEnd = Math.min(dayStart.value + 86400000, fromTs + 600000, coverageEnd)
   if (winEnd <= winStart) return
   try {
     const url = await createPlayback(deviceId.value, winStart, winEnd)
     // 从 URL 中解析会话名：/api/stream/playback/<session>/index.m3u8
     const m = /\/playback\/([^/]+)\//.exec(url)
+    const session = m ? m[1] : ''
+    if (token !== sessionToken || !active) {
+      if (session) void stopPlayback(session)
+      return
+    }
     const prev = currentSession
-    currentSession = m ? m[1] : ''
+    currentSession = session
     // 换会话时停掉上一个，避免多个转码进程同时占编码器
     if (prev && prev !== currentSession) stopPlayback(prev)
-    if (token !== sessionToken) return
     const el = playerRef.value?.getVideoEl()
     if (!el) return
     playable?.destroy()
     playable = createPlayable({ url, baseTs: winStart })
     playable.attach(el)
     playable.setSpeed(speed.value)
+    if (!playing.value) playable.pause()
+    sessionEnd = winEnd
     // 新会话已就绪：游标回到真实播放位置，并恢复由播放位置驱动进度条
     currentTs.value = playable.time
     seekPending.value = false
     playError.value = ''
   } catch (e: any) {
+    if (token !== sessionToken || !active) return
     // 请求失败：可能是「窗口内无录像」，也可能是后端等首个分片超时
     // （HEVC 源需转码，实测首片要数秒）。把后端给的原因显示出来，
     // 否则用户只看到进度条不动，无从判断。
     seekPending.value = false
     const msg = e?.response?.data?.error
-    if (msg) playError.value = msg
+    playError.value = msg || '回放准备失败，请重试'
   }
 }
 
@@ -313,7 +358,14 @@ function startTimer() {
     // 重建会话有防抖、ffmpeg 还要 1-3 秒才产出首个分片，这期间旧位置会把
     // 游标拉回原处，用户感受就是「进度条拖不动」。
     if (seekPending.value) return
-    if (playing.value && playable) currentTs.value = playable.time
+    if (playing.value && playable) {
+      currentTs.value = playable.time
+      if (isDemoMode() && !segments.value.some(s => currentTs.value >= s.start && currentTs.value < s.end)) {
+        const next = segments.value.find(s => s.start > currentTs.value)
+        if (next) onSeekEnd(next.start)
+        else { playable.pause(); playing.value = false }
+      }
+    }
   }, 500)
 }
 
@@ -321,6 +373,7 @@ function startTimer() {
 // 真实后端下回放是 ffmpeg 边转码边切片的 HLS，窗口未就绪时不能 seek，
 // 这种情况留给 seekend 重建会话，避免拖动时反复触发转码。
 function onSeek(ts: number) {
+  if (!segments.value.length || loading.value) return
   currentTs.value = ts
   if (!isBackend() || isDemoMode()) {
     playable?.seek(ts)
@@ -335,6 +388,17 @@ function onSeek(ts: number) {
 
 // 松手后提交最终位置：能就地跳转就直接跳，否则防抖重建会话。
 function onSeekEnd(ts: number) {
+  if (!segments.value.length || loading.value) return
+  sessionToken++
+  if (seekTimer) window.clearTimeout(seekTimer)
+  seekTimer = null
+  const containing = segments.value.find(s => ts >= s.start && ts < s.end)
+  if (!containing) {
+    const next = segments.value.find(s => s.start >= ts)
+    const last = segments.value[segments.value.length - 1]
+    ts = next ? next.start : Math.max(last.start, last.end - 1000)
+    showToast('所选时间无录像，已定位到最近录像')
+  }
   currentTs.value = ts
   if (!isBackend() || isDemoMode()) {
     playable?.seek(ts)
@@ -351,6 +415,21 @@ function onSeekEnd(ts: number) {
     if (segments.value.length) buildSession(ts)
     else seekPending.value = false
   }, 300)
+}
+
+function jumpToTime() {
+  const [h, m, sec = 0] = jumpTime.value.split(':').map(Number)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return
+  onSeekEnd(dayStart.value + (h * 3600 + m * 60 + sec) * 1000)
+}
+
+function onEnded() {
+  const next = segments.value.find(s => s.end > sessionEnd + 500)
+  if (next) {
+    currentTs.value = Math.max(sessionEnd, next.start)
+    seekPending.value = true
+    void buildSession(currentTs.value)
+  } else playing.value = false
 }
 
 function onToggle() {
@@ -453,11 +532,27 @@ watch(ym, loadMonth)
 watch(dateStr, () => {
   loadSegments()
 })
-watch(playerRef, () => {
-  if (playerRef.value) rebuildPlayable()
+onDeactivated(() => {
+  active = false
+  loadToken++
+  monthToken++
+  releasePlayback()
+  if (timer) window.clearInterval(timer)
+  timer = null
+})
+onActivated(() => {
+  if (active) return
+  active = true
+  const q = route.query.device as string | undefined
+  if (q && q !== deviceId.value && store.byId(q)) deviceId.value = q
+  else { loadMonth(); loadSegments() }
+  startTimer()
 })
 
 onBeforeUnmount(() => {
+  active = false
+  loadToken++
+  monthToken++
   if (timer) window.clearInterval(timer)
   if (seekTimer) window.clearTimeout(seekTimer)
   playable?.destroy()
@@ -481,19 +576,19 @@ onBeforeUnmount(() => {
   <div class="page playback-page">
     <van-nav-bar title="录像管理">
       <template #right>
-        <span class="device-picker" @click="pickDevice">
+        <button type="button" class="device-picker control-button" aria-label="选择回放设备" @click="pickDevice">
           {{ device?.name ?? '选择设备' }}
           <van-icon name="arrow-down" size="12" />
-        </span>
+        </button>
       </template>
     </van-nav-bar>
 
     <div class="pb-body">
       <div class="pb-left">
         <div class="date-bar">
-          <van-icon name="arrow-left" size="20" @click="shiftDay(-1)" />
+          <button type="button" class="control-button" aria-label="前一天" @click="shiftDay(-1)"><van-icon name="arrow-left" size="20" /></button>
           <span class="date mono">{{ dateStr }}</span>
-          <van-icon name="arrow" size="20" @click="shiftDay(1)" />
+          <button type="button" class="control-button" aria-label="后一天" @click="shiftDay(1)"><van-icon name="arrow" size="20" /></button>
         </div>
         <CalendarHeat :days="monthDays" :selected="dateStr" @select="onSelectDate" />
       </div>
@@ -512,11 +607,14 @@ onBeforeUnmount(() => {
             @toggle="onToggle"
             @speed="onSpeed"
             @fullscreen="onFullscreen"
+            @ended="onEnded"
+            @error="playError = '视频加载失败，请重试'; playing = false"
           />
           <div v-if="loading || seekPending || playError" class="loading-mask">
             <van-loading v-if="loading || seekPending" />
             <span v-if="seekPending && !loading" class="seek-hint">正在准备回放…</span>
             <span v-else-if="playError && !loading" class="seek-hint err">{{ playError }}</span>
+            <van-button v-if="playError && !loading && !seekPending" size="small" @click="loadSegments">重新加载</van-button>
           </div>
         </div>
 
@@ -533,6 +631,15 @@ onBeforeUnmount(() => {
             @seek="onSeek"
             @seekend="onSeekEnd"
           />
+          <div class="seek-tools">
+            <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs - 30000)">后退30秒</button>
+            <form class="time-jump" @submit.prevent="jumpToTime">
+              <label for="playback-time">跳转时间</label>
+              <input id="playback-time" v-model="jumpTime" type="time" step="1" required />
+              <button class="control-button" :disabled="!segments.length || loading" type="submit">跳转</button>
+            </form>
+            <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs + 30000)">前进30秒</button>
+          </div>
         </div>
 
         <!-- 事件联动：点事件跳到对应时刻播放；含事件的录像段在时间轴上已着色 -->
@@ -563,10 +670,10 @@ onBeforeUnmount(() => {
             <span class="seg-count">
               当日 {{ segments.length }} 段 · {{ fmtDur(totalMinutes) }}
             </span>
-            <span class="seg-mode" @click="groupMode = !groupMode">
+            <button type="button" class="seg-mode" :aria-pressed="groupMode" @click="groupMode = !groupMode">
               <van-icon :name="groupMode ? 'bars' : 'wap-nav'" size="14" />
               {{ groupMode ? '按小时折叠' : '平铺显示' }}
-            </span>
+            </button>
           </div>
 
           <template v-if="groupMode">
@@ -576,11 +683,11 @@ onBeforeUnmount(() => {
                 <span class="half-meta">{{ half.segCount }} 段 · {{ fmtDur(half.durationMin) }}</span>
               </div>
               <div v-for="h in half.hours" :key="h.key" class="hour-block">
-                <div class="hour-head" :class="{ open: openHours.includes(h.key) }" @click="toggleHour(h.key)">
+                <button type="button" class="hour-head" :aria-expanded="openHours.includes(h.key)" :class="{ open: openHours.includes(h.key) }" @click="toggleHour(h.key)">
                   <van-icon :name="openHours.includes(h.key) ? 'arrow-down' : 'arrow'" size="13" />
                   <span class="hour-label mono">{{ h.hourLabel }}</span>
                   <span class="hour-meta">{{ h.segs.length }} 段 · {{ fmtDur(h.durationMin) }}</span>
-                </div>
+                </button>
                 <div v-show="openHours.includes(h.key)" class="seg-list">
                   <span
                     v-for="s in h.segs"
@@ -588,7 +695,7 @@ onBeforeUnmount(() => {
                     class="seg-item"
                     :class="{ on: currentTs >= s.start && currentTs <= s.end }"
                   >
-                    <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
+                    <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</button>
                     <van-icon
                       v-if="isBackend() && !isDemoMode()"
                       name="down"
@@ -608,7 +715,7 @@ onBeforeUnmount(() => {
               class="seg-item"
               :class="{ on: currentTs >= s.start && currentTs <= s.end }"
             >
-              <span class="seg-time mono" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</span>
+              <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</button>
               <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
             </span>
           </div>
@@ -639,8 +746,32 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.seek-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+}
+.seek-tools button { border: 1px solid var(--nvr-border); border-radius: 8px; }
+.seek-tools button:disabled { opacity: .45; cursor: not-allowed; }
+.time-jump { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.time-jump input {
+  min-height: 44px;
+  max-width: 100%;
+  font: inherit;
+  color: var(--nvr-text);
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+  border-radius: 8px;
+  padding: 6px;
+  color-scheme: dark;
+}
+:global(body.light .time-jump input) { color-scheme: light; }
 .device-picker {
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   display: flex;
   align-items: center;
   gap: 4px;
@@ -651,7 +782,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 22px;
   padding: 8px 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
   font-weight: 600;
 }
 .player-wrap {
@@ -678,18 +809,20 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 .seek-hint {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: rgba(255, 255, 255, 0.85);
 }
 .timeline-wrap {
   margin-top: 8px;
 }
 .tl-head {
+  flex-wrap: wrap;
+  gap: 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 14px 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .tl-head span:first-child {
@@ -706,7 +839,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 2px 0 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .seg-count {
@@ -716,6 +849,9 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .seg-mode {
+  color: inherit;
+  font: inherit;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -741,11 +877,11 @@ onBeforeUnmount(() => {
   padding: 6px 2px;
 }
 .half-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
   font-weight: 600;
 }
 .half-meta {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 /* 小时行 */
@@ -756,13 +892,18 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
 }
 .hour-head {
+  width: 100%;
+  border: 0;
+  color: var(--nvr-text);
+  text-align: left;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 9px 10px;
   background: var(--nvr-panel-2);
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .hour-head.open {
   color: var(--nvr-accent);
@@ -773,7 +914,7 @@ onBeforeUnmount(() => {
 .hour-meta {
   margin-left: auto;
   color: var(--nvr-text-2);
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
 }
 .seg-wrap .seg-list {
   padding: 8px 10px 10px;
@@ -793,7 +934,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   cursor: pointer;
 }
 .seg-item.on {
@@ -822,7 +963,7 @@ onBeforeUnmount(() => {
 }
 .evt-badge {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   line-height: 1;
   padding: 3px 7px;
   border-radius: 9px;
@@ -842,7 +983,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .seg-dl {
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   cursor: pointer;
   padding: 2px;
@@ -851,7 +992,7 @@ onBeforeUnmount(() => {
   color: var(--nvr-accent);
 }
 .none {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .picker-head {
@@ -867,7 +1008,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-@media (min-width: 900px) {
+@media (min-width: 1200px) {
   .pb-body {
     flex-direction: row;
     gap: 20px;

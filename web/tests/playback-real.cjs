@@ -1,0 +1,86 @@
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const out = process.env.QA_OUTPUT || '../ui-test';
+const fixture = JSON.parse(fs.readFileSync(out+'/fixture.json','utf8').replace(/^\uFEFF/,''));
+let browser;
+(async()=>{
+  browser = await chromium.launch({channel:'msedge',headless:true});
+  const context = await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'Asia/Shanghai'});
+  await context.addInitScript(f=>{
+    localStorage.setItem('nvr_token',f.token);
+    localStorage.setItem('nvr_user',JSON.stringify(f.user));
+    localStorage.setItem('nvr_demo_mode','0');
+    localStorage.setItem('nvr_settings_local',JSON.stringify({theme:'light',fontSize:'normal',careMode:true,demoMode:false}));
+  },fixture);
+  const page=await context.newPage();
+  const errors=[];const starts=[];const stops=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('request',r=>{
+    if(/\/devices\/[^/]+\/playback$/.test(r.url())&&r.method()==='POST') starts.push(r.postDataJSON());
+    if(/\/playback\/[^/]+\/stop$/.test(r.url())) stops.push(r.url());
+  });
+  await page.goto('http://127.0.0.1:8088/#/playback?device='+fixture.device.id);
+  await page.waitForFunction(()=>{const v=document.querySelector('.player video');return v&&v.videoWidth>0&&v.currentTime>0},{},{timeout:45000});
+  console.log('PASS real H.264 recording decodes and plays');
+  await page.getByRole('button',{name:'暂停回放',exact:true}).click();
+  const t=await page.locator('.player video').evaluate(v=>v.currentTime);
+  await page.waitForTimeout(700);
+  assert(Math.abs(await page.locator('.player video').evaluate(v=>v.currentTime)-t)<0.1);
+  console.log('PASS real playback pause');
+  await page.locator('#playback-time').fill('12:00:10');
+  await page.getByRole('button',{name:'跳转',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.timeline .current')?.textContent==='12:00:10');
+  console.log('PASS precise real recording seek');
+  await page.getByRole('button',{name:'4倍速',exact:true}).click();
+  assert.equal(await page.locator('.player video').evaluate(v=>v.playbackRate),4);
+  console.log('PASS real playback rate 4x');
+  await page.locator('#playback-time').fill('12:00:50');
+  await page.getByRole('button',{name:'跳转',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.timeline .current')?.textContent==='12:01:00');
+  await page.waitForTimeout(1500);
+  assert(await page.locator('.player video').evaluate(v=>v.paused));
+  console.log('PASS gap seeks next recording and preserves pause');
+  await page.getByRole('button',{name:'播放回放',exact:true}).click();
+  await page.waitForFunction(()=>{const v=document.querySelector('.player video');return v&&v.currentTime>1&&!v.paused});
+  await page.screenshot({path:out+'/real-playback.png'});
+  await page.locator('#playback-time').fill('12:00:38');
+  await page.getByRole('button',{name:'跳转',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.timeline .current')?.textContent?.startsWith('12:01:'),{},{timeout:30000});
+  console.log('PASS end of recording automatically continues after gap');
+  const stopCount=stops.length;
+  await page.locator('.nav-item[href="#/settings"]').click();
+  await page.waitForTimeout(600);
+  assert(stops.length>stopCount);
+  console.log('PASS leaving playback stops backend session');
+  // Explicit failure response must not be reported as a successful save.
+  await page.route('**/api/settings', async route=>{
+    if(route.request().method()==='PUT') return route.fulfill({status:500,contentType:'application/json',body:'{"error":"QA保存失败"}'});
+    return route.continue();
+  });
+  await page.getByRole('button',{name:'保存设置',exact:true}).click();
+  await page.getByText('QA保存失败',{exact:true}).waitFor();
+  console.log('PASS failed save displays failure');
+  // Delay a newly created session until after the user changes date.
+  await page.locator('.nav-item[href="#/playback"]').click();
+  await page.waitForFunction(()=>{const v=document.querySelector('.player video');return v&&v.videoWidth>0&&v.currentTime>0});
+  await page.route('**/api/devices/*/playback', async route=>{
+    const response=await route.fetch();
+    await new Promise(r=>setTimeout(r,1000));
+    await route.fulfill({response});
+  });
+  const pending = page.waitForRequest(r=>/\/devices\/[^/]+\/playback$/.test(r.url()));
+  await page.locator('#playback-time').fill('12:01:05');
+  await page.getByRole('button',{name:'跳转',exact:true}).click();
+  await pending;
+  const stopsBeforeChange=stops.length;
+  await page.getByRole('button',{name:'前一天',exact:true}).click();
+  await page.getByText('当日无录制',{exact:true}).waitFor();
+  await page.waitForTimeout(2500);
+  assert(await page.getByText('当日无录制',{exact:true}).isVisible());
+  assert(stops.length>=stopsBeforeChange+2,'both active and stale sessions must stop');
+  assert.equal(await page.locator('.seg-time:visible').count(),0);
+  console.log('PASS late session response cannot restore old date and is stopped');
+  assert.equal(errors.length,0,errors.join('\n'));
+  fs.writeFileSync(out+'/real-playback-results.json',JSON.stringify({starts,stoppedSessions:stops.length,errors},null,2));
+})().catch(e=>{console.error(e);process.exitCode=1}).finally(async()=>{await browser?.close()});

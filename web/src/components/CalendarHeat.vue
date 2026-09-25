@@ -68,9 +68,9 @@ function bg(c: NonNullable<Cell>) {
 <template>
   <div class="calendar">
     <div class="cal-head">
-      <van-icon name="arrow-left" size="18" class="cal-nav" @click="shiftMonth(-1)" />
+      <button type="button" class="cal-nav" aria-label="上个月" @click="shiftMonth(-1)"><van-icon name="arrow-left" size="18" /></button>
       <span class="cal-ym">{{ ymText }}</span>
-      <van-icon name="arrow" size="18" class="cal-nav" @click="shiftMonth(1)" />
+      <button type="button" class="cal-nav" aria-label="下个月" @click="shiftMonth(1)"><van-icon name="arrow" size="18" /></button>
       <button class="cal-today" @click="goToday">今日</button>
     </div>
     <div class="week">
@@ -78,9 +78,12 @@ function bg(c: NonNullable<Cell>) {
     </div>
     <div class="grid">
       <div v-for="(c, i) in cells" :key="i" class="slot">
-        <div
+        <button
           v-if="c"
+          type="button"
           class="day"
+          :aria-label="`${c.date}，${c.has ? '有录像' : '无录像'}`"
+          :aria-pressed="c.date === selected"
           :class="{
             has: c.has,
             selected: c.date === selected,
@@ -90,7 +93,7 @@ function bg(c: NonNullable<Cell>) {
         >
           <span>{{ c.day }}</span>
           <i v-if="c.has" class="mark" />
-        </div>
+        </button>
       </div>
     </div>
     <div class="legend">
@@ -112,6 +115,9 @@ function bg(c: NonNullable<Cell>) {
   padding: 4px 4px 8px;
 }
 .cal-nav {
+  border: 0;
+  min-width: 44px;
+  min-height: 44px;
   padding: 6px;
   border-radius: 50%;
   background: var(--nvr-panel-2);
@@ -125,14 +131,15 @@ function bg(c: NonNullable<Cell>) {
 .cal-ym {
   flex: 1;
   text-align: center;
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
   font-weight: 600;
 }
 .cal-today {
+  min-height: 44px;
   border: none;
   background: var(--nvr-panel-2);
   color: var(--nvr-accent);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   padding: 5px 12px;
   border-radius: 999px;
   cursor: pointer;
@@ -142,40 +149,44 @@ function bg(c: NonNullable<Cell>) {
 }
 /* 关怀模式：月份切换按钮放大 */
 :global(body.care .calendar .cal-ym) {
-  font-size: 18px;
+  font-size: calc(18px * var(--nvr-font-scale, 1));
 }
 :global(body.care .calendar .cal-today) {
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   padding: 7px 16px;
 }
 :global(body.care .calendar .cal-nav) {
-  font-size: 22px;
+  font-size: calc(22px * var(--nvr-font-scale, 1));
   padding: 8px;
 }
 .week {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   text-align: center;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   margin-bottom: 6px;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
 }
 .slot {
-  aspect-ratio: 1.15;
+  min-width: 0;
+  min-height: 44px;
 }
 .day {
+  width: 100%;
+  padding: 0;
+  min-height: 44px;
   height: 100%;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   border: 1px solid transparent;
   color: var(--nvr-text);
   cursor: pointer;
@@ -201,7 +212,7 @@ function bg(c: NonNullable<Cell>) {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 8px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .legend .sw {

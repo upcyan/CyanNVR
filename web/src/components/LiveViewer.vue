@@ -116,7 +116,7 @@ if (typeof document !== 'undefined') {
   >
     <div class="viewer">
       <div class="vhd">
-        <van-icon name="arrow-left" size="20" @click="close" />
+        <button class="control-button" aria-label="关闭实时预览" @click="close"><van-icon name="arrow-left" size="20" /></button>
         <span class="vname">{{ device?.name ?? '' }}</span>
         <span class="vstate" :class="{ on: device?.online }">
           {{ device?.online ? '在线' : '离线' }}
@@ -173,11 +173,11 @@ if (typeof document !== 'undefined') {
   color: #fff;
 }
 .vname {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
   font-weight: 600;
 }
 .vstate {
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-red);
 }
 .vstate.on {
@@ -203,7 +203,7 @@ if (typeof document !== 'undefined') {
   justify-content: center;
   gap: 8px;
   color: var(--nvr-text-2);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .vfoot {
   display: flex;
@@ -218,7 +218,7 @@ if (typeof document !== 'undefined') {
   background: none;
   border: none;
   color: #fff;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   cursor: pointer;
 }
 .vbtn:active {

@@ -30,10 +30,10 @@ let onMqChange: ((e: MediaQueryListEvent) => void) | null = null
 
 function applyA11y() {
   const s = settings.settings
-  const zoomMap = { normal: '1', large: '1.2', xlarge: '1.4' }
-  // 关怀模式已有独立的大字号和大触控热区样式。若再缩放整个页面，
-  // 可用布局视口会变窄，固定导航、弹窗和表单在小屏上会被裁切。
-  document.documentElement.style.zoom = s.careMode ? '1' : zoomMap[s.fontSize]
+  const fontScale = { normal: '1', large: '1.2', xlarge: '1.4' }
+  // 只放大文字，保持布局视口、导航断点与弹窗定位一致。
+  document.documentElement.style.setProperty('--nvr-font-scale', s.careMode ? '1' : fontScale[s.fontSize] || '1')
+  document.documentElement.dataset.fontSize = s.careMode ? 'normal' : s.fontSize
   document.body.classList.toggle('care', s.careMode)
   document.body.classList.toggle('light', s.theme === 'light')
   document.body.classList.toggle('dark', s.theme === 'dark')
@@ -174,10 +174,10 @@ onBeforeUnmount(() => {
 <style scoped>
 /* description 字形偏竖长，略缩字号使其视觉高度与其他导航图标一致 */
 .van-tabbar-item :deep(.van-icon-description-o) {
-  font-size: 20px;
+  font-size: calc(20px * var(--nvr-font-scale, 1));
 }
 .nav-item :deep(.van-icon-description-o) {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
 }
 .sidebar {
   width: 216px;
@@ -200,12 +200,12 @@ onBeforeUnmount(() => {
   line-height: 1.15;
 }
 .brand-name {
-  font-size: 17px;
+  font-size: calc(17px * var(--nvr-font-scale, 1));
   font-weight: 700;
   letter-spacing: .3px;
 }
 .brand-sub {
-  font-size: 10px;
+  font-size: calc(10px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   margin-top: 2px;
 }
@@ -244,16 +244,16 @@ onBeforeUnmount(() => {
   line-height: 1.2;
 }
 .status-text b {
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 .status-text span {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 /* 分组标签 */
 .nav-group {
   padding: 12px 20px 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   opacity: .7;
   letter-spacing: 1px;
@@ -275,7 +275,7 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   color: var(--nvr-text-2);
   text-decoration: none;
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   position: relative;
   transition: background 0.15s, color 0.15s;
 }
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
   height: 18px;
   padding: 0 6px;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
 .side-foot {
   margin-top: auto;
   padding: 12px 18px;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
   border-top: 1px solid var(--nvr-border);
   display: flex;
@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
   line-height: 1.25;
 }
 .foot-text .ver {
-  font-size: 10px;
+  font-size: calc(10px * var(--nvr-font-scale, 1));
   opacity: .65;
 }
 </style>

@@ -88,13 +88,32 @@ function onUp(e: PointerEvent) {
   emit('seek', ts)
   emit('seekend', ts)
 }
+function onCancel() {
+  if (!dragging) return
+  dragging = false
+  emit('seekend', props.value)
+}
 
-const timeLabel = computed(() => {
-  const ms = props.value - props.dayStart
-  const d = new Date(ms)
+function formatTime(ts: number) {
+  const seconds = Math.floor(Math.max(0, Math.min(DAY, ts - props.dayStart)) / 1000)
   const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-})
+  return `${p(Math.floor(seconds / 3600))}:${p(Math.floor(seconds / 60) % 60)}:${p(seconds % 60)}`
+}
+const timeLabel = computed(() => formatTime(props.value))
+
+function onKeydown(e: KeyboardEvent) {
+  const step = e.shiftKey ? 600000 : 60000
+  const offsets: Record<string, number> = { ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step }
+  let ts: number
+  if (e.key === 'Home') ts = props.dayStart
+  else if (e.key === 'End') ts = props.dayStart + DAY
+  else if (e.key in offsets) ts = props.value + offsets[e.key]
+  else return
+  e.preventDefault()
+  ts = Math.max(props.dayStart, Math.min(props.dayStart + DAY, ts))
+  emit('seek', ts)
+  emit('seekend', ts)
+}
 </script>
 
 <template>
@@ -102,10 +121,18 @@ const timeLabel = computed(() => {
     <div
       ref="trackRef"
       class="track"
+      role="slider"
+      tabindex="0"
+      aria-label="录像时间轴"
+      :aria-valuemin="0"
+      :aria-valuemax="86400"
+      :aria-valuenow="Math.round(Math.max(0, Math.min(DAY, value - dayStart)) / 1000)"
+      :aria-valuetext="timeLabel"
+      @keydown="onKeydown"
       @pointerdown="onDown"
       @pointermove="onMove"
       @pointerup="onUp"
-      @pointercancel="onUp"
+      @pointercancel="onCancel"
     >
       <div class="seg"
         v-for="s in segments"
@@ -205,7 +232,7 @@ const timeLabel = computed(() => {
   align-items: center;
   justify-content: space-between;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
 .labels .current {

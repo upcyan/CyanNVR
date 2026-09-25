@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { showToast } from 'vant'
 import type { Settings } from '../types'
 import {
   fetchAppSettings,
@@ -96,8 +97,9 @@ export const useSettingsStore = defineStore('settings', {
       }
       saveLocal(local)
       setDemoMode(this.settings.demoMode)
-      if (isBackend()) {
-        saveAppSettings(settingsToBackend(this.settings)).catch(() => {})
+      const localKeys = ['theme', 'fontSize', 'careMode', 'demoMode']
+      if (isBackend() && !isDemoMode() && Object.keys(patch).some(key => !localKeys.includes(key))) {
+        saveAppSettings(settingsToBackend(this.settings)).catch(() => showToast('设置保存失败，请重试'))
       }
     },
     async loadFromServer() {
@@ -122,15 +124,14 @@ export const useSettingsStore = defineStore('settings', {
       }
       saveLocal(local)
       setDemoMode(this.settings.demoMode)
-      if (isBackend()) {
-        try {
+      try {
+        if (isBackend() && !isDemoMode()) {
           const saved = await saveAppSettings(settingsToBackend(this.settings))
           Object.assign(this.settings, backendToSettings(saved, local))
-        } catch {
-          /* ignore */
         }
+      } finally {
+        this.saving = false
       }
-      this.saving = false
     },
   },
 })

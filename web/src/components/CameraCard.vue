@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
       <span>摄像机已离线</span>
     </div>
 
-    <button class="more" @click.stop="emit('more', device)">
+    <button class="more" :aria-label="device.name + '更多操作'" @click.stop="emit('more', device)">
       <van-icon name="ellipsis" size="18" />
     </button>
   </div>
@@ -210,13 +210,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 .name {
-  font-size: 15px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
   font-weight: 600;
   color: #fff;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 .model {
-  font-size: 11px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
   color: rgba(255, 255, 255, 0.75);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   overflow: hidden;
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
   border: none;
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   backdrop-filter: blur(6px);
   cursor: pointer;
 }
@@ -253,13 +253,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   color: rgba(255, 255, 255, 0.6);
-  font-size: 13px;
+  font-size: calc(13px * var(--nvr-font-scale, 1));
 }
 .loading-tip {
   flex-direction: column;
   gap: 8px;
   color: rgba(255, 255, 255, 0.55);
-  font-size: 12px;
+  font-size: calc(12px * var(--nvr-font-scale, 1));
   background: rgba(0, 0, 0, 0.25);
   pointer-events: none;
   text-align: center;
