@@ -22,9 +22,11 @@
 │   ├── auth/        JWT 认证
 │   └── store/       SQLite 存储
 ├── web/             Vue3 + Vant4 + hls.js 前端（PWA）
+├── fpk/             fnOS（飞牛）FPK 安装包：打包脚本、图标、生命周期脚本
+├── android/         Android WebView 壳 App
 ├── docker/          备用 Dockerfile
 ├── Dockerfile       多阶段构建（含 ffmpeg）
-└── docker-compose.yml
+└── docker-compose.prod.yml
 ```
 
 ## 快速开始
@@ -37,23 +39,37 @@ cd web
 npm install
 npm run dev            # http://localhost:5173
 
-# 后端（需安装 Go 1.24+ 与 ffmpeg）
+# 后端（需安装 Go 1.25+ 与 ffmpeg）
 cd server
 go mod tidy
-go run .              # http://localhost:8080
+PYTHON=python3 go run .   # http://localhost:8080
 ```
+
+> 本地跑 AI 识别必须带 `PYTHON=python3`：检测 worker 默认找 `python`，
+> 只有 `python3` 的机器上会静默起不来（设置页 AI 分组随之 502）。
+> fnOS 打包与 Docker 镜像里已各自 export 好，不受影响。
 
 后端默认托管 `web/dist`（如存在）。设置 `NVR_WEB` 指向构建产物，或 `cd web && npm run build` 后重启后端。
 
 ### Docker 部署
 
 ```bash
-docker compose up -d --build
+# compose 文件名为 docker-compose.prod.yml，必须显式指定
+REGISTRY=<你的镜像仓库> docker compose -f docker-compose.prod.yml up -d --build
 # 打开 http://localhost:8080
 # 默认账号 admin / admin123（可用 NVR_ADMIN_PASSWORD 覆盖）
+# NVR_JWT_SECRET 必填：compose 会因缺变量直接报错，需先自建 .env 写入该变量
 ```
 
 数据持久化在 `./data`（录像、快照、事件、SQLite）。
+
+### fnOS（飞牛）FPK 打包
+
+```bash
+fpk/build-fpk.sh        # 产物 fpk/CyanNVR_<版本>_x86.fpk
+```
+
+需要 PATH 中有 `fnpack`；脚本会按源码变更范围自动 bump 版本（详见 `fpk/version.env` 注释），本机无 Go 工具链时借 Docker 镜像出包。
 
 ## 验证步骤
 

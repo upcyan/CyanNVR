@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { server } from '../api/server'
+import { useSettingsStore } from '../stores/settings'
 
 export interface PushNotification {
   type: string
@@ -30,7 +31,11 @@ export function useNotifications() {
       try {
         const n: PushNotification = JSON.parse(ev.data)
         notifications.value = [n, ...notifications.value].slice(0, 50)
-        showBrowserNotification(n)
+        // 浏览器推送受设置页两个开关控制（此前开关只存不生效）：
+        //   设备离线提醒  -> offline / online
+        //   移动侦测告警  -> motion / ai / manual
+        // 通知中心列表始终记录，只是不再弹系统通知。
+        if (pushAllowed(n.type)) showBrowserNotification(n)
         retryDelay = 1000 // Reset backoff on successful message
       } catch {
         /* ignore parse errors */
@@ -55,6 +60,18 @@ export function useNotifications() {
   }
 
   return { notifications, connect, disconnect }
+}
+
+// pushAllowed 判断该类型事件是否应当弹出系统通知。
+// 读设置失败（store 未就绪、demo 模式等）时放行，保持旧行为，避免误吞通知。
+function pushAllowed(type: string): boolean {
+  try {
+    const s = useSettingsStore().settings
+    if (type === 'offline' || type === 'online') return s.offlinePush
+    return s.motionPush
+  } catch {
+    return true
+  }
 }
 
 function showBrowserNotification(n: PushNotification) {

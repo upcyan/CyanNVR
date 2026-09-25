@@ -18,11 +18,8 @@ const nRows = computed(() => {
   if (props.cols && props.cols > 0) return Math.max(1, Math.ceil(props.devices.length / props.cols))
   return nCols.value
 })
-// 单元格最小高度：cols=1 时给一个固定高度让画面不至于被压扁
-const cellMinHeight = computed(() => {
-  if (!props.cols || props.cols <= 1) return '36vh'
-  return 'auto'
-})
+// 单元格最小高度（cols=1 时 36vh）由下方 scoped 样式 .grid-single 负责，
+// 模板里无需运行时计算；早前遗留的 cellMinHeight 已删除（vue-tsc TS6133）。
 </script>
 
 <template>
