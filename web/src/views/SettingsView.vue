@@ -1005,7 +1005,8 @@ async function removeUser(u: ManagedUser) {
 .about-version {
   margin: 14px 16px 0;
   text-align: center;
-  font-size: 11px;
+  /* 11px 低于本页最小可读字号，抬到 12px 与其余说明文字齐平 */
+  font-size: 12px;
   color: var(--nvr-text-2);
 }
 .settings-page :deep(.van-cell__title),

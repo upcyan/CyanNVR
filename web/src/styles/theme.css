@@ -48,8 +48,21 @@ body.light {
   --nvr-panel-2: #eef1f5;
   --nvr-border: #e3e8ee;
   --nvr-text: #1f2630;
-  --nvr-text-2: #6b7280;
+  /* #6b7280 在页面底 #f3f5f8 上只有 4.43:1（分组标题刚好差 0.07 不到 AA），
+     压深到 #646b79：页面底 4.90:1、白卡 5.35:1、panel-2 底 4.73:1 全部达标 */
+  --nvr-text-2: #646b79;
   --nvr-text-3: #9aa3b0;
+}
+
+/* ── Vant 说明文字/分组标题：对齐应用调色板 ──
+   Vant 暗色主题自带 --van-cell-label-color / --van-cell-group-title-color = #707070，
+   在卡片底 #1c1c1e 上只有 3.44:1、分组标题在页面底上 4.07:1，均低于 WCAG AA
+   正文所需的 4.5:1（设置页实测 23 处不达标）。改用应用自己的二级文字色，
+   实测：暗色 5.97:1、亮色 4.83:1，关怀模式（text-2 更亮/更深）只会更高。
+   声明在 body 上，覆盖 Vant 挂在 html(.van-theme-dark) 上的同名变量。 */
+body {
+  --van-cell-label-color: var(--nvr-text-2);
+  --van-cell-group-title-color: var(--nvr-text-2);
 }
 
 /* 亮色主题下的滚动条与暗色相反，否则几乎不可见 */
@@ -268,6 +281,13 @@ body.care .van-nav-bar {
 body.care .van-nav-bar__title {
   font-size: 20px;
   font-weight: 600;
+}
+/* Vant 把标题行高写死为 22px，而 .van-ellipsis 自带 overflow:hidden：
+   关怀模式字号 20px 的行盒是 25px > 22px，标题「设置」竖向被裁 3px；
+   正常模式 16px 也裁 1px（实测 scrollHeight 23 > clientHeight 22）。
+   改成随字号缩放：16px -> 25.6px、20px -> 32px，均小于导航栏 46/56px 高度。 */
+.van-nav-bar__title {
+  line-height: 1.6;
 }
 body.care .van-tabbar {
   height: 64px;
