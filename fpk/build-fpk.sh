@@ -175,6 +175,9 @@ if [ "$NEW_CORE" != "$CORE_VERSION" ]; then
     sed -i "s|^const CoreVersion = \".*\"\$|const CoreVersion = \"${NEW_CORE}\"|" "$VERSION_GO"
     grep -q "^const CoreVersion = \"${NEW_CORE}\"\$" "$VERSION_GO" || \
         error "写入 $VERSION_GO 失败"
+    # 归一模式：本机 fs 层偶发把被改写的文件落成 705（属主 +x、组位被清空），
+    # git 会记成 100755，产生纯模式 diff（历史上已修过一次，这里从源头堵住）。
+    chmod 644 "$VERSION_GO" 2>/dev/null || true
     CORE_VERSION="$NEW_CORE"
     info "已更新 server/version.go: CoreVersion = \"$CORE_VERSION\""
 fi
@@ -276,9 +279,27 @@ DIST_STALE=0
 if [ ! -f "$DIST/index.html" ]; then
     DIST_STALE=1
 elif [ -n "$(find "$PROJECT_ROOT/web/src" "$PROJECT_ROOT/web/public" "$PROJECT_ROOT/web/index.html" \
+        "$PROJECT_ROOT/server/version.go" \
         -newer "$DIST/index.html" -type f 2>/dev/null | head -1)" ]; then
     DIST_STALE=1
-    warn "web/dist 早于源码修改，判定为陈旧"
+    warn "web/dist 早于源码/版本号修改，判定为陈旧"
+fi
+
+# ── 版本戳断言（mtime 之外的第二道）──
+# vite 在构建期把 server/version.go 的 CoreVersion 注入 __APP_VERSION__，而本脚本
+# 在此之前已经 bump 过 version.go —— 只看 mtime 会把「版本号比产物新」的 dist 判成
+# 新鲜，打出的包里前后端版本号不一致：客户端首启 selfCleanCache 检测到差异会强制
+# 刷新一次 ?nocache=1（多余跳转），「已加载最新界面」自检行也显示旧版本。
+dist_stamp_ok() {
+    [ -f "$DIST/index.html" ] || return 1
+    # 主包里必然出现 CoreVersion，但引号形式不保证：rolldown 压出来的是反引号
+    # 模板字面量（let e=`1.7.3`），也曾见过单/双引号。用数字边界匹配，避免
+    # 误把 1.7.30、11.7.3 当成命中。
+    grep -qE "(^|[^0-9.])${CORE_VERSION}([^0-9.]|$)" "$DIST"/assets/index-*.js 2>/dev/null
+}
+if [ "$DIST_STALE" = "0" ] && ! dist_stamp_ok; then
+    DIST_STALE=1
+    warn "web/dist 版本戳与 CoreVersion $CORE_VERSION 不符，判定为陈旧"
 fi
 
 BUILT_OK=0
@@ -361,6 +382,14 @@ if [ "$BUILT_OK" = "0" ]; then
         | tar xf - -C "$PROJECT_ROOT/web/dist.docker"
     DIST="$PROJECT_ROOT/web/dist.docker"
 fi
+
+# 版本戳硬断言：dist 版本号 != CoreVersion 就禁止出包。
+# 这个坑连踩两次——一次打出 dist=1.7.1/二进制=1.7.2，一次 dist=1.7.2/二进制=1.7.3，
+# 客户端首启都会因版本不一致多做一次 ?nocache=1 强制刷新。
+if ! dist_stamp_ok; then
+    error "前端产物版本戳与 CoreVersion $CORE_VERSION 不符，禁止出包（web/dist 需要重建）"
+fi
+info "前端版本戳校验通过（$CORE_VERSION）"
 
 # 陈旧性断言：事件图标若仍是 Vant 中不存在的 bell-o，说明产物过期
 if grep -q "bell-o" "$DIST"/assets/index-*.js 2>/dev/null; then
