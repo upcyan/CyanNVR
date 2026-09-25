@@ -60,17 +60,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,svg,png,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https?:\/\/.*\/api\/health$/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-health',
-              networkTimeoutSeconds: 3,
-              expiration: { maxEntries: 1, maxAgeSeconds: 30 },
-            },
-          },
-        ],
+        // 注意：这里不配 runtimeCaching。自毁模式下 sw.js 安装即注销自身，
+        // 运行时缓存规则永远不会生效，配了只是给排错添乱；
+        // 所有请求直达服务器，缓存策略交给 HTTP 头（后端 no-cache/no-store）。
       },
     }),
   ],

@@ -343,9 +343,12 @@ func (w *Worker) startSingleConn() error {
 	recTpl := filepath.Join(w.recordDir, "%Y%m%d", "%H%M%S.mp4")
 	livePl := filepath.Join(w.liveDir, "index.m3u8")
 	// segment_format_options 把 +faststart 透传给 mp4 muxer（索引前置，回放秒开）
+	// 直播窗口 8 片（hls_time=2，约 16 秒）：客户端切后台或网络抖动后，仍有
+	// 足够窗口重新拉到未删除的分片，减少 404 断流黑屏；代价是每路直播多占
+	// 几 MB 磁盘。此前 4 片（约 8 秒）实测过窄。
 	teeSpec := fmt.Sprintf(
 		"[f=segment:segment_time=300:reset_timestamps=1:strftime=1:segment_format_options=movflags=+faststart]%s"+
-			"|[f=hls:hls_time=2:hls_list_size=4:hls_flags=delete_segments]%s",
+			"|[f=hls:hls_time=2:hls_list_size=8:hls_flags=delete_segments]%s",
 		recTpl, livePl)
 
 	// -map 0:v 是必需的：缺少显式流映射时 tee 会报
@@ -442,8 +445,9 @@ func (w *Worker) startMultiConn() error {
 	} else {
 		liveArgs = append(liveArgs, "-c:v", "copy")
 	}
+	// 直播窗口与 tee 模式一致：8 片约 16 秒，降低切后台后 404 断流黑屏概率。
 	liveArgs = append(liveArgs,
-		"-f", "hls", "-hls_time", "2", "-hls_list_size", "4", "-hls_flags", "delete_segments",
+		"-f", "hls", "-hls_time", "2", "-hls_list_size", "8", "-hls_flags", "delete_segments",
 		filepath.Join(w.liveDir, "index.m3u8"))
 
 	log.Printf("[%s] starting ffmpeg: record=%v", w.dev.Name, sanitizeArgs(recArgs))

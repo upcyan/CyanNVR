@@ -6,6 +6,7 @@ import App from './App.vue'
 import router from './router'
 import { initApi } from './api'
 import './styles/theme.css'
+import { pickerDesktop } from './utils/pickerDesktop'
 
 // ── 启动自清理缓存 ──
 // 一次性解决「浏览器残留旧 Service Worker / 预缓存导致界面不更新」：
@@ -44,7 +45,12 @@ async function selfCleanCache(): Promise<void> {
     const timer = setTimeout(() => ctrl.abort(), 2500)
     const resp = await fetch(url.toString(), { signal: ctrl.signal, cache: 'no-store' })
     clearTimeout(timer)
-    if (!resp.ok) return
+    if (!resp.ok) {
+      // 服务器可达但自检失败（如 502/503）：老界面继续用，但给出可见提示，
+      // 排错时一眼知道「版本自检没跑成」而不是无声放行。
+      showVersionCheckNotice('版本自检失败（HTTP ' + resp.status + '），界面可能不是最新，稍后请刷新页面')
+      return
+    }
     const data = await resp.json()
     const serverVersion = data.version || ''
     if (serverVersion && serverVersion !== FRONTEND_VERSION) {
@@ -52,15 +58,39 @@ async function selfCleanCache(): Promise<void> {
       try {
         tried = sessionStorage.getItem('nvr_nocache_tried') || ''
       } catch { /* ignore */ }
-      if (tried === FRONTEND_VERSION) return // 已经试过，放行
+      if (tried === FRONTEND_VERSION) {
+        // 已经试过一次强刷仍不一致：不再循环，但让用户知道现状
+        showVersionCheckNotice('界面版本（' + FRONTEND_VERSION + '）与服务端（' + serverVersion + '）不一致，请清缓存或联系管理员')
+        return
+      }
       params.set('nocache', '1')
       window.location.replace(
         `${window.location.pathname}?${params.toString()}${window.location.hash}`
       )
     }
   } catch {
-    /* ignore */
+    // 网络失败/超时（2.5s）：老界面继续用，给出可见提示而非静默。
+    // 不重试自检——服务器往往正在重启，重试只会拖慢首屏。
+    showVersionCheckNotice('无法确认界面版本（服务器暂不可达），如界面异常请稍后刷新')
   }
+}
+
+// showVersionCheckNotice：版本自检失败/不一致时的非阻断提示条。
+// selfCleanCache 在 Vue 挂载前执行，此时不能用 vant 组件，直接写 DOM。
+// sessionStorage 去重：同一次会话内最多提示一次，避免每次刷新都弹。
+function showVersionCheckNotice(msg: string) {
+  try {
+    if (sessionStorage.getItem('nvr_version_notice_shown')) return
+    sessionStorage.setItem('nvr_version_notice_shown', '1')
+  } catch { /* ignore */ }
+  const bar = document.createElement('div')
+  bar.textContent = msg
+  bar.style.cssText =
+    'position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 16px;'
+    + 'background:#5c3a00;color:#ffd591;font-size:13px;text-align:center;'
+    + 'box-shadow:0 1px 4px rgba(0,0,0,.4)'
+  document.body.appendChild(bar)
+  window.setTimeout(() => bar.remove(), 8000)
 }
 
 async function bootstrap() {
@@ -70,6 +100,7 @@ async function bootstrap() {
   app.use(createPinia())
   app.use(router)
   app.use(Vant)
+  app.directive('picker-desktop', pickerDesktop)
   app.mount('#app')
 }
 

@@ -138,26 +138,105 @@ export class SimulatedStream implements Playable {
 
 // ---------- HLS stream (real backend) ----------
 
+// HlsStream 的自愈策略：
+//
+// 后端直播 HLS 窗口极短（hls_list_size=4 + delete_segments，约 8 秒），
+// 且回放会话目录有 TTL 回收。手机切后台几秒、网络抖动或暂停过久后，
+// 播放器手里的 playlist 引用的分片可能已被服务端删除，请求 404 后
+// hls.js 会报 fatal network error —— 若无人处理，画面就永久冻结/黑屏。
+// 因此这里必须监听 ERROR 并逐级恢复：
+//   networkError -> startLoad() 重新拉播放列表（指数退避，次数有限）
+//   mediaError   -> recoverMediaError()（最多 2 次）
+//   其它/连续失败 -> 整个播放器重建（重新 loadSource，拿最新播放列表）
+// 页面回到前台（visibilitychange）时检查是否已断流，断流直接重建。
+const HLS_MAX_NETWORK_RETRIES = 6
+const HLS_MAX_MEDIA_RECOVERIES = 2
+
 export class HlsStream implements Playable {
+  private paused = false
   private hls: HlsType | null = null
   private video: HTMLVideoElement | null = null
+  private netRetries = 0
+  private mediaRecoveries = 0
+  private rebuilds = 0
+  private retryTimer = 0
+  private visibilityHandler: (() => void) | null = null
+  // attach 时从动态导入的 Hls 默认导出上取 ErrorTypes 枚举，
+  // 供 onHlsError 判断错误类别（HlsType 本身是 type-only 导入，不能当值用）。
+  private errorTypes: typeof HlsType.ErrorTypes | null = null
 
   constructor(private url: string, private baseTs = 0) {}
 
   async attach(el: HTMLVideoElement) {
     this.destroy()
     this.video = el
+    el.srcObject = null
     el.muted = true
     el.playsInline = true
     const { default: Hls } = await import('hls.js')
+    if (this.video !== el) return
     if (Hls.isSupported()) {
-      this.hls = new Hls({ enableWorker: true, maxBufferLength: 30, liveDurationInfinity: true })
+      this.hls = new Hls({ enableWorker: true, maxBufferLength: 30, liveDurationInfinity: true })
+      this.errorTypes = Hls.ErrorTypes
+      this.hls.on(Hls.Events.ERROR, (_evt, data) => this.onHlsError(data))
       this.hls.loadSource(this.url)
       this.hls.attachMedia(el)
     } else if (el.canPlayType('application/vnd.apple.mpegurl')) {
       el.src = this.url
     }
-    el.play().catch(() => {})
+    if (!this.visibilityHandler) {
+      this.visibilityHandler = () => {
+        if (document.visibilityState === 'visible') this.onVisible()
+      }
+      document.addEventListener('visibilitychange', this.visibilityHandler)
+    }
+    if (!this.paused) el.play().catch(() => {})
+  }
+
+  private onHlsError(data: { fatal?: boolean; type?: string }) {
+    if (!data.fatal) return
+    if (data.type === this.errorTypes?.NETWORK_ERROR) {
+      if (this.netRetries >= HLS_MAX_NETWORK_RETRIES) {
+        this.rebuild()
+        return
+      }
+      this.netRetries++
+      // 指数退避：1s, 2s, 4s ... 重新 startLoad 拉最新播放列表
+      window.clearTimeout(this.retryTimer)
+      this.retryTimer = window.setTimeout(
+        () => this.hls?.startLoad(),
+        Math.min(1000 * 2 ** (this.netRetries - 1), 8000),
+      )
+      return
+    }
+    if (data.type === this.errorTypes?.MEDIA_ERROR) {
+      if (this.mediaRecoveries < HLS_MAX_MEDIA_RECOVERIES) {
+        this.mediaRecoveries++
+        this.hls?.recoverMediaError()
+        return
+      }
+    }
+    this.rebuild()
+  }
+
+  // onVisible：回到前台时若缓冲已断（readyState 不足以继续播放），
+  // 说明后台期间分片已被服务端窗口淘汰，直接重建拿最新播放列表。
+  private onVisible() {
+    const v = this.video
+    if (!v) return
+    if (v.readyState >= 3) return // HAVE_FUTURE_DATA：缓冲健康，不动它
+    this.rebuild()
+  }
+
+  // rebuild：整个播放器重建。netRetries/mediaRecoveries 清零，
+  // rebuilds 上限防止服务端持续异常时无限循环刷新。
+  private rebuild() {
+    if (this.rebuilds >= 5) return
+    this.rebuilds++
+    this.netRetries = 0
+    this.mediaRecoveries = 0
+    const el = this.video
+    if (el) this.attach(el)
   }
 
   setBase(ts: number) {
@@ -190,10 +269,12 @@ export class HlsStream implements Playable {
   }
 
   pause() {
+    this.paused = true
     this.video?.pause()
   }
 
   resume() {
+    this.paused = false
     this.video?.play().catch(() => {})
   }
 
@@ -202,6 +283,11 @@ export class HlsStream implements Playable {
   }
 
   destroy() {
+    window.clearTimeout(this.retryTimer)
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler)
+      this.visibilityHandler = null
+    }
     this.hls?.destroy()
     this.hls = null
     if (this.video) {
@@ -223,7 +309,7 @@ export interface PlayableOptions {
 
 export function createPlayable(opts: PlayableOptions): Playable {
   if (opts.url) return new HlsStream(opts.url, opts.baseTs ?? 0)
-  return new SimulatedStream(opts.seed ?? 0, opts.label ?? '')
+  return new SimulatedStream(opts.seed ?? 0, opts.label ?? '', opts.baseTs)
 }
 
 export type { HlsType }
