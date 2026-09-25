@@ -68,3 +68,11 @@ MEMORY.md
 # UI 调试截图产物（本机验证用，禁止提交）
 work/
 ui-test/
+
+# WSL 本地运行时数据（含 jwt_secret 等敏感内容，禁止提交）
+data-wsl/
+
+# 本机构建产物与第三方工具二进制，禁止提交
+simplenvr-linux
+fpk/fnpack
+fpk/version.env
