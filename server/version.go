@@ -20,4 +20,4 @@ package main
 //
 // 注意：本文件被 build-fpk.sh 写入，且被排除在「变更判定」的哈希之外
 // （否则每次打包都会自我触发 bump）。
-const CoreVersion = "1.7.1"
+const CoreVersion = "1.7.2"

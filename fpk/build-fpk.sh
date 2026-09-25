@@ -329,18 +329,37 @@ else
     fi
 fi
 
-if [ "$BUILT_OK" = "0" ] || [ "$IMAGE_STALE" = "1" ]; then
-    info "构建 Docker 镜像（同时产出最新前端与后端二进制）..."
-    (cd "$PROJECT_ROOT" && docker build -t "$IMAGE" -f Dockerfile .) >/dev/null 2>&1 || \
+# 镜像只有两个真实用途，两者都不成立时**跳过构建**，让「本机只出 fpk」不碰 docker：
+#   1) 主机 npm 构建失败（BUILT_OK=0）-> 从镜像提取 dist
+#   2) 主机没有 go                     -> 从镜像提取后端二进制
+# 原条件是 `BUILT_OK=0 || IMAGE_STALE=1`，镜像不存在就无条件建，导致
+# 「有 go、dist 也新鲜」的常规出包也白跑一次 docker build（镜像一个字节都用不上）。
+NEED_IMAGE=0
+if [ "$BUILT_OK" = "0" ] || ! command -v go &>/dev/null; then
+    NEED_IMAGE=1
+fi
+
+if [ "$NEED_IMAGE" = "1" ] && [ "$IMAGE_STALE" = "1" ]; then
+    info "构建 Docker 镜像（用于提取前端 dist / 后端二进制）..."
+    # 失败时必须把输出露出来：原先 >/dev/null 2>&1 只剩一句「Docker 构建失败」，
+    # 真实原因（如 docker 需要可写 HOME 才能放 buildx 状态）全被吞掉。
+    BUILD_LOG=$(mktemp)
+    if ! (cd "$PROJECT_ROOT" && docker build -t "$IMAGE" -f Dockerfile .) >"$BUILD_LOG" 2>&1; then
+        tail -40 "$BUILD_LOG" >&2
+        rm -f "$BUILD_LOG"
         error "Docker 构建失败"
-    if [ "$BUILT_OK" = "0" ]; then
-        info "从镜像提取 dist..."
-        rm -rf "$PROJECT_ROOT/web/dist.docker"
-        mkdir -p "$PROJECT_ROOT/web/dist.docker"
-        docker run --rm --entrypoint sh "$IMAGE" -c "cd /app/dist && tar cf - ." \
-            | tar xf - -C "$PROJECT_ROOT/web/dist.docker"
-        DIST="$PROJECT_ROOT/web/dist.docker"
     fi
+    rm -f "$BUILD_LOG"
+    info "镜像构建完成"
+fi
+
+if [ "$BUILT_OK" = "0" ]; then
+    info "从镜像提取 dist..."
+    rm -rf "$PROJECT_ROOT/web/dist.docker"
+    mkdir -p "$PROJECT_ROOT/web/dist.docker"
+    docker run --rm --entrypoint sh "$IMAGE" -c "cd /app/dist && tar cf - ." \
+        | tar xf - -C "$PROJECT_ROOT/web/dist.docker"
+    DIST="$PROJECT_ROOT/web/dist.docker"
 fi
 
 # 陈旧性断言：事件图标若仍是 Vant 中不存在的 bell-o，说明产物过期
