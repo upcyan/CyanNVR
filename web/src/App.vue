@@ -18,6 +18,9 @@ const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
 // 侧边栏底部展示的版本号（自检用：能看到=已加载最新界面）
 const appVersion = ref('')
+// 状态块折叠：减少首屏视觉噪音，点击展开详情
+const statusCollapsed = ref(localStorage.getItem('nvr_sidebar_collapsed') === '1')
+watch(statusCollapsed, (v) => localStorage.setItem('nvr_sidebar_collapsed', v ? '1' : '0'))
 async function loadVersion() {
   try {
     const { data } = await http.get('/api/health')
@@ -100,12 +103,14 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0 }">
+        <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0, collapsed: statusCollapsed }" @click="statusCollapsed = !statusCollapsed">
           <span class="dot" />
-          <div class="status-text">
+          <div class="status-text" v-show="!statusCollapsed">
             <b>{{ devices.onlineCount }} / {{ devices.devices.length }}</b>
             <span>摄像头在线</span>
           </div>
+          <van-icon v-show="statusCollapsed" name="arrow-down" class="status-arrow" />
+          <van-icon v-show="!statusCollapsed" name="arrow-up" class="status-arrow" />
         </div>
 
         <div class="nav-group">导航</div>
@@ -222,9 +227,21 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin: 4px 14px 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.side-status:hover {
+  background: var(--nvr-panel);
+}
+.side-status.collapsed {
+  padding: 8px 12px;
+  justify-content: center;
+}
+.side-status.collapsed .status-text {
+  display: none;
 }
 .side-status .dot {
   width: 9px;
@@ -237,6 +254,11 @@ onBeforeUnmount(() => {
 .side-status.warn .dot {
   background: #ff4d4f;
   box-shadow: 0 0 6px #ff4d4f;
+}
+.status-arrow {
+  font-size: 14px;
+  color: var(--nvr-text-3);
+  margin-left: auto;
 }
 .status-text {
   display: flex;
