@@ -371,6 +371,8 @@ export interface AppSettings {
   tlsCertMode: string
   tlsDomain: string
   acmeEmail: string
+  /** 免登录信任窗口（小时），0=关闭 */
+  trustWindowHours: number
   ai: {
     enabled: boolean
     mode: string
@@ -431,6 +433,8 @@ export interface ManagedUser {
   username: string
   role: 'admin' | 'operator' | 'user' | 'viewer'
   createdAt: string
+  /** 用户级免登录窗口（小时）；undefined=跟随全局 */
+  trustWindowHours?: number | null
 }
 
 export async function fetchUsers(): Promise<ManagedUser[]> {
@@ -443,7 +447,7 @@ export async function createUser(username: string, password: string, role: strin
   return data.user as ManagedUser
 }
 
-export async function updateUser(id: string, patch: { password?: string; role?: string; username?: string }): Promise<void> {
+export async function updateUser(id: string, patch: { password?: string; role?: string; username?: string; trustWindowHours?: number | null }): Promise<void> {
   await http.put(`/api/users/${id}`, patch)
 }
 

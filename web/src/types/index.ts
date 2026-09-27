@@ -119,6 +119,8 @@ export interface Settings {
   tlsCertMode: string
   tlsDomain: string
   acmeEmail: string
+  /** 免登录信任窗口（小时），0=关闭 */
+  trustWindowHours: number
   ai: AIConfig
   theme: 'dark' | 'light'
   fontSize: FontSize

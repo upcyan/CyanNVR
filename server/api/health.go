@@ -61,6 +61,10 @@ func (s *Server) putSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "retentionSizeGB must be 0-1048576"})
 		return
 	}
+	if in.TrustWindowHours < 0 || in.TrustWindowHours > 24*365 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "trustWindowHours 必须在 0-8760 之间"})
+		return
+	}
 	if in.HTTPSPort == 0 {
 		in.HTTPSPort = 443
 	}

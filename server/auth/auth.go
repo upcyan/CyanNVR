@@ -20,6 +20,9 @@ var ErrInvalid = errors.New("invalid credentials")
 type Claims struct {
 	Sub  string `json:"sub"`
 	Role string `json:"role"`
+	// TrustUntil 免登录信任窗口截止时刻（nil=无窗口）。token 过期但
+	// 仍在此窗口内时，中间件会自动续签新 token 放行，避免频繁重登。
+	TrustUntil *jwt.NumericDate `json:"tw,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -69,6 +72,11 @@ func (m *Manager) VerifyPassword(hash, pw string) bool {
 }
 
 func (m *Manager) Issue(u *models.User) (string, error) {
+	return m.IssueWithTrust(u, nil)
+}
+
+// IssueWithTrust 签发带信任窗口的 token。trustUntil 为 nil 表示无窗口。
+func (m *Manager) IssueWithTrust(u *models.User, trustUntil *time.Time) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		Sub:  u.ID,
@@ -78,6 +86,9 @@ func (m *Manager) Issue(u *models.User) (string, error) {
 			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   u.ID,
 		},
+	}
+	if trustUntil != nil && trustUntil.After(now) {
+		claims.TrustUntil = jwt.NewNumericDate(*trustUntil)
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
 }
@@ -112,18 +123,71 @@ func (m *Manager) Middleware() gin.HandlerFunc {
 			return
 		}
 		claims, err := m.Parse(token)
+		expired := false
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			return
+			// 区分「签名无效」与「已过期」：仅过期可被信任窗口豁免
+			if !isExpiredErr(err) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+			claims, err = m.ParseLenient(token)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+			expired = true
 		}
-		// 改密后旧 token 立即失效：早于 password_changed_at 签发的一律拒绝
+		// 改密后旧 token 立即失效：早于 password_changed_at 签发的一律拒绝。
+		// 信任窗口不豁免这一条——改密必须重新输入密码。
 		if m.Revoked(claims) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "密码已变更，请重新登录"})
 			return
 		}
 		c.Set(ctxUserKey, &AuthUser{ID: claims.Sub, Role: models.Role(claims.Role)})
+		// 过期但仍在信任窗口内：签发新 token 经响应头下发，前端替换存储，
+		// 用户全程无感知；请求本身照常放行。
+		if expired && claims.TrustUntil != nil && time.Now().Before(claims.TrustUntil.Time) {
+			if renewed, err := m.Renew(claims); err == nil {
+				c.Header("X-Renewed-Token", renewed)
+			}
+		}
 		c.Next()
 	}
+}
+
+// isExpiredErr 判断 jwt 解析错误是否为「签名有效但已过期」。
+func isExpiredErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "token is expired")
+}
+
+// ParseLenient 解析过期 token（仅用于信任窗口判定）：校验签名但不校验 exp。
+func (m *Manager) ParseLenient(tokenStr string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
+		return m.secret, nil
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithoutClaimsValidation())
+	if err != nil {
+		return nil, err
+	}
+	if claims, ok := token.Claims.(*Claims); ok {
+		return claims, nil
+	}
+	return nil, ErrInvalid
+}
+
+// Renew 为仍在信任窗口内的过期会话签发等权新 token（信任窗口顺延一轮）。
+func (m *Manager) Renew(old *Claims) (string, error) {
+	now := time.Now()
+	claims := Claims{
+		Sub:        old.Sub,
+		Role:       old.Role,
+		TrustUntil: old.TrustUntil,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Subject:   old.Sub,
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
 }
 
 func bearerToken(c *gin.Context) string {

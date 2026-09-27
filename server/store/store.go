@@ -81,6 +81,8 @@ func (s *Store) migrate() error {
 		// 单摄保留限额：0 = 跟随全局 / 不单独限制
 		`ALTER TABLE devices ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE devices ADD COLUMN retention_size_gb INTEGER NOT NULL DEFAULT 0`,
+		// 免登录信任窗口（小时）：NULL=跟随全局设置，>=0 为用户专属覆盖
+		`ALTER TABLE users ADD COLUMN trust_window_hours INTEGER`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -133,17 +135,17 @@ func (s *Store) CreateUser(u models.User) error {
 }
 
 func (s *Store) GetUserByName(name string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users WHERE username=?`, name)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users WHERE username=?`, name)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(id string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers() ([]models.User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid FROM users ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +154,15 @@ func (s *Store) ListUsers() ([]models.User, error) {
 	for rows.Next() {
 		u := models.User{}
 		var changed sql.NullTime
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID); err != nil {
+		var tw sql.NullInt64
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw); err != nil {
 			return nil, err
 		}
 		if changed.Valid {
 			u.PasswordChangedAt = changed.Time
+		}
+		if tw.Valid {
+			u.TrustWindowHours = &tw.Int64
 		}
 		out = append(out, u)
 	}
@@ -198,6 +204,17 @@ func (s *Store) UpdateUserRole(id string, role models.Role) error {
 	return err
 }
 
+// UpdateUserTrustWindow 写入用户级免登录窗口（小时）。nil 表示清除覆盖、
+// 回归跟随全局设置。
+func (s *Store) UpdateUserTrustWindow(id string, hours *int64) error {
+	if hours == nil {
+		_, err := s.db.Exec(`UPDATE users SET trust_window_hours=NULL WHERE id=?`, id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE users SET trust_window_hours=? WHERE id=?`, *hours, id)
+	return err
+}
+
 func (s *Store) DeleteUser(id string) error {
 	_, err := s.db.Exec(`DELETE FROM users WHERE id=?`, id)
 	return err
@@ -212,7 +229,8 @@ func (s *Store) CountAdmins() (int, error) {
 func scanUser(row *sql.Row) (*models.User, error) {
 	u := models.User{}
 	var changed sql.NullTime
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID)
+	var tw sql.NullInt64
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -221,6 +239,9 @@ func scanUser(row *sql.Row) (*models.User, error) {
 	}
 	if changed.Valid {
 		u.PasswordChangedAt = changed.Time
+	}
+	if tw.Valid {
+		u.TrustWindowHours = &tw.Int64
 	}
 	return &u, nil
 }

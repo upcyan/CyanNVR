@@ -23,6 +23,9 @@ type User struct {
 	// PasswordChangedAt 最后一次改密时间。早于该时刻签发的 JWT 视为失效，
 	// 用于重置/修改密码后让旧会话立即下线。零值表示从未改密（不做吊销）。
 	PasswordChangedAt time.Time `json:"passwordChangedAt,omitzero"`
+	// TrustWindowHours 用户级免登录窗口（小时）。nil=跟随全局设置；
+	// >=0 为专属覆盖（0=该用户关闭免登录）。
+	TrustWindowHours *int64 `json:"trustWindowHours,omitempty"`
 }
 
 type DeviceSource string

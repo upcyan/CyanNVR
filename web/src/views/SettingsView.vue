@@ -13,6 +13,7 @@ import {
   fetchUsers,
   isBackend,
   updateUser,
+  saveAppSettings,
   type ManagedUser,
   type StatusInfo,
 } from '../api'
@@ -23,10 +24,22 @@ const router = useRouter()
 
 /* ── 设置分组折叠状态 ──
    高频分组默认展开，低频分组默认收起，减少首屏认知负荷。
-   状态持久化到 localStorage，跨会话保持。 */
-const collapsedGroups = ref<Set<string>>(new Set(
-  JSON.parse(localStorage.getItem('nvr_settings_collapsed') || '["server", "ai", "users"]')
-))
+   状态持久化到 localStorage，跨会话保持。
+   解析必须兜底：旧版本残留/手动篡改的非合法 JSON 会让 JSON.parse 抛异常，
+   导致整个设置页白屏；解析失败时回退到默认收起集。 */
+const DEFAULT_COLLAPSED: string[] = ['server', 'ai', 'users']
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem('nvr_settings_collapsed')
+    if (!raw) return new Set(DEFAULT_COLLAPSED)
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every((k) => typeof k === 'string')) {
+      return new Set(parsed)
+    }
+  } catch { /* 非法存储回退默认 */ }
+  return new Set(DEFAULT_COLLAPSED)
+}
+const collapsedGroups = ref<Set<string>>(loadCollapsed())
 function toggleGroup(key: string) {
   if (collapsedGroups.value.has(key)) {
     collapsedGroups.value.delete(key)
@@ -171,9 +184,10 @@ async function loadAboutVersion() {
 }
 
 onMounted(() => {
-  store.loadFromServer()
+  store.loadFromServer().then(initTrustHours)
   loadUsers()
   loadAboutVersion()
+  initTrustHours()
 })
 
 const modeOptions = [
@@ -395,6 +409,64 @@ async function onAIModelConfirm({ selectedValues }: any) {
   }
 }
 
+// ---- 免登录信任窗口（仅管理员；全局默认） ----
+// 本地草稿：空串=清除（跟随默认 72h 由后端默认值兜底）；数字=小时。
+const trustHoursText = ref('')
+const trustHoursSaving = ref(false)
+
+function initTrustHours() {
+  // fetchAppSettings 返回值会进 store.settings；这里从 store 读
+  const v = (store.settings as any).trustWindowHours
+  trustHoursText.value = v === undefined || v === null ? '' : String(v)
+}
+
+async function saveTrustHours() {
+  if (trustHoursSaving.value) return
+  const raw = trustHoursText.value.trim()
+  let hours: number
+  if (raw === '') {
+    hours = 0
+  } else {
+    hours = Number(raw)
+    if (!Number.isFinite(hours) || hours < 0 || hours > 8760) {
+      showToast('免登录窗口需为 0-8760 小时')
+      return
+    }
+  }
+  trustHoursSaving.value = true
+  try {
+    const cur = { ...(store.settings as any) }
+    cur.trustWindowHours = hours
+    const saved = await saveAppSettings(settingsToBackendLocal(cur))
+    Object.assign(store.settings, (saved as any).settings ?? saved)
+    showToast(hours > 0 ? `已保存：登录后 ${hours} 小时内免重复登录` : '已关闭免登录')
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '保存失败')
+  } finally {
+    trustHoursSaving.value = false
+  }
+}
+
+// settingsToBackend 的本地包装：store.settings 形状与 Settings 一致
+function settingsToBackendLocal(s: any) {
+  return {
+    retentionDays: s.retentionDays,
+    retentionSizeGB: s.retentionSizeGB,
+    recordMode: s.recordMode,
+    scheduleStart: s.scheduleStart,
+    scheduleEnd: s.scheduleEnd,
+    motionPush: s.motionPush,
+    offlinePush: s.offlinePush,
+    https: s.https,
+    httpsPort: s.httpsPort,
+    tlsCertMode: s.tlsCertMode,
+    tlsDomain: s.tlsDomain,
+    acmeEmail: s.acmeEmail,
+    ai: s.ai,
+    trustWindowHours: s.trustWindowHours ?? 0,
+  }
+}
+
 // ---- user management ----
 
 const users = ref<ManagedUser[]>([])
@@ -402,6 +474,10 @@ const usersLoaded = ref(false)
 const showUserDialog = ref(false)
 const editingUser = ref<ManagedUser | null>(null)
 const userForm = ref({ username: '', password: '', role: 'user' as string })
+// 用户级免登录窗口草稿：''=未改；数字串=小时；'-1'=清除跟随全局
+const userTrustText = ref('')
+const trustAppliedId = ref('')
+const trustAppliedMsg = ref('')
 const showRolePicker = ref(false)
 
 const roleOptions = [
@@ -430,7 +506,36 @@ function openAddUser() {
 function openEditUser(u: ManagedUser) {
   editingUser.value = u
   userForm.value = { username: u.username, password: '', role: u.role }
+  userTrustText.value = u.trustWindowHours == null ? '' : String(u.trustWindowHours)
+  trustAppliedId.value = ''
+  trustAppliedMsg.value = ''
   showUserDialog.value = true
+}
+
+// 保存该用户的免登录窗口：空串=清除跟随全局；数字=专属小时数
+async function applyUserTrust() {
+  const u = editingUser.value
+  if (!u) return
+  const raw = userTrustText.value.trim()
+  let patch: { trustWindowHours?: number | null }
+  if (raw === '') {
+    patch = { trustWindowHours: null }
+  } else {
+    const h = Number(raw)
+    if (!Number.isFinite(h) || h < 0 || h > 8760) {
+      showToast('免登录窗口需为 0-8760 小时，留空则跟随全局')
+      return
+    }
+    patch = { trustWindowHours: h }
+  }
+  try {
+    await updateUser(u.id, patch)
+    trustAppliedId.value = u.id
+    trustAppliedMsg.value = raw === '' ? '已跟随全局' : `该用户登录后 ${raw} 小时内免重复登录`
+    await loadUsers()
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '保存免登录窗口失败')
+  }
 }
 
 // 行点击即可进入编辑（内含「改名」「改密码」按钮）
@@ -537,7 +642,7 @@ async function removeUser(u: ManagedUser) {
     <div class="settings-columns">
       <section class="settings-column" aria-label="显示、通知与账户">
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('display')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('display')" @keydown.enter.prevent="toggleGroup('display')" @keydown.space.prevent="toggleGroup('display')" @click="toggleGroup('display')">
         <span class="set-block-title">显示与无障碍</span>
         <van-icon :name="isCollapsed('display') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -570,7 +675,8 @@ async function removeUser(u: ManagedUser) {
           <van-switch aria-label="关怀模式" :model-value="s.careMode" @update:model-value="setCareMode" />
         </template>
       </van-cell>
-      <van-cell title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
+      <!-- 演示模式会整体切换数据源，属于管理员级操作，普通用户/只读不见 -->
+      <van-cell v-if="auth.isAdmin || !isBackend()" title="演示模式" label="开启后使用内置模拟设备与事件数据，便于功能预览">
         <template #right-icon>
           <van-switch aria-label="演示模式" :model-value="s.demoMode" @update:model-value="setDemoMode" />
         </template>
@@ -579,7 +685,7 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('notify')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('notify')" @keydown.enter.prevent="toggleGroup('notify')" @keydown.space.prevent="toggleGroup('notify')" @click="toggleGroup('notify')">
         <span class="set-block-title">通知</span>
         <van-icon :name="isCollapsed('notify') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -598,7 +704,7 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('server')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('server')" @keydown.enter.prevent="toggleGroup('server')" @keydown.space.prevent="toggleGroup('server')" @click="toggleGroup('server')">
         <span class="set-block-title">服务器</span>
         <van-icon :name="isCollapsed('server') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -612,8 +718,34 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
+    <!-- 免登录信任窗口：仅管理员可见。token 有效期内本就免登录；
+         这里配置的是 token 过期后的静默续期窗口。 -->
+    <div class="set-block" v-if="auth.isAdmin">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('security')" @keydown.enter.prevent="toggleGroup('security')" @keydown.space.prevent="toggleGroup('security')" @click="toggleGroup('security')">
+        <span class="set-block-title">登录安全</span>
+        <van-icon :name="isCollapsed('security') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('security')" title="">
+      <van-cell title="免登录窗口" label="登录一次后，在此窗口内再次打开无需重新登录（token 过期也可静默续期）。0 = 关闭；用户可在「用户管理」里单独覆盖。">
+        <template #value>
+          <div class="trust-box">
+            <van-field
+              v-model="trustHoursText"
+              type="digit"
+              class="trust-input"
+              placeholder="72"
+              aria-label="免登录窗口小时数"
+            />
+            <span class="trust-unit">小时</span>
+            <van-button type="primary" size="small" round :loading="trustHoursSaving" @click="saveTrustHours">保存</van-button>
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
+    </div>
+
     <div class="set-block" v-if="isBackend() && auth.isAdmin">
-      <div class="set-block-header" @click="toggleGroup('users')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('users')" @keydown.enter.prevent="toggleGroup('users')" @keydown.space.prevent="toggleGroup('users')" @click="toggleGroup('users')">
         <span class="set-block-title">用户管理</span>
         <van-icon :name="isCollapsed('users') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -655,7 +787,7 @@ async function removeUser(u: ManagedUser) {
       </section>
       <section class="settings-column" aria-label="存储、录像与识别">
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('storage')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('storage')" @keydown.enter.prevent="toggleGroup('storage')" @keydown.space.prevent="toggleGroup('storage')" @click="toggleGroup('storage')">
         <span class="set-block-title">存储管理</span>
         <van-icon :name="isCollapsed('storage') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -729,7 +861,7 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('record')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('record')" @keydown.enter.prevent="toggleGroup('record')" @keydown.space.prevent="toggleGroup('record')" @click="toggleGroup('record')">
         <span class="set-block-title">录像策略</span>
         <van-icon :name="isCollapsed('record') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -756,7 +888,7 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <div class="set-block-header" @click="toggleGroup('ai')">
+      <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('ai')" @keydown.enter.prevent="toggleGroup('ai')" @keydown.space.prevent="toggleGroup('ai')" @click="toggleGroup('ai')">
         <span class="set-block-title">AI 画面识别</span>
         <van-icon :name="isCollapsed('ai') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
@@ -1034,6 +1166,17 @@ async function removeUser(u: ManagedUser) {
           <van-button type="warning" plain size="small" round @click="changeUserPassword">修改密码</van-button>
         </div>
         <van-field label="角色" :model-value="roleOptions.find((r) => r.value === userForm.role)?.label" is-link @click="showRolePicker = true" />
+        <van-field
+          v-model="userTrustText"
+          type="digit"
+          label="免登录"
+          placeholder="留空 = 跟随全局"
+          aria-label="该用户免登录窗口小时数"
+        />
+        <div v-if="editingUser" class="field-action">
+          <van-button plain type="primary" size="small" round @click="applyUserTrust">应用免登录窗口</van-button>
+          <span v-if="trustAppliedId === editingUser.id" class="trust-applied">{{ trustAppliedMsg }}</span>
+        </div>
       </van-cell-group>
       <div class="dialog-actions">
         <van-button v-if="editingUser" plain block round @click="closeUserDialog">完成（角色已随选择即时保存）</van-button>
@@ -1055,6 +1198,26 @@ async function removeUser(u: ManagedUser) {
 <style scoped>
 .settings-page {
   padding-bottom: 30px;
+}
+/* 免登录窗口：输入 + 单位 + 保存按钮 一行排布 */
+.trust-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.trust-input {
+  width: 92px;
+  padding: 2px 6px;
+}
+.trust-unit {
+  color: var(--nvr-text-2);
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+}
+.trust-applied {
+  margin-left: 10px;
+  color: var(--nvr-success);
+  font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .about-version {
   margin: 14px 16px 0;
@@ -1456,6 +1619,10 @@ async function removeUser(u: ManagedUser) {
 }
 .set-block-header:active {
   background: var(--nvr-panel-2);
+}
+.set-block-header:focus-visible {
+  outline: 2px solid var(--nvr-primary);
+  outline-offset: -2px;
 }
 .set-block-title {
   font-size: 14px;

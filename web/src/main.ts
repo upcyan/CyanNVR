@@ -85,10 +85,13 @@ function showVersionCheckNotice(msg: string) {
   } catch { /* ignore */ }
   const bar = document.createElement('div')
   bar.textContent = msg
+  // pointer-events:none：提示条横贯全屏顶部，若可命中会拦截导航栏等
+  // 顶部元素的指针（Playwright 交互回归实测踩中）。提示是只读的，
+  // 不需要任何指针交互；用户想手动刷新时点自己的浏览器刷新即可。
   bar.style.cssText =
     'position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 16px;'
     + 'background:#5c3a00;color:#ffd591;font-size:13px;text-align:center;'
-    + 'box-shadow:0 1px 4px rgba(0,0,0,.4)'
+    + 'pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.4)'
   document.body.appendChild(bar)
   window.setTimeout(() => bar.remove(), 8000)
 }

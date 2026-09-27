@@ -171,6 +171,7 @@ export function defaultSettings(): Settings {
     tlsCertMode: '',
     tlsDomain: '',
     acmeEmail: '',
+    trustWindowHours: 72,
     ai: {
       enabled: false,
       mode: 'local',

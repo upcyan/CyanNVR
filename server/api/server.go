@@ -61,6 +61,9 @@ type AppSettings struct {
 	TLSDomain       string   `json:"tlsDomain"`
 	ACMEEmail       string   `json:"acmeEmail"`
 	AI              AIConfig `json:"ai"`
+	// TrustWindowHours 免登录信任窗口（小时）：token 过期后仍可静默续期的
+	// 时长。0=关闭。用户级 trust_window_hours 覆盖此全局默认。
+	TrustWindowHours int     `json:"trustWindowHours"`
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
@@ -124,6 +127,8 @@ func defaultSettings() AppSettings {
 		ScheduleEnd:   "20:00",
 		MotionPush:    true,
 		OfflinePush:   true,
+		// 免登录信任窗口默认 3 天：平衡「少登录」与「异常时尽快失效」
+		TrustWindowHours: 72,
 		HTTPS:         false,
 		HTTPSPort:     443,
 		TLSCertMode:   "",

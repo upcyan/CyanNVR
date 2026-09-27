@@ -84,7 +84,9 @@ func (s *Server) login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
-	token, err := s.am.Issue(u)
+	// 免登录信任窗口：用户级覆盖 > 全局默认。0=该用户关闭。
+	tw := s.effectiveTrustWindow(u)
+	token, err := s.am.IssueWithTrust(u, tw)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "token error"})
 		return
@@ -113,7 +115,27 @@ func publicUser(u *models.User) gin.H {
 		"username":  u.Username,
 		"role":      u.Role,
 		"createdAt": u.CreatedAt,
+		// nil=跟随全局；>=0 为用户专属窗口（供前端展示免登录配置）
+		"trustWindowHours": u.TrustWindowHours,
 	}
+}
+
+// effectiveTrustWindow 计算某用户的免登录窗口截止时刻。
+// 用户级覆盖（含显式 0）优先于全局默认；关闭时返回 nil。
+func (s *Server) effectiveTrustWindow(u *models.User) *time.Time {
+	hours := int64(0)
+	if u.TrustWindowHours != nil {
+		hours = *u.TrustWindowHours
+	} else {
+		s.settingsMu.Lock()
+		hours = int64(s.settings.TrustWindowHours)
+		s.settingsMu.Unlock()
+	}
+	if hours <= 0 {
+		return nil
+	}
+	t := time.Now().Add(time.Duration(hours) * time.Hour)
+	return &t
 }
 
 func (s *Server) listUsers(c *gin.Context) {
@@ -185,6 +207,8 @@ func (s *Server) updateUser(c *gin.Context) {
 		Password string      `json:"password"`
 		Role     models.Role `json:"role"`
 		Username string      `json:"username"`
+		// TrustWindowHours 用户级免登录窗口；指针区分「未提供」与「显式清零」
+		TrustWindowHours *int64      `json:"trustWindowHours"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -238,6 +262,17 @@ func (s *Server) updateUser(c *gin.Context) {
 			}
 		}
 		_ = s.st.UpdateUserRole(id, req.Role)
+	}
+	if req.TrustWindowHours != nil {
+		h := *req.TrustWindowHours
+		if h < 0 || h > 24*365 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "trustWindowHours 必须在 0-8760 之间"})
+			return
+		}
+		if err := s.st.UpdateUserTrustWindow(id, &h); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存免登录窗口失败"})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

@@ -50,6 +50,7 @@ function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
     tlsCertMode: b.tlsCertMode ?? '',
     tlsDomain: b.tlsDomain ?? '',
     acmeEmail: b.acmeEmail ?? '',
+    trustWindowHours: (b as any).trustWindowHours ?? 0,
     ai: (b.ai ?? defaultSettings().ai) as Settings['ai'],
     ...local,
   }
@@ -70,6 +71,7 @@ function settingsToBackend(s: Settings): AppSettings {
     tlsDomain: s.tlsDomain,
     acmeEmail: s.acmeEmail,
     ai: s.ai,
+    trustWindowHours: (s as any).trustWindowHours ?? 0,
   }
 }
 

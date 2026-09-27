@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0, collapsed: statusCollapsed }" @click="statusCollapsed = !statusCollapsed">
+        <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0, collapsed: statusCollapsed }" role="button" tabindex="0" :aria-expanded="!statusCollapsed" aria-label="摄像头在线状态，点击折叠或展开" @keydown.enter.prevent="statusCollapsed = !statusCollapsed" @keydown.space.prevent="statusCollapsed = !statusCollapsed" @click="statusCollapsed = !statusCollapsed">
           <span class="dot" />
           <div class="status-text" v-show="!statusCollapsed">
             <b>{{ devices.onlineCount }} / {{ devices.devices.length }}</b>
@@ -235,6 +235,10 @@ onBeforeUnmount(() => {
 }
 .side-status:hover {
   background: var(--nvr-panel);
+}
+.side-status:focus-visible {
+  outline: 2px solid var(--nvr-primary);
+  outline-offset: 2px;
 }
 .side-status.collapsed {
   padding: 8px 12px;
