@@ -755,7 +755,7 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   font-size: calc(13px * var(--nvr-font-scale, 1));
 }
-.seek-tools button { border: 1px solid var(--nvr-border); border-radius: 8px; }
+.seek-tools button { border: 1px solid var(--nvr-border); border-radius: var(--nvr-radius-sm); }
 .seek-tools button:disabled { opacity: .45; cursor: not-allowed; }
 .time-jump { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .time-jump input {
@@ -765,7 +765,7 @@ onBeforeUnmount(() => {
   color: var(--nvr-text);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   padding: 6px;
   color-scheme: dark;
 }
@@ -857,7 +857,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   flex-shrink: 0;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--nvr-radius-full);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   cursor: pointer;
@@ -886,7 +886,7 @@ onBeforeUnmount(() => {
 }
 /* 小时行 */
 .hour-block {
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   overflow: hidden;
   border: 1px solid var(--nvr-border);
   margin-bottom: 6px;
@@ -931,7 +931,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   font-size: calc(12px * var(--nvr-font-scale, 1));
@@ -966,7 +966,7 @@ onBeforeUnmount(() => {
   font-size: calc(11px * var(--nvr-font-scale, 1));
   line-height: 1;
   padding: 3px 7px;
-  border-radius: 9px;
+  border-radius: var(--nvr-radius-sm);
   color: #fff;
 }
 .evt-badge.motion { background: #ffb020; color: #4a2c00; }

@@ -429,7 +429,7 @@ function closeReset() {
 }
 .reset-desc code {
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   font-family: ui-monospace, Menlo, monospace;
   word-break: break-all;
@@ -440,7 +440,7 @@ function closeReset() {
   gap: 4px;
   margin-bottom: 10px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
 }
@@ -471,7 +471,7 @@ function closeReset() {
 }
 .reset-hint code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   font-family: ui-monospace, Menlo, monospace;
 }

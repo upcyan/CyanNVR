@@ -193,7 +193,17 @@ onMounted(() => {
       </van-collapse-item>
     </van-collapse>
 
-    <van-loading v-if="loading" class="loading" />
+    <!-- 骨架屏：加载时显示占位卡片，避免"白屏焦虑" -->
+    <div v-if="loading" class="skeleton-list">
+      <div v-for="i in 3" :key="i" class="ev-card skeleton">
+        <div class="media skeleton-media">
+          <van-skeleton title :row="0" :loading="true" class="skeleton-img" />
+        </div>
+        <div class="info">
+          <van-skeleton title :row="2" :loading="true" />
+        </div>
+      </div>
+    </div>
 
     <div v-else class="list">
       <div v-for="e in events" :key="e.id" class="ev-card">
@@ -285,10 +295,22 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.loading {
-  display: flex;
-  justify-content: center;
-  padding: 60px 0;
+/* ── 骨架屏 ── */
+.skeleton-list {
+  padding: 0 14px;
+}
+.skeleton {
+  pointer-events: none;
+  opacity: 0.6;
+}
+.skeleton-media {
+  background: var(--nvr-panel-2);
+  border-radius: var(--nvr-radius-sm);
+}
+.skeleton-img {
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
 }
 .type-chips {
   display: flex;
@@ -299,7 +321,7 @@ onMounted(() => {
 .type-chips .chip {
   flex-shrink: 0;
   padding: 6px 14px;
-  border-radius: 999px;
+  border-radius: var(--nvr-radius-full);
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel);
   color: var(--nvr-text-2);
@@ -358,7 +380,7 @@ onMounted(() => {
 .media {
   width: 110px;
   height: 72px;
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   overflow: hidden;
   flex-shrink: 0;
   background: #000;
@@ -374,7 +396,7 @@ onMounted(() => {
   bottom: 4px;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--nvr-radius-full);
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   display: flex;
@@ -446,7 +468,7 @@ onMounted(() => {
 .badge {
   font-size: calc(11px * var(--nvr-font-scale, 1));
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--nvr-radius-full);
   color: #fff;
   flex-shrink: 0;
 }
@@ -494,7 +516,7 @@ onMounted(() => {
 .dl-btn {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--nvr-radius-full);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   display: flex;

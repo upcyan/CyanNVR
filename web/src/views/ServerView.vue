@@ -292,7 +292,7 @@ function goBack() {
 .result {
   margin: 0 16px;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   font-size: calc(13px * var(--nvr-font-scale, 1));
@@ -317,7 +317,7 @@ function goBack() {
 .qr-img {
   width: 200px;
   height: 200px;
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   background: #fff;
 }
 .qr-text {

@@ -21,6 +21,24 @@ const store = useSettingsStore()
 const auth = useAuthStore()
 const router = useRouter()
 
+/* ── 设置分组折叠状态 ──
+   高频分组默认展开，低频分组默认收起，减少首屏认知负荷。
+   状态持久化到 localStorage，跨会话保持。 */
+const collapsedGroups = ref<Set<string>>(new Set(
+  JSON.parse(localStorage.getItem('nvr_settings_collapsed') || '["server", "ai", "users"]')
+))
+function toggleGroup(key: string) {
+  if (collapsedGroups.value.has(key)) {
+    collapsedGroups.value.delete(key)
+  } else {
+    collapsedGroups.value.add(key)
+  }
+  localStorage.setItem('nvr_settings_collapsed', JSON.stringify([...collapsedGroups.value]))
+}
+function isCollapsed(key: string) {
+  return collapsedGroups.value.has(key)
+}
+
 // entering from the tabbar there may be no history to go back to
 function goBack() {
   if (window.history.state.back == null) router.replace('/live')
@@ -519,7 +537,11 @@ async function removeUser(u: ManagedUser) {
     <div class="settings-columns">
       <section class="settings-column" aria-label="显示、通知与账户">
     <div class="set-block">
-      <van-cell-group title="显示与无障碍">
+      <div class="set-block-header" @click="toggleGroup('display')">
+        <span class="set-block-title">显示与无障碍</span>
+        <van-icon :name="isCollapsed('display') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('display')" title="">
       <van-cell title="深色模式" label="切换界面主题">
         <template #right-icon>
           <van-switch aria-label="深色模式" :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
@@ -557,7 +579,11 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <van-cell-group title="通知">
+      <div class="set-block-header" @click="toggleGroup('notify')">
+        <span class="set-block-title">通知</span>
+        <van-icon :name="isCollapsed('notify') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('notify')" title="">
       <van-cell title="移动侦测告警" label="检测到移动时推送通知">
         <template #right-icon>
           <van-switch aria-label="移动侦测告警" :model-value="s.motionPush" @update:model-value="store.set({ motionPush: $event })" />
@@ -572,7 +598,11 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <van-cell-group title="服务器">
+      <div class="set-block-header" @click="toggleGroup('server')">
+        <span class="set-block-title">服务器</span>
+        <van-icon :name="isCollapsed('server') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('server')" title="">
       <van-cell
         title="服务器地址"
         label="局域网 / 公网连接，自动判断"
@@ -582,8 +612,12 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block">
-      <van-cell-group v-if="isBackend() && auth.isAdmin" title="用户管理">
+    <div class="set-block" v-if="isBackend() && auth.isAdmin">
+      <div class="set-block-header" @click="toggleGroup('users')">
+        <span class="set-block-title">用户管理</span>
+        <van-icon :name="isCollapsed('users') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('users')" title="">
       <van-cell
         v-for="u in users"
         :key="u.id"
@@ -621,7 +655,11 @@ async function removeUser(u: ManagedUser) {
       </section>
       <section class="settings-column" aria-label="存储、录像与识别">
     <div class="set-block">
-      <van-cell-group title="存储管理">
+      <div class="set-block-header" @click="toggleGroup('storage')">
+        <span class="set-block-title">存储管理</span>
+        <van-icon :name="isCollapsed('storage') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('storage')" title="">
       <van-cell
         v-if="store.storage.totalGB > 0"
         title="存储空间"
@@ -691,7 +729,11 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <van-cell-group title="录像策略">
+      <div class="set-block-header" @click="toggleGroup('record')">
+        <span class="set-block-title">录像策略</span>
+        <van-icon :name="isCollapsed('record') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('record')" title="">
       <van-radio-group :model-value="s.recordMode" @update:model-value="setMode">
         <van-cell v-for="o in modeOptions" :key="o.value" clickable @click="setMode(o.value)">
           <template #title>
@@ -714,7 +756,11 @@ async function removeUser(u: ManagedUser) {
     </div>
 
     <div class="set-block">
-      <van-cell-group title="AI 画面识别">
+      <div class="set-block-header" @click="toggleGroup('ai')">
+        <span class="set-block-title">AI 画面识别</span>
+        <van-icon :name="isCollapsed('ai') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
+      </div>
+      <van-cell-group v-show="!isCollapsed('ai')" title="">
       <van-cell title="启用 AI 识别" label="本地对象检测（默认），或切换云端视觉模型">
         <template #right-icon>
           <van-switch aria-label="启用 AI 识别" :model-value="s.ai.enabled" @update:model-value="store.set({ ai: { ...s.ai, enabled: $event } })" />
@@ -1035,7 +1081,7 @@ async function removeUser(u: ManagedUser) {
   flex-shrink: 1;
   min-width: 36px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   overflow: hidden;
 }
@@ -1043,7 +1089,7 @@ async function removeUser(u: ManagedUser) {
   display: block;
   height: 100%;
   background: var(--nvr-green);
-  border-radius: 3px;
+  border-radius: var(--nvr-radius-sm);
   transition: width 0.3s;
 }
 .bar i.warn {
@@ -1060,7 +1106,7 @@ async function removeUser(u: ManagedUser) {
 .days-input {
   width: 96px;
   padding: 0 10px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
 }
@@ -1083,7 +1129,7 @@ async function removeUser(u: ManagedUser) {
 .bench-card {
   margin: 8px 16px 4px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
 }
@@ -1102,7 +1148,7 @@ async function removeUser(u: ManagedUser) {
 .bench-rank {
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--nvr-radius-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1188,7 +1234,7 @@ async function removeUser(u: ManagedUser) {
 }
 .time-field {
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   font-size: calc(13px * var(--nvr-font-scale, 1));
@@ -1213,7 +1259,7 @@ async function removeUser(u: ManagedUser) {
   min-height: 44px;
   padding: 8px;
   font-size: calc(14px * var(--nvr-font-scale, 1));
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel-2);
   display: flex;
@@ -1265,7 +1311,7 @@ async function removeUser(u: ManagedUser) {
 .ua-btn {
   width: 30px;
   height: 30px;
-  border-radius: 50%;
+  border-radius: var(--nvr-radius-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1328,7 +1374,7 @@ async function removeUser(u: ManagedUser) {
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
   min-width: 0;
@@ -1368,7 +1414,7 @@ async function removeUser(u: ManagedUser) {
   gap: 6px;
   margin-top: 12px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   background: rgba(255, 176, 32, 0.12);
   border: 1px solid rgba(255, 176, 32, 0.4);
   color: var(--nvr-amber);
@@ -1395,6 +1441,43 @@ async function removeUser(u: ManagedUser) {
 }
 .settings-column { min-width: 0; }
 .set-block:empty { display: none; }
+
+/* ── 分组折叠头部 ── */
+.set-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--nvr-panel);
+  border-radius: var(--nvr-radius-md) var(--nvr-radius-md) 0 0;
+  border-bottom: 1px solid var(--nvr-border);
+}
+.set-block-header:active {
+  background: var(--nvr-panel-2);
+}
+.set-block-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--nvr-text-2);
+}
+.set-block-arrow {
+  font-size: 16px;
+  color: var(--nvr-text-3);
+  transition: transform 0.2s ease;
+}
+.set-block-header:hover .set-block-arrow {
+  color: var(--nvr-text-2);
+}
+/* 折叠时隐藏底部圆角，展开时保持 */
+.set-block:has(.set-block-header) .van-cell-group {
+  border-radius: 0 0 var(--nvr-radius-md) var(--nvr-radius-md);
+}
+.set-block:has(.set-block-header) .van-cell-group__title {
+  display: none; /* 隐藏 Vant 默认标题，用自定义头部替代 */
+}
+
 @media (min-width: 900px) {
   .settings-page {
     width: 100%;
@@ -1427,7 +1510,7 @@ async function removeUser(u: ManagedUser) {
   .set-block { margin-bottom: 20px; }
   .set-block :deep(.van-cell-group) {
     border: 1px solid var(--nvr-border);
-    border-radius: 12px;
+    border-radius: var(--nvr-radius-md);
     overflow: hidden;
   }
   .settings-page :deep(.van-cell__title) { min-width: 0; }
@@ -1445,7 +1528,7 @@ async function removeUser(u: ManagedUser) {
 .backend-tag {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--nvr-radius-sm);
   font-size: calc(12px * var(--nvr-font-scale, 1));
   line-height: 18px;
   white-space: nowrap;

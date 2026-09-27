@@ -253,7 +253,7 @@ function onViewerPlayback(d: Device) {
 .icon-btn {
   width: 38px;
   height: 38px;
-  border-radius: 50%;
+  border-radius: var(--nvr-radius-full);
   border: none;
   background: transparent;
   color: var(--nvr-text);
@@ -307,7 +307,7 @@ function onViewerPlayback(d: Device) {
   display: flex;
   gap: 2px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border-radius: var(--nvr-radius-sm);
   padding: 2px;
 }
 .layout-btn {
@@ -316,7 +316,7 @@ function onViewerPlayback(d: Device) {
   color: rgba(255, 255, 255, 0.65);
   font-size: calc(12px * var(--nvr-font-scale, 1));
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--nvr-radius-sm);
   cursor: pointer;
 }
 .layout-btn.on {
