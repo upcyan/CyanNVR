@@ -33,16 +33,20 @@ import zlib
 VIEW = 100.0
 
 RING_CX, RING_CY = 44.0, 54.0   # 镜头中心
-RING_R_OUT = 32.0               # 外圈外径（镜筒）
-RING_R_IN = 24.5                # 外圈内径（镜圈厚 7.5）
-PUPIL_R = 20.0                  # 玻璃镜片：贴近内径只留 4.5 的缝，
-                                # 这样读起来是"镜头"而不是"录制按钮 / 靶心"
+RING_R_OUT = 30.0               # 外圈外径（镜筒，新版更粗）
+RING_R_IN = 22.0                # 外圈内径（镜圈厚 8，与 SVG stroke-width 一致）
+PUPIL_R = 22.0                  # 玻璃镜片：与外圈内径一致，更饱满
 
-HL1_CX, HL1_CY, HL1_R = 36.0, 46.0, 6.0    # 主高光（左上）
-HL2_CX, HL2_CY, HL2_R = 50.0, 62.0, 2.5    # 次高光（右下，制造体积感）
+# 新版高光：弧线替代双圆点（更简洁现代）
+# 弧线参数：圆心 (44, 54)，半径 16，从角度 210° 到 270°（左上到顶部）
+HL_ARC_CX, HL_ARC_CY = 44.0, 54.0
+HL_ARC_R = 16.0
+HL_ARC_START = 210.0            # 起始角度（度）
+HL_ARC_END = 270.0              # 结束角度（度）
+HL_ARC_WIDTH = 4.0              # 弧线宽度
 
-DOT_CX, DOT_CY, DOT_R = 80.0, 22.0, 7.5    # 录制指示点（右上）
-# 与外圈间距 = hypot(80-44, 22-54) - 7.5 - 32 ≈ 8.7，保证小尺寸下不粘连
+DOT_CX, DOT_CY, DOT_R = 78.0, 24.0, 9.0    # 录制指示点（右上，新版更大）
+# 与外圈间距 = hypot(78-44, 24-54) - 9 - 30 ≈ 7.6，保证小尺寸下不粘连
 
 # ── 配色 ──
 CYAN = (0x2E, 0xA8, 0xFF)
@@ -135,11 +139,22 @@ def render(size, maskable=False):
             a = coverage_circle(x, y, RING_CX, RING_CY, PUPIL_R, px)
             dst = over(dst, (CYAN[0], CYAN[1], CYAN[2], 1.0), a)
 
-            # 3) 高光
-            a = coverage_circle(x, y, HL1_CX, HL1_CY, HL1_R, px)
-            dst = over(dst, (WHITE[0], WHITE[1], WHITE[2], 0.88), a)
-            a = coverage_circle(x, y, HL2_CX, HL2_CY, HL2_R, px)
-            dst = over(dst, (WHITE[0], WHITE[1], WHITE[2], 0.30), a)
+            # 3) 高光弧线（新版：单条弧线替代双圆点，更简洁现代）
+            # 计算点到弧线圆心的角度，只在 210°-270° 范围内绘制
+            dx, dy = x - HL_ARC_CX, y - HL_ARC_CY
+            dist = math.hypot(dx, dy)
+            if dist > 0:
+                angle = math.degrees(math.atan2(dy, dx))
+                if angle < 0:
+                    angle += 360
+                # 弧线覆盖 = 在弧线上 + 在弧线宽度内 + 在角度范围内
+                on_arc = abs(dist - HL_ARC_R) <= HL_ARC_WIDTH / 2
+                in_angle = HL_ARC_START <= angle <= HL_ARC_END
+                if on_arc and in_angle:
+                    # 抗锯齿：按距离弧线边缘的远近插值
+                    edge_dist = abs(dist - HL_ARC_R)
+                    a = clamp(1.0 - edge_dist / (HL_ARC_WIDTH / 2 + px))
+                    dst = over(dst, (WHITE[0], WHITE[1], WHITE[2], 0.9), a)
 
             # 4) 录制指示点
             a = coverage_circle(x, y, DOT_CX, DOT_CY, DOT_R, px)

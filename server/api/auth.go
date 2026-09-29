@@ -208,7 +208,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		Role     models.Role `json:"role"`
 		Username string      `json:"username"`
 		// TrustWindowHours 用户级免登录窗口；指针区分「未提供」与「显式清零」
-		TrustWindowHours *int64      `json:"trustWindowHours"`
+		TrustWindowHours *int64 `json:"trustWindowHours"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})

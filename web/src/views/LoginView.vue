@@ -167,11 +167,10 @@ function closeReset() {
     <div class="brand">
       <!-- 与 web/public/icon.svg 同一标志：镜头 + 录制指示点 -->
       <svg viewBox="0 0 100 100" class="logo" role="img" aria-label="CyanNVR">
-        <circle cx="44" cy="54" r="28.25" fill="none" stroke="#2ea8ff" stroke-width="7.5" />
-        <circle cx="44" cy="54" r="20" fill="#2ea8ff" />
-        <circle cx="36" cy="46" r="6" fill="#ffffff" fill-opacity="0.88" />
-        <circle cx="50" cy="62" r="2.5" fill="#ffffff" fill-opacity="0.3" />
-        <circle cx="80" cy="22" r="7.5" fill="#ff4d4f" />
+        <circle cx="44" cy="54" r="30" fill="none" stroke="#2ea8ff" stroke-width="8" />
+        <circle cx="44" cy="54" r="22" fill="#2ea8ff" />
+        <path d="M 32 44 A 16 16 0 0 1 44 38" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.9" />
+        <circle cx="78" cy="24" r="9" fill="#ff4d4f" />
       </svg>
       <h1>CyanNVR</h1>
       <p>网络视频录像机</p>

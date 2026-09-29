@@ -48,8 +48,17 @@ onMounted(async () => {
   // devices.load() 会发出不带 Authorization 的 /api/devices → 401 →
   // 拦截器清空 token 并跳回登录页，表现为「登录成功却看到暂无设备」。
   // 这里等一小会儿直到 token 就位再加载设备，避免首屏 401。
+  // 注意：如果 40 次轮询后仍无 token，可能是用户未登录或 token 已过期，
+  // 此时 devices.load() 会正常走 401 拦截逻辑跳登录页，不会死循环。
   for (let i = 0; i < 40 && !localStorage.getItem('nvr_token'); i++) {
     await new Promise((r) => setTimeout(r, 50))
+  }
+  // 双重检查：如果此时仍无 token，说明用户未登录，直接跳登录页
+  if (!localStorage.getItem('nvr_token')) {
+    if (location.hash && !location.hash.includes('/login')) {
+      location.hash = '#/login'
+    }
+    return
   }
   devices.load().then(() => devices.startPolling())
   mq = window.matchMedia('(min-width: 900px)')
