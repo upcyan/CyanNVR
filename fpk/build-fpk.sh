@@ -128,9 +128,16 @@ CORE_NOW=$(source_hash "server web Dockerfile")
 FPK_REVISION=0
 FPK_REVISION_BASE=""
 
+# 只取「上次打包状态」变量，不能整体 source：
+# version.env 里也存着 CORE_VERSION，直接 source 会把上面刚从 version.go
+# 读到的核心版本（真相源）覆盖成上次打包的旧值，导致远端手动改了
+# version.go（如 1.8.0）后，这里误判为「核心源码变更」再 patch+1，
+# 打出错误的 1.7.8 并把 version.go 改坏。
 if [ -f "$VERSION_ENV" ]; then
-    # shellcheck disable=SC1090
-    . "$VERSION_ENV"
+    CORE_HASH=$(sed -n 's/^CORE_HASH=//p' "$VERSION_ENV" | tail -1)
+    FPK_REVISION=$(sed -n 's/^FPK_REVISION=//p' "$VERSION_ENV" | tail -1)
+    FPK_REVISION_BASE=$(sed -n 's/^FPK_REVISION_BASE=//p' "$VERSION_ENV" | tail -1)
+    FPK_REVISION=${FPK_REVISION:-0}
 fi
 
 # 决定新的核心版本
@@ -360,8 +367,42 @@ if [ "$BUILT_OK" = "0" ] || ! command -v go &>/dev/null; then
     NEED_IMAGE=1
 fi
 
+# 构建上下文必须存在主机侧编译好的 simplenvr-linux：根 Dockerfile 是 runtime-only，
+# 用 `COPY simplenvr-linux /app/cyannvr` 取后端二进制。主机无 go 时若缺这一步会死锁
+# ——Dockerfile 要 simplenvr-linux，而脚本又只从该镜像里提取后端二进制。
+# （本地镜像被清理后曾直接报 `COPY simplenvr-linux: not found`，导致完全无法出包。）
+GO_IMAGE="hub.rat.dev/library/golang:1.25-alpine"
+ensure_host_binary() {
+    local out="$PROJECT_ROOT/simplenvr-linux"
+    if [ -f "$out" ] && \
+       [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$out" 2>/dev/null | head -1)" ]; then
+        info "复用已有的 simplenvr-linux"
+        return 0
+    fi
+    if command -v go &>/dev/null; then
+        info "本地编译 simplenvr-linux..."
+        (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w" -o "$out" .)
+    else
+        info "无本地 go，用 golang 容器编译 simplenvr-linux..."
+        # 模块缓存挂到宿主机，避免每次出包都重新下载全部依赖
+        local gomod="${TMPDIR:-/tmp}/cyannvr-gomod"
+        mkdir -p "$gomod"
+        # -u 让产物归属当前用户，避免 root 属主导致后续 chmod/cp 失败
+        docker run --rm -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e GOPATH=/tmp/gopath -e GOCACHE=/tmp/gocache \
+            -e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=amd64 \
+            -e GOPROXY=https://goproxy.cn,direct \
+            -v "$gomod:/tmp/gopath/pkg/mod" \
+            -v "$PROJECT_ROOT:/ctx" -w /ctx/server \
+            "$GO_IMAGE" go build -ldflags="-s -w" -o /ctx/simplenvr-linux .
+    fi
+    [ -f "$out" ] || error "simplenvr-linux 生成失败（Docker 构建上下文需要它）"
+}
+
 if [ "$NEED_IMAGE" = "1" ] && [ "$IMAGE_STALE" = "1" ]; then
     info "构建 Docker 镜像（用于提取前端 dist / 后端二进制）..."
+    ensure_host_binary
     # 失败时必须把输出露出来：原先 >/dev/null 2>&1 只剩一句「Docker 构建失败」，
     # 真实原因（如 docker 需要可写 HOME 才能放 buildx 状态）全被吞掉。
     BUILD_LOG=$(mktemp)
