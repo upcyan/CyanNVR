@@ -315,6 +315,7 @@ function closeReset() {
 
 <style scoped>
 .login {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -324,6 +325,33 @@ function closeReset() {
   box-sizing: border-box;
   min-height: 100%;
   width: 100%;
+}
+/* 氛围底：顶部品牌蓝辉光 + 细点阵，纯 CSS 无图片资源。
+   只用 ::before 伪元素，不加 filter/transform：
+   本页「忘记密码」弹窗是后代节点，祖先建层会劫持其 fixed 定位。 */
+.login::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(600px 320px at 50% -8%, rgba(46, 168, 255, 0.16), transparent 65%),
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: auto, 22px 22px;
+  pointer-events: none;
+}
+body.light .login::before {
+  background:
+    radial-gradient(600px 320px at 50% -8%, rgba(31, 140, 224, 0.10), transparent 65%),
+    radial-gradient(rgba(15, 34, 58, 0.06) 1px, transparent 1px);
+  background-size: auto, 22px 22px;
+}
+/* 内容浮于氛围层之上（只提内容节点，不动弹层） */
+.login > .brand,
+.login > .form,
+.login > .btns,
+.login > .tip {
+  position: relative;
+  z-index: 1;
 }
 /* 关怀模式：登录页字号偏小，按钮和品牌区需放大；form 限宽让大屏更易扫读 */
 :global(body.care .login .brand h1) {
@@ -362,11 +390,17 @@ function closeReset() {
 .logo {
   width: 64px;
   height: 64px;
-  /* 标志本身没有底板（透明），无需圆角裁切 */
+  /* 标志本身没有底板（透明），无需圆角裁切；光晕用 drop-shadow 跟随镜头形状 */
+  filter: drop-shadow(0 10px 26px rgba(46, 168, 255, 0.35));
 }
 .brand h1 {
   margin: 16px 0 4px;
   font-size: calc(26px * var(--nvr-font-scale, 1));
+  /* 品牌名渐变文字：与强调线、在线率条同一渐变语言 */
+  background: var(--nvr-grad-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .brand p {
   margin: 0;

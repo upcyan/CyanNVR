@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="hd">
-      <span class="cam-icon"><van-icon name="video-o" size="16" /></span>
+      <span class="cam-icon" :class="{ recording: device.recordEnabled }"><van-icon name="video-o" size="16" /></span>
       <div class="meta">
         <span class="name">{{ device.name }}</span>
         <span class="model">{{ device.model || 'ONVIF Camera' }}</span>
@@ -193,6 +193,7 @@ onBeforeUnmount(() => {
   padding: 12px;
 }
 .cam-icon {
+  position: relative;
   width: 34px;
   height: 34px;
   border-radius: 10px;
@@ -202,6 +203,19 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+/* 录制状态点：录像任务开启时在图标右上角静态提示（红色 = 录制中），
+   不加动画：滚动列表里多卡同屏，呼吸效果是持续注意力税 */
+.cam-icon.recording::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--nvr-recording);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 .meta {
   flex: 1;
@@ -228,8 +242,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   padding: 5px 12px;
+  min-height: 32px;
   border-radius: 999px;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.2);
   color: #fff;
   font-size: calc(12px * var(--nvr-font-scale, 1));

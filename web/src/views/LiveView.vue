@@ -229,6 +229,16 @@ function onViewerPlayback(d: Device) {
   justify-content: space-between;
   padding: 18px 16px 12px;
 }
+/* 标题下的品牌强调线：与侧边栏 logo、在线率条同一渐变语言 */
+.hd-title::after {
+  content: '';
+  display: block;
+  width: 28px;
+  height: 3px;
+  margin-top: 7px;
+  border-radius: var(--nvr-radius-full);
+  background: var(--nvr-grad-accent);
+}
 .hd-title {
   display: flex;
   flex-direction: column;
@@ -251,11 +261,11 @@ function onViewerPlayback(d: Device) {
   gap: 6px;
 }
 .icon-btn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--nvr-radius-full);
-  border: none;
-  background: transparent;
+  border: 1px solid var(--nvr-border);
+  background: color-mix(in srgb, var(--nvr-panel) 72%, transparent);
   color: var(--nvr-text);
   display: flex;
   align-items: center;
@@ -263,7 +273,8 @@ function onViewerPlayback(d: Device) {
   cursor: pointer;
 }
 .icon-btn:active {
-  background: var(--nvr-panel-2);
+  background: var(--nvr-accent-soft);
+  border-color: var(--nvr-accent);
 }
 .cards {
   flex: 1;
@@ -342,7 +353,8 @@ function onViewerPlayback(d: Device) {
 
 @media (hover: hover) {
   .icon-btn:hover {
-    background: var(--nvr-panel-2);
+    background: var(--nvr-accent-soft);
+    border-color: rgba(46, 168, 255, 0.45);
   }
 }
 </style>

@@ -16,6 +16,10 @@ const showSidebar = computed(() => isDesktop.value && showTabbar.value)
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
+// 侧边栏状态卡的在线率（0-100），有设备时展示迷你进度条
+const onlineRate = computed(() =>
+  devices.devices.length ? Math.round((devices.onlineCount / devices.devices.length) * 100) : 0,
+)
 // 侧边栏底部展示的版本号（自检用：能看到=已加载最新界面）
 const appVersion = ref('')
 // 状态块折叠：减少首屏视觉噪音，点击展开详情
@@ -99,7 +103,13 @@ onBeforeUnmount(() => {
       <aside v-if="showSidebar" class="sidebar">
         <div class="brand">
           <svg viewBox="0 0 100 100" class="logo">
-            <rect width="100" height="100" rx="22" fill="#171a21" />
+            <defs>
+              <linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#20334a" />
+                <stop offset="1" stop-color="#0f1420" />
+              </linearGradient>
+            </defs>
+            <rect width="100" height="100" rx="22" fill="url(#logo-g)" stroke="rgba(46, 168, 255, 0.4)" stroke-width="2" />
             <g fill="none" stroke="#2ea8ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
               <rect x="16" y="32" width="50" height="38" rx="6" />
               <path d="M66 45l16-9v28l-16-9" />
@@ -113,13 +123,18 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="side-status" :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0, collapsed: statusCollapsed }" role="button" tabindex="0" :aria-expanded="!statusCollapsed" aria-label="摄像头在线状态，点击折叠或展开" @keydown.enter.prevent="statusCollapsed = !statusCollapsed" @keydown.space.prevent="statusCollapsed = !statusCollapsed" @click="statusCollapsed = !statusCollapsed">
-          <span class="dot" />
-          <div class="status-text" v-show="!statusCollapsed">
-            <b>{{ devices.onlineCount }} / {{ devices.devices.length }}</b>
-            <span>摄像头在线</span>
+          <div class="status-row">
+            <span class="dot" />
+            <div class="status-text" v-show="!statusCollapsed">
+              <b>{{ devices.onlineCount }} / {{ devices.devices.length }}</b>
+              <span>摄像头在线</span>
+            </div>
+            <van-icon v-show="statusCollapsed" name="arrow-down" class="status-arrow" />
+            <van-icon v-show="!statusCollapsed" name="arrow-up" class="status-arrow" />
           </div>
-          <van-icon v-show="statusCollapsed" name="arrow-down" class="status-arrow" />
-          <van-icon v-show="!statusCollapsed" name="arrow-up" class="status-arrow" />
+          <div v-show="!statusCollapsed && devices.devices.length" class="status-bar" aria-hidden="true">
+            <i :class="{ warn: devices.devices.length > 0 && devices.onlineCount === 0 }" :style="{ width: onlineRate + '%' }" />
+          </div>
         </div>
 
         <div class="nav-group">导航</div>
@@ -232,8 +247,8 @@ onBeforeUnmount(() => {
 /* 顶部在线状态卡片 */
 .side-status {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 9px;
   margin: 4px 14px 6px;
   padding: 10px 12px;
   border-radius: var(--nvr-radius-sm);
@@ -245,16 +260,36 @@ onBeforeUnmount(() => {
 .side-status:hover {
   background: var(--nvr-panel);
 }
-.side-status:focus-visible {
-  outline: 2px solid var(--nvr-primary);
-  outline-offset: 2px;
+.side-status .status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .side-status.collapsed {
   padding: 8px 12px;
+}
+.side-status.collapsed .status-row {
   justify-content: center;
 }
-.side-status.collapsed .status-text {
-  display: none;
+/* 迷你在线率条：一眼看出整体健康度，红色 = 全部离线 */
+.side-status .status-bar {
+  height: 4px;
+  border-radius: var(--nvr-radius-full);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+body.light .side-status .status-bar {
+  background: rgba(0, 0, 0, 0.08);
+}
+.side-status .status-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--nvr-radius-full);
+  background: var(--nvr-grad-accent);
+  transition: width 0.3s ease;
+}
+.side-status .status-bar i.warn {
+  background: var(--nvr-danger);
 }
 .side-status .dot {
   width: 9px;
@@ -332,10 +367,10 @@ onBeforeUnmount(() => {
 }
 .nav-item.on {
   color: var(--nvr-accent);
-  background: rgba(46, 168, 255, 0.10);
+  background: var(--nvr-accent-soft);
 }
 .nav-item.on .nav-ico {
-  background: rgba(46, 168, 255, 0.18);
+  background: var(--nvr-accent-soft-2);
   border-color: rgba(46, 168, 255, 0.45);
   color: var(--nvr-accent);
 }

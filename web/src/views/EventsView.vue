@@ -328,7 +328,7 @@ onMounted(() => {
   font-size: calc(12px * var(--nvr-font-scale, 1));
 }
 .type-chips .chip.on {
-  background: rgba(46, 168, 255, 0.15);
+  background: var(--nvr-accent-soft-2);
   border-color: var(--nvr-accent);
   color: var(--nvr-accent);
 }
@@ -347,6 +347,21 @@ onMounted(() => {
 }
 .list {
   padding: 12px;
+}
+/* 桌面端居中窄栏：横向卡片拉到 1200px 后扫视困难，
+   与服务器设置页同宽规则（760px，≥1400px 放宽到 900px），
+   保持全站桌面布局语言一致 */
+@media (min-width: 900px) {
+  .events-page {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+}
+@media (min-width: 1400px) {
+  .events-page {
+    max-width: 900px;
+  }
 }
 .ev-card {
   display: flex;
@@ -473,7 +488,9 @@ onMounted(() => {
   flex-shrink: 0;
 }
 .badge.motion { background: var(--nvr-accent); }
-.badge.ai { background: #9c5cff; }
+/* AI 徽章从孤立的紫色改为强调蓝：与全局强调色预算一致，
+   深浅主题下均为白字（#2ea8ff 白字 2.6:1 属大字号 UI 标签，与基线一致） */
+.badge.ai { background: var(--nvr-primary); }
 .badge.offline { background: var(--nvr-red); }
 .badge.online { background: var(--nvr-green); }
 .badge.manual { background: var(--nvr-text-2); }

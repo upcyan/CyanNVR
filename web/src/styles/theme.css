@@ -17,6 +17,12 @@
   --nvr-warning: #ffb054;
   --nvr-danger: #ff5d5d;
   --nvr-info: #8b93a3;
+  /* 品牌强调渐变：仅用于品牌区、活动态、进度条等小块面积，
+     不用于大面积背景与正文文本（渐变上的文字对比度不可控）。 */
+  --nvr-grad-accent: linear-gradient(135deg, #34b3ff 0%, #1f8ce0 100%);
+  /* 活动态软底色：hover/选中态的面板底色 */
+  --nvr-accent-soft: rgba(46, 168, 255, 0.10);
+  --nvr-accent-soft-2: rgba(46, 168, 255, 0.18);
 
   /* ── 状态层（业务语义）── */
   --nvr-online: var(--nvr-success);
@@ -70,6 +76,23 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  /* Vant 语义色映射：按钮/开关/加载等待全局统一为品牌蓝，
+     消除 Vant 默认 #1989fa 与应用 #2ea8ff 的双色感。 */
+  --van-primary-color: var(--nvr-primary);
+  --van-blue: var(--nvr-primary);
+  --van-danger-color: var(--nvr-danger);
+  --van-warning-color: var(--nvr-warning);
+  --van-success-color: var(--nvr-success);
+  --van-switch-on-background: var(--nvr-primary);
+  --van-checkbox-checked-icon-color: var(--nvr-primary);
+  --van-radio-checked-icon-color: var(--nvr-primary);
+  --van-slider-active-background: var(--nvr-primary);
+  --van-loading-spinner-color: var(--nvr-primary);
+  /* Vant 暗色主题在 html 上预置了按钮主色组件变量，会向后代继承并
+     短路 --van-primary-color；在 body 上重新声明才能盖住（与下方
+     cell-label 同理：离后代更近的 body 值赢得继承） */
+  --van-button-primary-background: var(--nvr-primary);
+  --van-button-primary-border-color: var(--nvr-primary);
 }
 
 body.light {
@@ -82,6 +105,10 @@ body.light {
      压深到 #646b79：页面底 4.90:1、白卡 5.35:1、panel-2 底 4.73:1 全部达标 */
   --nvr-text-2: #646b79;
   --nvr-text-3: #9aa3b0;
+  /* 亮色下强调软底降低透明度避免大面积发灰；渐变终点压深保证白字可读 */
+  --nvr-accent-soft: rgba(31, 140, 224, 0.08);
+  --nvr-accent-soft-2: rgba(31, 140, 224, 0.14);
+  --nvr-grad-accent: linear-gradient(135deg, #2ea8ff 0%, #1677cf 100%);
 }
 
 /* ── Vant 说明文字/分组标题：对齐应用调色板 ──
@@ -266,8 +293,19 @@ body.care * {
     background: rgba(255, 255, 255, 0.12);
     border-radius: var(--nvr-radius-sm);
   }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
   ::-webkit-scrollbar-track {
     background: transparent;
+  }
+  /* Firefox：桌面端细滚动条着色（Webkit 走 ::-webkit-scrollbar） */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+  body.light {
+    scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
   }
 
   .van-popup--bottom {
@@ -315,6 +353,9 @@ body.light.care {
   --nvr-text-2: #3d4a5c;
   --nvr-text-3: #4a5568;
   --nvr-accent: #0b62c4;
+  /* 高龄亮色主题下主色同步压深：Vant 按钮/开关/焦点环随主色变化，
+     浅底上 #2ea8ff 对比度不足，统一用深蓝 #0b62c4（白字 5.6:1） */
+  --nvr-primary: #0b62c4;
   --nvr-green: #0f7a52;
   --nvr-red: #c53030;
   --nvr-amber: #b25f00;
@@ -435,7 +476,7 @@ body.care .van-picker__confirm {
   padding: 0 20px;
 }
 body.care .van-switch--on {
-  background-color: #1989fa;
+  background-color: var(--nvr-primary);
 }
 body.care .van-slider {
   height: 6px;
@@ -776,4 +817,20 @@ body.care .settings-page .about-version {
   body.care .settings-page .progress {
     justify-content: flex-start;
   }
+}
+
+/* ── 设置页分组标题打磨（全局层实现，优先级高于 scoped 规则）──
+   标题层级提升 + 品牌强调短杠：与 Live 页标题强调线同一渐变语言 */
+.settings-page .set-block .set-block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--nvr-text);
+}
+.settings-page .set-block .set-block-title::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  border-radius: var(--nvr-radius-full);
+  background: var(--nvr-grad-accent);
 }
