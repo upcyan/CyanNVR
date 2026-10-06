@@ -657,6 +657,7 @@ onBeforeUnmount(() => {
       <PlaybackDateBar
         class="pb-tab-date"
         :date="dateStr"
+        :compact="true"
         :show-calendar-button="false"
         @prev="shiftDay(-1)"
         @next="shiftDay(1)"
@@ -1131,7 +1132,12 @@ onBeforeUnmount(() => {
    没有可用空间、被撑成内容高度（scrollHeight == clientHeight），
    滚动就落到 .page 上——播放器随之被滚走，「固定在顶部」失效。 */
 .pb-main {
-  flex: 1;
+  /* 移动端按内容高度占位（flex: none），不与下方列表平分剩余高度。
+     此前 flex:1 会与 .pb-side 各分一半高度，而「播放区 + 时间轴」的实际高度
+     大于分到的份额（实测 350px vs 300px），多出的部分向下溢出，
+     把列表顶部压在时间轴标签上（实测重叠 20–50px）。
+     桌面端（≥1200px）在下方媒体查询里恢复 flex:1 的左右分栏。 */
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1225,6 +1231,11 @@ onBeforeUnmount(() => {
 .pb-tab-date {
   display: none;
 }
+/* 「选日期」按钮只在移动端出现：PC（≥1200px）右栏本身常显日历组件，
+   页签行再放一个日历按钮是重复入口。 */
+.pb-tab-cal {
+  display: none;
+}
 @media (max-width: 1199px) {
   /* TimelineBar 的 00:00/24:00 时间标签是绝对定位、悬在 wrap 之外，
      不预留空间会与下方日期条重叠（实测 -18px） */
@@ -1238,17 +1249,30 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     margin: 0 2px 0 4px;
+    min-width: 0;
+    /* 组件默认 gap 22px：窄屏收窄，避免日期被挤成两行 */
+    gap: 6px;
   }
-  .pb-tab-date .date {
+  .pb-tab-date :deep(.date) {
     font-size: calc(13px * var(--nvr-font-scale, 1));
+    white-space: nowrap;
   }
-  .pb-tab-date .control-button {
+  .pb-tab-date :deep(.control-button) {
     min-width: 30px;
     min-height: 34px;
+  }
+  .pb-tab {
+    padding: 7px 14px;
+  }
+  :global(body.care .pb-tab) {
+    padding: 8px 14px;
   }
   .pb-tab-cal {
     display: inline-flex;
     margin-left: auto;
+    /* 不随行高拉伸：与日期组垂直居中对齐（关怀模式下曾顶对齐） */
+    align-self: center;
+    flex-shrink: 0;
   }
 }
 
@@ -1261,7 +1285,10 @@ onBeforeUnmount(() => {
      因此用 62vh 封顶，视频自身 object-fit:contain 居中留黑边。 */
   .player-wrap :deep(.player) {
     aspect-ratio: auto;
-    height: clamp(176px, 56.25vw, 62vh);
+    /* 62vh 之外再按「视口 - 固定占位」封顶：播放器+时间轴+导航+页签+底部导航
+       约占 500px，若播放器仍按 62vh 取值，平板竖屏（如 900×700）下固定区
+       会占满整屏、下方列表仅剩十几像素。这里为列表保底约 200px 可视高度。 */
+    height: clamp(176px, 56.25vw, min(62vh, calc(100dvh - 500px)));
   }
 }
 
@@ -1278,8 +1305,18 @@ onBeforeUnmount(() => {
        上限 45vh 防止普通字体下播放器又占掉大半屏。 */
     height: clamp(80px, calc(100dvh - 190px - 96px), 45vh);
   }
+  /* 固定区 + 列表在矮屏已放不下：整列改为滚动（原保底高度仍会溢出被裁），
+     保证列表内容可达。 */
+  .pb-body {
+    overflow-y: auto;
+  }
+  .pb-main {
+    flex: 0 0 auto;
+  }
   .pb-side {
-    min-height: 80px;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
   }
 }
 
@@ -1300,5 +1337,50 @@ onBeforeUnmount(() => {
   .pb-mobile-date {
     display: none;
   }
+}
+
+/* 超窄屏（≤360px）：进一步压缩页签与日期组，避免横向溢出 */
+@media (max-width: 360px) {
+  .pb-tabs {
+    padding: 10px 12px 6px;
+    gap: 4px;
+  }
+  .pb-tab {
+    padding: 7px 12px;
+  }
+  .pb-tab-date :deep(.control-button) {
+    min-width: 28px;
+  }
+}
+
+/* ── 关怀模式：字号统一上调 ──
+   本页自绘元素多为 calc(Npx * --nvr-font-scale)，而关怀模式下该变量恒为 1，
+   打开关怀模式后仍是 11–13px，与 Vant 组件（16–20px）不协调、对适老场景过小。
+   这里按信息层级整体上调：主文字 15–16px，辅助信息 14px。 */
+:global(body.care .playback-page .device-picker) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .playback-page .pb-tab) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .playback-page .pb-tab-date .date) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .playback-page .tl-head),
+:global(body.care .playback-page .play-status),
+:global(body.care .playback-page .seg-toolbar),
+:global(body.care .playback-page .seg-mode),
+:global(body.care .playback-page .hour-head) {
+  font-size: calc(15px * var(--nvr-font-scale, 1));
+}
+:global(body.care .playback-page .half-title),
+:global(body.care .playback-page .seg-item) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .playback-page .half-meta),
+:global(body.care .playback-page .hour-meta),
+:global(body.care .playback-page .evt-badge),
+:global(body.care .playback-page .none) {
+  font-size: calc(14px * var(--nvr-font-scale, 1));
 }
 </style>

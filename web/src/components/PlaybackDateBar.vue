@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 /**
  * 回放页日期选择条（前一/后一天 + 当前日期 + 打开日历）。
  *
@@ -6,12 +8,16 @@
  * 的内容滚动区内（播放器固定在顶部，日期条随内容滚动）。同一段交互因此有
  * 两个挂载位置，抽取组件可保证只有一份实现，避免两处逻辑漂移。
  */
-defineProps<{
+const props = defineProps<{
   /** 当前日期，形如 2026-10-03 */
   date: string
   /** 是否显示「选日期」按钮（移动端内嵌日历被收起时需要） */
   showCalendarButton?: boolean
+  /** 紧凑模式（移动端页签行）：只显示「月-日」——窄屏下年份会把日期挤成两行 */
+  compact?: boolean
 }>()
+
+const displayDate = computed(() => (props.compact ? props.date.slice(5) : props.date))
 
 const emit = defineEmits<{
   (e: 'prev'): void
@@ -25,7 +31,7 @@ const emit = defineEmits<{
     <button type="button" class="control-button" aria-label="前一天" @click="emit('prev')">
       <van-icon name="arrow-left" size="20" />
     </button>
-    <span class="date mono">{{ date }}</span>
+    <span class="date mono">{{ displayDate }}</span>
     <button type="button" class="control-button" aria-label="后一天" @click="emit('next')">
       <van-icon name="arrow" size="20" />
     </button>
@@ -50,6 +56,9 @@ const emit = defineEmits<{
   padding: 8px 0;
   font-size: calc(15px * var(--nvr-font-scale, 1));
   font-weight: 600;
+}
+.date-bar .date {
+  white-space: nowrap;
 }
 .cal-toggle {
   display: none;

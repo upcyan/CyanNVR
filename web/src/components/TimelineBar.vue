@@ -239,4 +239,8 @@ function onKeydown(e: KeyboardEvent) {
   color: var(--nvr-accent);
   font-weight: 600;
 }
+/* 关怀模式：时间标签放大（11px 对适老场景过小） */
+:global(body.care .timeline .labels) {
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
 </style>

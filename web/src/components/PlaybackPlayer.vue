@@ -97,7 +97,7 @@ const speeds = [1, 2, 4, 8]
       </button>
       <button type="button" class="btn skip" :disabled="!hasStream" aria-label="后退30秒" @click="emit('seek-rel', -30000)">
         <van-icon name="arrow-double-left" size="18" />
-        <span class="skip-num">30</span>
+        <span class="skip-num">30秒</span>
       </button>
       <!-- 桌面：四档并列；移动端：合并为单按钮循环切换（1x→2x→4x→8x→1x） -->
       <div class="speeds">
@@ -123,7 +123,7 @@ const speeds = [1, 2, 4, 8]
         {{ speed }}x
       </button>
       <button type="button" class="btn skip" :disabled="!hasStream" aria-label="前进30秒" @click="emit('seek-rel', 30000)">
-        <span class="skip-num">30</span>
+        <span class="skip-num">30秒</span>
         <van-icon name="arrow-double-right" size="18" />
       </button>
       <button type="button" class="btn" :aria-label="jumpOpen ? '收起时间跳转' : '按时间跳转'" :aria-expanded="jumpOpen" @click="toggleJump">
@@ -232,11 +232,18 @@ const speeds = [1, 2, 4, 8]
   .speeds {
     display: none;
   }
+  /* 倍速按钮不再拉伸：原先 flex:1 会占满剩余空间，长条边框视觉上像整块背景；
+     改为内容宽度（保底 52px 触控区），剩余空隙由 space-between 均分。 */
   .sp-single {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex: 1;
+    flex: 0 0 auto;
+    min-width: 52px;
+    padding: 2px 12px;
+  }
+  .controls {
+    justify-content: space-between;
   }
 }
 /* ±30 秒图标按钮：双箭头 + 数字，替代原时间轴下方的文字按钮 */
@@ -325,5 +332,14 @@ const speeds = [1, 2, 4, 8]
   .skip-num {
     font-size: calc(11px * var(--nvr-font-scale, 1));
   }
+}
+
+/* 关怀模式：控制条文字放大（适老场景 11–13px 过小） */
+:global(body.care .skip-num) {
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+:global(body.care .sp-single) {
+  font-size: calc(15px * var(--nvr-font-scale, 1));
+  min-height: 44px;
 }
 </style>
