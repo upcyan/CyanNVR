@@ -154,15 +154,19 @@ const HLS_MAX_MEDIA_RECOVERIES = 2
 
 export class HlsStream implements Playable {
   private paused = false
+  private speed = 1
   private hls: HlsType | null = null
   private video: HTMLVideoElement | null = null
   private netRetries = 0
   private mediaRecoveries = 0
   private rebuilds = 0
   private retryTimer = 0
-  private visibilityHandler: (() => void) | null = null
-  // attach 时从动态导入的 Hls 默认导出上取 ErrorTypes 枚举，
-  // 供 onHlsError 判断错误类别（HlsType 本身是 type-only 导入，不能当值用）。
+  private visibilityHandler: (() => void) | null = null
+
+  // attach 时从动态导入的 Hls 默认导出上取 ErrorTypes 枚举，
+
+  // 供 onHlsError 判断错误类别（HlsType 本身是 type-only 导入，不能当值用）。
+
   private errorTypes: typeof HlsType.ErrorTypes | null = null
 
   constructor(private url: string, private baseTs = 0) {}
@@ -176,7 +180,16 @@ export class HlsStream implements Playable {
     const { default: Hls } = await import('hls.js')
     if (this.video !== el) return
     if (Hls.isSupported()) {
-      this.hls = new Hls({ enableWorker: true, maxBufferLength: 30, liveDurationInfinity: true })
+      this.hls = new Hls({
+        enableWorker: true,
+        // 高倍速（最高 8x）下缓冲消耗极快：默认 30s 在 8x 时仅够 3.75s，
+        // 会反复追上转码前沿造成停顿（观感即「跳帧」）。加大前向缓冲给
+        // 高倍速留出足够跑道；本地转码分片读磁盘，代价只是内存占用。
+        maxBufferLength: 90,
+        maxMaxBufferLength: 600,
+        liveDurationInfinity: true,
+      })
+
       this.errorTypes = Hls.ErrorTypes
       this.hls.on(Hls.Events.ERROR, (_evt, data) => this.onHlsError(data))
       this.hls.loadSource(this.url)
@@ -190,6 +203,9 @@ export class HlsStream implements Playable {
       }
       document.addEventListener('visibilitychange', this.visibilityHandler)
     }
+    // attach/自愈重建后恢复用户设定的倍速：显式重放保证任何重建路径后
+    // 倍速不回落到 1x
+    el.playbackRate = this.speed
     if (!this.paused) el.play().catch(() => {})
   }
 
@@ -265,6 +281,8 @@ export class HlsStream implements Playable {
   }
 
   setSpeed(n: number) {
+    this.speed = n
+    // 原生 playbackRate：真倍速（解码+播放整体加速，非跳帧）
     if (this.video) this.video.playbackRate = n
   }
 

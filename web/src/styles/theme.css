@@ -946,3 +946,32 @@ body.care .settings-page .about-version {
   border-radius: var(--nvr-radius-full);
   background: var(--nvr-grad-accent);
 }
+
+
+/* ── 全屏方向锁定失败的 CSS 旋转兜底（微信/iOS WebView 不支持 lock）──
+   横视频 + 竖屏：把全屏元素旋转 90°，宽高互换（用 vh/vw 适配视口），
+   内容 object-fit:contain 自适应，等效真横屏。 */
+.force-landscape {
+  position: fixed !important;
+  top: 50%;
+  left: 50%;
+  width: 100vh !important;
+  height: 100vw !important;
+  max-height: none !important;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center;
+  margin: 0 !important;
+  z-index: 9999;
+}
+.force-portrait {
+  position: fixed !important;
+  top: 50%;
+  left: 50%;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-height: none !important;
+  transform: translate(-50%, -50%) rotate(0deg);
+  transform-origin: center;
+  margin: 0 !important;
+  z-index: 9999;
+}

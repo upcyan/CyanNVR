@@ -12,6 +12,7 @@ import EventsView from './EventsView.vue'
 import TimelineBar from '../components/TimelineBar.vue'
 import PlaybackPlayer from '../components/PlaybackPlayer.vue'
 import PlaybackDateBar from '../components/PlaybackDateBar.vue'
+import { enterFullscreen, exitFullscreen } from '../utils/screen'
 
 const store = useDeviceStore()
 const route = useRoute()
@@ -65,7 +66,6 @@ watch(() => route.query.tab, (t) => {
   const want = t === 'events' ? 'events' : 'playback'
   if (want !== activeTab.value) activeTab.value = want
 })
-const jumpTime = ref('12:00:00')
 
 function releasePlayback() {
   sessionToken++
@@ -440,31 +440,23 @@ function onSeekEnd(ts: number) {
   }, 300)
 }
 
-const jumpInvalid = ref(false)
-
-// 跳转时间输入：格式化为 HH:MM:SS（自动补冒号）。
-// 原生 <input type="time"> 的显示格式跟随浏览器语言（英文环境显示 12:00:00 PM），
-// 在全中文界面里不一致，改为自绘文本输入统一观感。
-function onJumpInput() {
-  const digits = jumpTime.value.replace(/\D/g, '').slice(0, 6)
-  let out = digits
-  if (digits.length > 4) out = `${digits.slice(0, 2)}:${digits.slice(2, 4)}:${digits.slice(4)}`
-  else if (digits.length > 2) out = `${digits.slice(0, 2)}:${digits.slice(2)}`
-  jumpTime.value = out
-  jumpInvalid.value = false
-}
-
-function jumpToTime() {
-  const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(jumpTime.value.trim())
+// 跳转时间：输入移入播放器控制条（时钟图标弹出），此处只做校验与定位
+function handleJump(text: string) {
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(text)
   const h = m ? Number(m[1]) : NaN
   const min = m ? Number(m[2]) : NaN
   const sec = m ? Number(m[3]) : NaN
   if (!m || h > 23 || min > 59 || sec > 59) {
-    jumpInvalid.value = true
     showToast('请输入有效时间，格式 HH:MM:SS')
     return
   }
   onSeekEnd(dayStart.value + (h * 3600 + min * 60 + sec) * 1000)
+}
+
+// 播放器控制条的 ±30 秒图标
+function onSeekRel(deltaMs: number) {
+  if (!segments.value.length || loading.value) return
+  onSeekEnd(Math.max(dayStart.value, currentTs.value + deltaMs))
 }
 
 function onEnded() {
@@ -522,11 +514,14 @@ function shiftDay(delta: number) {
   dateStr.value = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
 }
 
-function onFullscreen() {
+async function onFullscreen() {
   const wrap = playerRef.value?.getWrap()
   if (!wrap) return
-  if (document.fullscreenElement) document.exitFullscreen()
-  else wrap.requestFullscreen?.().catch(() => {})
+  if (document.fullscreenElement) {
+    await exitFullscreen()
+  } else {
+    await enterFullscreen(wrap, playerRef.value?.getVideoEl())
+  }
 }
 
 function selectDevice(d: Device) {
@@ -659,6 +654,17 @@ onBeforeUnmount(() => {
     <div class="pb-tabs" role="tablist">
       <button type="button" class="pb-tab" :class="{ on: activeTab === 'playback' }" role="tab" :aria-selected="activeTab === 'playback'" @click="activeTab = 'playback'">回放</button>
       <button type="button" class="pb-tab" :class="{ on: activeTab === 'events' }" role="tab" :aria-selected="activeTab === 'events'" @click="activeTab = 'events'">事件</button>
+      <PlaybackDateBar
+        class="pb-tab-date"
+        :date="dateStr"
+        :show-calendar-button="false"
+        @prev="shiftDay(-1)"
+        @next="shiftDay(1)"
+      />
+      <!-- 移动端「选日期」入口：日历组件收进页签行尾（原在日期条上） -->
+      <button type="button" class="control-button cal-toggle pb-tab-cal" aria-label="选择日期" @click="calOpen = true">
+        <van-icon name="calendar-o" size="18" />
+      </button>
     </div>
 
     <div v-show="activeTab === 'events'" class="pb-events-panel">
@@ -671,20 +677,8 @@ onBeforeUnmount(() => {
     </van-popup>
 
     <div v-show="activeTab === 'playback'" class="pb-body">
-      <!-- 桌面左栏：日期条 + 内嵌月历（移动端整列隐藏，日历走底部弹层） -->
-      <div class="pb-left">
-        <PlaybackDateBar
-          :date="dateStr"
-          :show-calendar-button="false"
-          @prev="shiftDay(-1)"
-          @next="shiftDay(1)"
-          @pick-calendar="calOpen = true"
-        />
-        <CalendarHeat class="pb-inline-cal" :days="monthDays" :selected="dateStr" @select="onSelectDate" />
-      </div>
-
-      <div class="pb-right">
-        <!-- 顶部固定区：移动端固定在内容区顶部，不随下方内容滚动 -->
+      <!-- 左列：固定播放区 + 时间轴，桌面/移动端都不随下方内容滚动 -->
+      <div class="pb-main">
         <div class="pb-pinned">
           <div class="player-wrap">
             <!-- 播放器常驻：原先 v-if/v-else 会在加载时销毁并重建组件，
@@ -700,64 +694,54 @@ onBeforeUnmount(() => {
               @speed="onSpeed"
               @fullscreen="onFullscreen"
               @ended="onEnded"
+              @seek-rel="onSeekRel"
+              @jump="handleJump"
               @error="playError = '视频加载失败，请重试'; playing = false"
             />
-            <div v-if="loading || seekPending || playError" class="loading-mask">
+<div v-if="loading || seekPending || playError" class="loading-mask">
               <van-loading v-if="loading || seekPending" />
               <span v-if="seekPending && !loading" class="seek-hint">正在准备回放…</span>
               <span v-else-if="playError && !loading" class="seek-hint err">{{ playError }}</span>
               <van-button v-if="playError && !loading && !seekPending" size="small" @click="loadSegments">重新加载</van-button>
             </div>
           </div>
-        </div>
+        </div><!-- /.pb-pinned -->
 
-        <!-- 下方滚动区：移动端唯一滚动容器，日期/时间轴/列表都在这里滚动 -->
-        <div class="pb-scroll">
-          <!-- 移动端日期条：位于播放器下方、随内容滚动（桌面端由左栏承担，故隐藏） -->
+        <div class="timeline-wrap">
+          <div class="tl-head">
+            <span class="mono">{{ dateStr }} 录像</span>
+            <span class="play-status" :class="{ on: playing }">{{ playing ? '播放中' : '已暂停' }}</span>
+            <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
+          </div>
+          <TimelineBar
+            :day-start="dayStart"
+            :segments="segments"
+            :events="timelineEvents"
+            :value="currentTs"
+            @seek="onSeek"
+            @seekend="onSeekEnd"
+          />
+        </div>
+      </div>
+
+      <!-- 右列：桌面端=日期条+日历+当日事件/分段列表（独立滚动）；移动端=日期条+列表 -->
+      <div class="pb-side">
+        <div class="pb-desktop-cal">
           <PlaybackDateBar
-            class="pb-mobile-date"
             :date="dateStr"
-            :show-calendar-button="true"
+            :show-calendar-button="false"
             @prev="shiftDay(-1)"
             @next="shiftDay(1)"
             @pick-calendar="calOpen = true"
           />
-
-          <div class="timeline-wrap">
-            <div class="tl-head">
-              <span class="mono">{{ dateStr }} 录像</span>
-              <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
-            </div>
-            <TimelineBar
-              :day-start="dayStart"
-              :segments="segments"
-              :events="timelineEvents"
-              :value="currentTs"
-              @seek="onSeek"
-            @seekend="onSeekEnd"
-          />
-          <div class="seek-tools">
-            <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs - 30000)">后退30秒</button>
-            <form class="time-jump" @submit.prevent="jumpToTime">
-              <label for="playback-time">跳转时间</label>
-              <input
-                id="playback-time"
-                v-model="jumpTime"
-                type="text"
-                inputmode="numeric"
-                placeholder="HH:MM:SS"
-                maxlength="8"
-                autocomplete="off"
-                :class="{ invalid: jumpInvalid }"
-                :aria-invalid="jumpInvalid"
-                @input="onJumpInput"
-              />
-              <button class="control-button" :disabled="!segments.length || loading" type="submit">跳转</button>
-            </form>
-            <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs + 30000)">前进30秒</button>
-          </div>
+          <CalendarHeat class="pb-inline-cal" :days="monthDays" :selected="dateStr" @select="onSelectDate" />
         </div>
 
+
+        <!-- 事件联动：点事件跳到对应时刻播放；含事件的录像段在时间轴上已着色 -->
+        <!-- 事件与分段不再互斥：当天有事件时，事件列表在上、按小时折叠的分段在下。
+             原先用 v-if/v-else 二选一，导致「有事件的那天看不到分段列表」——
+             而恰恰是有事件的日子更需要按时间翻找录像。 -->
         <!-- 事件联动：点事件跳到对应时刻播放；含事件的录像段在时间轴上已着色 -->
         <!-- 事件与分段不再互斥：当天有事件时，事件列表在上、按小时折叠的分段在下。
              原先用 v-if/v-else 二选一，导致「有事件的那天看不到分段列表」——
@@ -780,6 +764,7 @@ onBeforeUnmount(() => {
             />
           </span>
         </div>
+
         <!-- 分段列表：默认按「上午/下午 → 小时」折叠；段多时避免超长平铺 -->
         <div class="seg-wrap">
           <div v-if="segments.length" class="seg-toolbar">
@@ -838,7 +823,6 @@ onBeforeUnmount(() => {
 
           <span v-if="!segments.length" class="none">当日无录制</span>
         </div>
-        </div><!-- /.pb-scroll 下方滚动区结束 -->
       </div>
     </div>
 
@@ -863,38 +847,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.seek-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
-  font-size: calc(13px * var(--nvr-font-scale, 1));
-}
-.seek-tools button { border: 1px solid var(--nvr-border); border-radius: var(--nvr-radius-sm); }
-.seek-tools button:disabled { opacity: .45; cursor: not-allowed; }
-.time-jump { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.time-jump input {
-  min-height: 44px;
-  max-width: 100%;
-  width: 96px;
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  color: var(--nvr-text);
-  background: var(--nvr-panel-2);
-  border: 1px solid var(--nvr-border);
-  border-radius: var(--nvr-radius-sm);
-  padding: 6px;
-  color-scheme: dark;
-}
-.time-jump input::placeholder { color: var(--nvr-text-2); opacity: .7; }
-.time-jump input.invalid {
-  border-color: var(--nvr-red);
-  box-shadow: 0 0 0 1px var(--nvr-red);
-}
-:global(body.light .time-jump input) { color-scheme: light; }
 .device-picker {
   font-size: calc(13px * var(--nvr-font-scale, 1));
   display: flex;
@@ -1133,7 +1085,7 @@ onBeforeUnmount(() => {
 .pb-tabs {
   display: flex;
   gap: 6px;
-  padding: 10px 16px 0;
+  padding: 10px 16px 6px;
   flex-shrink: 0;
 }
 .pb-tab {
@@ -1150,6 +1102,14 @@ onBeforeUnmount(() => {
   border-color: var(--nvr-accent);
   color: var(--nvr-accent);
   font-weight: 600;
+}
+/* 播放状态：原为播放器左上角角标，按反馈移到时间轴信息行（组件外） */
+.play-status {
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  color: var(--nvr-amber);
+}
+.play-status.on {
+  color: var(--nvr-accent);
 }
 .pb-events-panel {
   flex: 1;
@@ -1170,7 +1130,7 @@ onBeforeUnmount(() => {
    内容高度撑开（实测 1918px > 可视 638px），于是 .pb-scroll 的 flex:1
    没有可用空间、被撑成内容高度（scrollHeight == clientHeight），
    滚动就落到 .page 上——播放器随之被滚走，「固定在顶部」失效。 */
-.pb-right {
+.pb-main {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1178,30 +1138,50 @@ onBeforeUnmount(() => {
 }
 
 @media (min-width: 1200px) {
+  /* PC 布局：左列播放器+时间轴固定不随页面滚动（视口高度内右列独立滚动），
+     右列=日期条+日历+当日事件/分段列表 */
   .pb-body {
     flex-direction: row;
     gap: 20px;
     padding: 0 24px;
+    overflow: visible;
   }
-  .pb-left {
-    width: 360px;
-    flex-shrink: 0;
-    /* flex 项默认 min-width:auto=内容最小宽度：关怀模式的 44px 格子+17px 字体
-       会把日历最小宽度顶到 600px+，把定宽列撑到近半屏，必须显式归零 */
-    min-width: 0;
-    overflow-y: auto;
-    padding-bottom: 20px;
-  }
-  .pb-right {
+  .pb-main {
     flex: 1;
     min-width: 0;
-    overflow-y: auto;
-    padding-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
-  /* 桌面端滚动回到右列自身，两段式容器不再裁剪 */
-  .pb-body { overflow: visible; }
+  .pb-pinned {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .player-wrap {
+    flex: 1;
+    min-height: 0;
     padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 播放器撑满可用高度（16:9 由视频 object-fit:contain 自适应，超出留黑边） */
+  .player-wrap :deep(.player) {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+  }
+  .timeline-wrap {
+    flex-shrink: 0;
+  }
+  .pb-side {
+    width: 380px;
+    flex-shrink: 0;
+    min-width: 0;
+    overflow-y: auto;
+    padding-bottom: 16px;
   }
   .timeline-wrap .tl-head {
     padding: 0 2px 4px;
@@ -1234,17 +1214,42 @@ onBeforeUnmount(() => {
 .pb-pinned {
   flex-shrink: 0;
 }
-.pb-scroll {
+.pb-side {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
 }
-/* 移动端日期条：只在 <900px 显示。
-   900–1199px 走原有单列布局（左栏的日期条 + 内嵌月历在播放器上方），
-   若此处也显示就会出现两条日期条。 */
-.pb-mobile-date {
+/* 移动端日期条：桌面日历列在 <1200px 隐藏，移动日期条补位（<1200 显示）；
+   与时间轴拉开间距（贴着时间轴的时间标签显得重叠） */
+.pb-tab-date {
   display: none;
+}
+@media (max-width: 1199px) {
+  /* TimelineBar 的 00:00/24:00 时间标签是绝对定位、悬在 wrap 之外，
+     不预留空间会与下方日期条重叠（实测 -18px） */
+  .pb-main .timeline-wrap {
+    padding-bottom: 24px;
+  }
+  .pb-desktop-cal {
+    display: none;
+  }
+  .pb-tab-date {
+    display: flex;
+    align-items: center;
+    margin: 0 2px 0 4px;
+  }
+  .pb-tab-date .date {
+    font-size: calc(13px * var(--nvr-font-scale, 1));
+  }
+  .pb-tab-date .control-button {
+    min-width: 30px;
+    min-height: 34px;
+  }
+  .pb-tab-cal {
+    display: inline-flex;
+    margin-left: auto;
+  }
 }
 
 @media (max-width: 1199px) {
@@ -1273,26 +1278,24 @@ onBeforeUnmount(() => {
        上限 45vh 防止普通字体下播放器又占掉大半屏。 */
     height: clamp(80px, calc(100dvh - 190px - 96px), 45vh);
   }
-  .pb-scroll {
+  .pb-side {
     min-height: 80px;
   }
 }
 
 /* <900px：左栏（日期条 + 内嵌月历）整体隐藏，日期条改挂到下方滚动区 */
-@media (max-width: 899px) {
-  .pb-mobile-date {
-    display: block;
-  }
-}
-
 @media (min-width: 1200px) {
   /* 桌面端：右列自身滚动，两段式布局与移动日期条都关闭 */
   .pb-pinned,
-  .pb-scroll {
+  .pb-side {
     flex: none;
     min-height: 0;
     overflow: visible;
     padding-bottom: 0;
+  }
+  .pb-side {
+    overflow-y: auto;
+    padding-bottom: 16px;
   }
   .pb-mobile-date {
     display: none;

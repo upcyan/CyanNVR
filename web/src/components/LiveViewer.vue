@@ -3,6 +3,7 @@ import { nextTick, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { Device } from '../types'
 import { createPlayable, type Playable } from '../utils/player'
+import { enterFullscreen, exitFullscreen } from '../utils/screen'
 
 const props = defineProps<{
   show: boolean
@@ -92,12 +93,12 @@ function goPlayback() {
   }
 }
 const isFullscreen = ref(false)
-function toggleFullscreen() {
-  const root = document.documentElement
+async function toggleFullscreen() {
   if (!document.fullscreenElement) {
-    root.requestFullscreen?.().catch(() => {})
+    // 移动端全屏时按直播画面宽高比自动锁横/竖屏（桌面仅全屏）
+    await enterFullscreen(document.documentElement, videoEl.value)
   } else {
-    document.exitFullscreen?.().catch(() => {})
+    await exitFullscreen()
   }
 }
 if (typeof document !== 'undefined') {

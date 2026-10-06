@@ -1,11 +1,29 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { useAuthStore } from '../stores/auth'
 import { apiResetConfirm, apiResetRequest, apiResetVerify, connState, isBackend, refreshConnection } from '../api'
 
 const auth = useAuthStore()
+
+// 键盘遮挡兜底：visualViewport 缩小时（软键盘弹出）把偏移量注入容器
+// padding-bottom，让用户名/密码输入框始终在可视区内。
+const kbOffset = ref(0)
+function onVVResize() {
+  const vv = window.visualViewport
+  if (!vv) return
+  kbOffset.value = Math.max(0, Math.round(window.innerHeight - vv.height))
+}
+onMounted(() => {
+  const vv = window.visualViewport
+  if (!vv) return
+  vv.addEventListener('resize', onVVResize)
+  onVVResize()
+})
+onBeforeUnmount(() => {
+  window.visualViewport?.removeEventListener('resize', onVVResize)
+})
 const route = useRoute()
 const router = useRouter()
 
@@ -177,7 +195,7 @@ function closeReset() {
 </script>
 
 <template>
-  <div class="page login">
+  <div class="page login" :style="kbOffset ? { paddingBottom: kbOffset + 'px' } : undefined">
     <div class="brand">
       <!-- 与 web/public/icon.svg 同一标志：镜头 + 录制指示点 -->
       <svg viewBox="0 0 100 100" class="logo" role="img" aria-label="CyanNVR">
@@ -431,6 +449,23 @@ body.light .login::before {
   text-align: center;
   margin-bottom: 40px;
 }
+/* 键盘遮挡修复：移动端软键盘弹出时布局视口不收缩（或不支持
+   interactive-widget 的浏览器），居中布局的用户名/密码框会被键盘盖住。
+   输入聚焦时收纳品牌区（logo 缩小、副标题隐藏、间距收紧），把表单
+   顶到可视区上半部；配合 index.html 的 interactive-widget=resizes-content。 */
+.login:focus-within .brand {
+  margin-bottom: 10px;
+}
+.login:focus-within .brand .logo {
+  width: 36px;
+  height: 36px;
+}
+.login:focus-within .brand p {
+  display: none;
+}
+.login:focus-within .brand h1 {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
 .logo {
   width: 64px;
   height: 64px;
@@ -470,6 +505,12 @@ body.light .login::before {
 .form :deep(.van-field__control:focus) {
   outline: 2px solid var(--nvr-accent);
   outline-offset: 1px;
+}
+.form :deep(.van-field) {
+  align-items: center;
+}
+.form :deep(.van-field__label) {
+  width: 4.6em;
 }
 .form :deep(input:-webkit-autofill) {
   -webkit-text-fill-color: var(--nvr-text);
