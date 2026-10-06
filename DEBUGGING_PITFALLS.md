@@ -82,3 +82,12 @@
     工作副本。修复必须以仓库为准重新执行并验证（grep lockfile 版本号）。
 39. **npm 网络用 npmmirror**：容器内 npm 默认源超时，--registry=https://registry.npmmirror.com
     稳定；node_modules 属主混合时 npm 可能报 EACCES，必要时重建 workspace。
+40. **fpk 免登录失效的根因在前端，不在服务端**：飞牛桌面入口是 iframe 内嵌
+    （fpk/app/ui/config "type":"iframe"），每次打开都是全新页面加载，路由 /
+    固定重定向 /login，而登录页此前没有「已持凭据自动进入」——即使本地 token
+    有效或仍在 72h 信任窗口内，用户也停在登录页重输密码；服务端续签链路正常
+    但没有任何请求可触发。修复=登录页 onMounted 时若持 token 且后端可达，静默
+    fetchMe 验证（窗口内过期会经 X-Renewed-Token 静默续签落盘）成功即直达目标
+    页；浏览器地址直开落在 /login 时同样受益。注意：若未来把应用挂在跨源反代
+    （fnOS 域名转发到 :18182）下，第三方分区存储会真丢 token，届时应上 HttpOnly
+    会话 Cookie 兜底。

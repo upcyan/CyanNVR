@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { useAuthStore } from '../stores/auth'
-import { apiResetConfirm, apiResetRequest, apiResetVerify, connState, isBackend, refreshConnection } from '../api'
+import { apiResetConfirm, apiResetRequest, apiResetVerify, connState, fetchMe, isBackend, refreshConnection } from '../api'
 
 const auth = useAuthStore()
 
@@ -26,6 +26,34 @@ onBeforeUnmount(() => {
 })
 const route = useRoute()
 const router = useRouter()
+
+// 免登录自动进入（fpk 场景的关键修复）。
+// 飞牛桌面入口是 iframe 内嵌（fpk/app/ui/config "type":"iframe"），每次打开都是
+// 全新页面加载，且路由 / 固定重定向到 /login——此前即使本地 token 有效（或已
+// 过期但仍在服务端信任窗口内、可经 X-Renewed-Token 静默续签），用户也会被摁在
+// 登录页重新输密码，表现为「web 里免登录正常、fpk 里不生效」（浏览器地址直开
+// 落在 /login 时同样受影响）。现在登录页挂载时若本地持有 token 且后端可达，
+// 静默调 fetchMe 验证：有效或窗口内已续签 → 直达目标页；失败（吊销/窗口已过/
+// 改密）→ 留在登录页，行为与旧版一致。期间登录按钮转 loading，避免用户刚开始
+// 输入就被导航打断。
+const resuming = ref(false)
+onMounted(async () => {
+  if (!auth.token || !isBackend()) return
+  resuming.value = true
+  try {
+    const user = await fetchMe()
+    auth.user = user
+    localStorage.setItem('nvr_user', JSON.stringify(user))
+    const raw = (route.query.redirect as string) || '/live'
+    // 与 submit 相同的开放重定向防护：只接受站内相对路径
+    const redirect = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('://') ? raw : '/live'
+    router.replace(redirect)
+  } catch {
+    /* 凭据失效：留在登录页。401 时 client.ts 拦截器已清空失效会话 */
+  } finally {
+    resuming.value = false
+  }
+})
 
 const username = ref('')
 const password = ref('')
@@ -222,7 +250,7 @@ function closeReset() {
     </van-cell-group>
 
     <div class="btns">
-      <van-button type="primary" block round :loading="loading" @click="submit">登 录</van-button>
+      <van-button type="primary" block round :loading="loading || resuming" @click="submit">登 录</van-button>
       <van-button plain block round style="margin-top: 10px" @click="$router.push('/server')">
         服务器设置
       </van-button>
