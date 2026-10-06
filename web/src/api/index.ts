@@ -3,34 +3,32 @@ import { server } from './server'
 import * as mock from './mock'
 import type { DayRecord, Device, DiscoveredDevice, EventItem, RecordingSegment, Stream } from '../types'
 
-export let backendOk = false
-const DEMO_KEY = 'nvr_demo_mode'
+// 连接状态 / 演示模式统一由 conn 模块管理（两者不再互相推导）
+export {
+  connState,
+  connError,
+  demoMode,
+  isBackend,
+  isConnChecking,
+  isDemoMode,
+  setDemoMode,
+  refreshConnection,
+  requireBackend,
+  ConnUnavailableError,
+} from './conn'
+import { isBackend, isDemoMode, refreshConnection, requireBackend } from './conn'
 
-export function isDemoMode(): boolean {
-  try {
-    return localStorage.getItem(DEMO_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-export function setDemoMode(on: boolean): void {
-  try {
-    localStorage.setItem(DEMO_KEY, on ? '1' : '0')
-  } catch {
-    /* ignore */
-  }
-}
-
-export async function initApi(): Promise<boolean> {
-  backendOk = await detect()
-  return backendOk
-}
-export function isBackend() {
-  return backendOk
-}
 export function apiBase() {
   return server.base
+}
+
+/**
+ * 启动时的连接探测。
+ * 返回是否连上后端；无论结果如何都**不**改变演示模式——
+ * 演示模式只由用户显式开关决定（见 conn.ts）。
+ */
+export async function initApi(): Promise<boolean> {
+  return refreshConnection()
 }
 
 // ---- 媒体 URL（<img>/<video>/<a> 等浏览器原生请求）----
@@ -54,32 +52,20 @@ export function mediaURL(path: string): string {
   return withToken(abs)
 }
 
-async function detect(): Promise<boolean> {
-  try {
-    const ctl = new AbortController()
-    const t = setTimeout(() => ctl.abort(), 2500)
-    const res = await fetch(server.base + '/api/health', { signal: ctl.signal })
-    clearTimeout(t)
-    if (!res.ok) return false
-    const j = await res.json()
-    return j && j.name === 'CyanNVR'
-  } catch {
-    return false
-  }
-}
-
 // ---- devices ----
 
 export async function fetchDevices(): Promise<Device[]> {
   if (isDemoMode()) return mock.fetchDevices()
-  if (!backendOk) return []
+  // 离线时抛错而不是返回 []：返回空数组会让「服务器不可达」伪装成「暂无设备」
+  requireBackend()
   const { data } = await http.get('/api/devices')
-  return (data.devices ?? []) as Device[]
+  if (!Array.isArray(data?.devices)) throw new Error('设备列表响应格式异常，请检查服务器地址')
+  return data.devices as Device[]
 }
 
 export async function addDevice(input: Partial<Device>, opts?: { force?: boolean }): Promise<Device> {
   if (isDemoMode()) return mock.addDevice(input)
-  if (!backendOk) return mock.addDevice(input)
+  requireBackend()
   const { data } = await http.post('/api/devices', input, {
     params: opts?.force ? { force: 'true' } : undefined,
   })
@@ -87,12 +73,14 @@ export async function addDevice(input: Partial<Device>, opts?: { force?: boolean
 }
 
 export async function removeDevice(id: string): Promise<void> {
-  if (isDemoMode() || !backendOk) return mock.removeDevice(id)
+  if (isDemoMode()) return mock.removeDevice(id)
+  requireBackend()
   await http.delete(`/api/devices/${id}`)
 }
 
 export async function updateDevice(id: string, input: Partial<Device>, opts?: { force?: boolean }): Promise<Device> {
   if (isDemoMode()) return mock.updateDevice(id, input)
+  requireBackend()
   const { data } = await http.put(`/api/devices/${id}`, input, {
     params: opts?.force ? { force: 'true' } : undefined,
   })
@@ -155,7 +143,8 @@ export async function buildBrandUrl(input: {
 }
 
 export async function discoverDevices(): Promise<DiscoveredDevice[]> {
-  if (isDemoMode() || !backendOk) return mock.discoverDevices()
+  if (isDemoMode()) return mock.discoverDevices()
+  requireBackend()
   const { data } = await http.post('/api/devices/discover', {})
   return data.devices as DiscoveredDevice[]
 }
@@ -215,17 +204,18 @@ export async function fetchStorageInfo(): Promise<StorageInfo> {
 
 export async function fetchMonthRecords(deviceId: string, ym: string): Promise<DayRecord[]> {
   if (isDemoMode()) return mock.fetchMonthRecords(deviceId, ym)
-  if (!backendOk) return []
+  requireBackend()
   const { data } = await http.get(`/api/devices/${deviceId}/month`, { params: { ym } })
   return data.days as DayRecord[]
 }
 
 export async function fetchDaySegments(deviceId: string, date: string): Promise<RecordingSegment[]> {
   if (isDemoMode()) return mock.fetchDaySegments(deviceId, date)
-  if (!backendOk) return []
+  requireBackend()
   const { data } = await http.get(`/api/devices/${deviceId}/recordings`, { params: { date } })
-  // 后端返回的 start/end 是 ISO 字符串，前端需要毫秒时间戳
-  return (data.segments as Array<{ start: string | number; end: string | number; id: string; deviceId: string; path: string }>).map((s) => ({
+  // segments 对旧版后端可能是 null（Go nil slice），须兜底为空数组，
+  // 否则 null.map 抛 TypeError，无录像日期会被误报成「录像加载失败」
+  return ((data.segments ?? []) as Array<{ start: string | number; end: string | number; id: string; deviceId: string; path: string }>).map((s) => ({
     ...s,
     start: typeof s.start === 'string' ? new Date(s.start).getTime() : s.start,
     end: typeof s.end === 'string' ? new Date(s.end).getTime() : s.end,
@@ -237,17 +227,19 @@ export async function createPlayback(
   start: number,
   end: number,
 ): Promise<string> {
+  // 后端等首个 HLS 分片最长 45s（转码路径），全局 15s 超时会把「慢但正常」
+  // 的回放误判为失败；此处单独放宽。
   const { data } = await http.post(`/api/devices/${deviceId}/playback`, {
     start: new Date(start).toISOString(),
     end: new Date(end).toISOString(),
-  })
+  }, { timeout: 60000 })
   const token = localStorage.getItem('nvr_token')
   return `${server.base}${data.url}${token ? `?token=${token}` : ''}`
 }
 
 /** 结束回放会话：停止服务端转码进程，避免离开页面后仍在占 CPU */
 export async function stopPlayback(session: string): Promise<void> {
-  if (!session || isDemoMode() || !backendOk) return
+  if (!session || isDemoMode() || !isBackend()) return
   try {
     await http.post(`/api/playback/${session}/stop`)
   } catch {
@@ -276,13 +268,14 @@ export async function fetchEvents(deviceId = '', date = '', type = '', offset = 
     })
     return { events: filtered.slice(offset, offset + limit), total: filtered.length }
   }
-  if (!backendOk) return { events: [], total: 0 }
+  requireBackend()
   const { data } = await http.get('/api/events', { params: { deviceId, date, type, offset, limit } })
   return { events: data.events as EventItem[], total: Number(data.total ?? 0) }
 }
 
 export async function deleteEvent(id: string): Promise<void> {
-  if (isDemoMode() || !backendOk) return mock.deleteEvent(id)
+  if (isDemoMode()) return mock.deleteEvent(id)
+  requireBackend()
   await http.delete(`/api/events/${id}`)
 }
 
@@ -307,6 +300,14 @@ export interface AuthUser {
   id: string
   username: string
   role: 'admin' | 'operator' | 'user' | 'viewer'
+  /** 用户级关怀模式：登录即进入关怀界面，设置页隐藏字体大小/关怀开关 */
+  careMode?: boolean
+}
+
+/** 拉取当前登录用户（用于编辑自身关怀模式后刷新界面状态） */
+export async function fetchMe(): Promise<AuthUser> {
+  const { data } = await http.get('/api/auth/me')
+  return data.user as AuthUser
 }
 
 export async function apiLogin(username: string, password: string): Promise<{ token: string; user: AuthUser }> {
@@ -402,11 +403,21 @@ export interface TLSStatus {
 
 export async function fetchAppSettings(): Promise<AppSettings> {
   const { data } = await http.get('/api/settings')
+  if (!data?.settings || typeof data.settings.ai?.enabled !== 'boolean') throw new Error('设置响应格式异常，无法确认 AI 状态')
   return data.settings as AppSettings
 }
 
+export type AppSettingsPatch = Partial<Omit<AppSettings, 'ai'>> & { ai?: Partial<AppSettings['ai']> }
+
+export async function patchAppSettings(patch: AppSettingsPatch): Promise<AppSettings> {
+  const { data } = await http.patch('/api/settings', patch)
+  return data.settings as AppSettings
+}
+
+// Legacy full replacement is conditional; a stale client cannot silently overwrite another terminal.
 export async function saveAppSettings(s: AppSettings): Promise<AppSettings> {
-  const { data } = await http.put('/api/settings', s)
+  const current = await http.get('/api/settings')
+  const { data } = await http.put('/api/settings', s, { headers: { 'If-Match': current.headers.etag } })
   return data.settings as AppSettings
 }
 
@@ -435,6 +446,8 @@ export interface ManagedUser {
   createdAt: string
   /** 用户级免登录窗口（小时）；undefined=跟随全局 */
   trustWindowHours?: number | null
+  /** 用户级关怀模式：该账号登录即进入关怀界面，设置页隐藏字号/关怀开关 */
+  careMode?: boolean
 }
 
 export async function fetchUsers(): Promise<ManagedUser[]> {

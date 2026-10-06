@@ -20,12 +20,20 @@ const maxRetryDelay = 30000
 
 export function useNotifications() {
   function connect() {
-    if (evtSource || !server.base) return
+    if (evtSource) return
+    // 关键修复：此前用 `!server.base` 判定「未配置服务器」并直接放弃连接，
+    // 但同源部署时 base 正是空字符串——于是同源用户的通知**永远不连接**。
+    // 这里改为始终使用（可能为空的）base；真正的登录态由 token 决定。
     const token = localStorage.getItem('nvr_token')
-    if (!token) return
+    if (!token || token === 'demo') return
 
     const url = `${server.base}/api/events/sse?token=${token}`
     evtSource = new EventSource(url)
+
+    evtSource.onopen = () => {
+      // 连接真正建立后才重置退避，避免「连上又立刻断开」时退避永远为 1s
+      retryDelay = 1000
+    }
 
     evtSource.onmessage = (ev) => {
       try {
@@ -45,6 +53,7 @@ export function useNotifications() {
     evtSource.onerror = () => {
       evtSource?.close()
       evtSource = null
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       reconnectTimer = setTimeout(connect, retryDelay)
       retryDelay = Math.min(retryDelay * 2, maxRetryDelay)
     }
@@ -57,6 +66,7 @@ export function useNotifications() {
     }
     evtSource?.close()
     evtSource = null
+    retryDelay = 1000
   }
 
   return { notifications, connect, disconnect }

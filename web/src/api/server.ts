@@ -23,20 +23,25 @@ export function setServerAddrs(lan: string, pub: string, mode: string) {
 }
 
 export function resolveBase(url: string) {
-  return url.replace(/\/+$/, '')
+  // 提示语承诺「地址可不带协议（默认 http）」：这里必须补上协议，
+  // 否则 fetch('192.168.x.x:18182/api/health') 会被当作相对路径，探测永远失败。
+  const t = url.trim().replace(/\/+$/, '')
+  if (!t) return ''
+  return /^https?:\/\//.test(t) ? t : `http://${t}`
 }
 
 export async function probe(base: string): Promise<boolean> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), 2500)
   try {
-    const ctl = new AbortController()
-    const t = setTimeout(() => ctl.abort(), 2500)
-    const res = await fetch(base + '/api/health', { signal: ctl.signal })
-    clearTimeout(t)
+    const res = await fetch(base + '/api/health', { signal: ctl.signal, cache: 'no-store' })
     if (!res.ok) return false
     const j = await res.json()
     return j && j.name === 'CyanNVR'
   } catch {
     return false
+  } finally {
+    clearTimeout(t)
   }
 }
 
@@ -48,7 +53,7 @@ function apply(base: string, current: string) {
 
 // 自动判断：同源 > 局域网 > 公网
 export async function detectAndApply(): Promise<boolean> {
-  if (await probe('')) {
+  if (server.mode === 'auto' && await probe('')) {
     apply('', 'same-origin')
     return true
   }

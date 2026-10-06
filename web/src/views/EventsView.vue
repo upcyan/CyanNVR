@@ -10,6 +10,10 @@ import { useDeviceStore } from '../stores/devices'
 
 const route = useRoute()
 const router = useRouter()
+
+// embedded=true 时作为「录像管理-事件」内嵌面板运行：
+// 不渲染自带导航栏（返回/标题），由宿主页面负责滚动与刷新入口。
+const props = defineProps<{ embedded?: boolean }>()
 const auth = useAuthStore()
 const deviceStore = useDeviceStore()
 
@@ -136,8 +140,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page events-page">
-    <van-nav-bar title="事件记录" left-arrow @click-left="goBack">
+  <div class="page events-page" :class="{ embedded: props.embedded }">
+    <van-nav-bar v-if="!props.embedded" title="事件记录" left-arrow @click-left="goBack">
       <template #right>
         <span class="reload" @click="load">刷新</span>
       </template>
@@ -229,20 +233,20 @@ onMounted(() => {
           <div class="desc">{{ e.description || e.label || '事件记录' }}</div>
           <div class="time mono">{{ fmtTime(e.time) }}</div>
         </div>
-        <button
-          v-if="(isBackend() || isDemoMode()) && auth.canEdit"
-          type="button"
-          class="del control-button"
-          :aria-label="'删除' + e.deviceName + '的事件'"
-          @click="onDelete(e)"
-        ><van-icon name="delete-o" /></button>
         <div class="dl-btns">
-          <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图" @click.stop>
+          <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图 JPG" @click.stop>
             <van-icon name="down" size="14" />
           </a>
-          <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn" title="下载 GIF" @click.stop>
-            <van-icon name="down" size="14" />
+          <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn dl-gif" title="下载动图 GIF" @click.stop>
+            <span class="dl-gif-txt">GIF</span>
           </a>
+          <button
+            v-if="(isBackend() || isDemoMode()) && auth.canEdit"
+            type="button"
+            class="dl-btn del"
+            :aria-label="'删除' + e.deviceName + '的事件'"
+            @click="onDelete(e)"
+          ><van-icon name="delete-o" size="14" /></button>
         </div>
       </div>
 
@@ -266,8 +270,8 @@ onMounted(() => {
         <a v-if="previewEvent?.snapshot" :href="downloadEventSnapshotURL(previewEvent.id)" class="dl-btn" title="下载截图">
           <van-icon name="down" size="16" />
         </a>
-        <a v-if="previewEvent?.gif" :href="downloadEventGIFURL(previewEvent.id)" class="dl-btn" title="下载 GIF">
-          <van-icon name="down" size="16" />
+        <a v-if="previewEvent?.gif" :href="downloadEventGIFURL(previewEvent.id)" class="dl-btn dl-gif" title="下载动图 GIF">
+          <span class="dl-gif-txt">GIF</span>
         </a>
         <button class="preview-close control-button" aria-label="关闭事件预览" @click="showPreview = false"><van-icon name="cross" /></button>
       </div>
@@ -306,6 +310,8 @@ onMounted(() => {
 .skeleton-media {
   background: var(--nvr-panel-2);
   border-radius: var(--nvr-radius-sm);
+  /* 与真实 .media 一致：关怀模式大字号下骨架占位内容会超出容器，裁掉即可 */
+  overflow: hidden;
 }
 .skeleton-img {
   width: 100%;
@@ -317,6 +323,10 @@ onMounted(() => {
   gap: 8px;
   padding: 10px 14px 0;
   overflow-x: auto;
+  /* .page 是固定高度的 column flex 滚动容器：本元素带 overflow（min-height=0），
+     列表一长就会被 flex-shrink 压扁到 0 高、筛选 UI 整体消失（PC 长列表实测复现），
+     必须禁止收缩，让 .page 走自然滚动 */
+  flex-shrink: 0;
 }
 .type-chips .chip {
   flex-shrink: 0;
@@ -351,6 +361,13 @@ onMounted(() => {
 /* 桌面端居中窄栏：横向卡片拉到 1200px 后扫视困难，
    与服务器设置页同宽规则（760px，≥1400px 放宽到 900px），
    保持全站桌面布局语言一致 */
+/* 内嵌（录像管理-事件 tab）形态：接管滚动的是宿主容器 */
+.events-page.embedded {
+  flex: initial;
+  overflow-y: visible;
+  padding-bottom: 8px;
+}
+
 @media (min-width: 900px) {
   .events-page {
     width: 100%;
@@ -514,14 +531,14 @@ onMounted(() => {
   font-size: calc(11px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
 }
+/* 删除按钮与下载按钮同组（右上角圆形操作区），悬停/按下变红以示危险操作 */
 .del {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
   color: var(--nvr-text-2);
 }
+.del:hover,
 .del:active {
   color: var(--nvr-red);
+  border-color: var(--nvr-red);
 }
 .dl-btns {
   position: absolute;
@@ -542,6 +559,15 @@ onMounted(() => {
   color: var(--nvr-text-2);
   text-decoration: none;
 }
+/* GIF 下载按钮用文字徽标与「下载截图」的箭头区分（原先两个按钮同图标难以分辨） */
+.dl-btn.dl-gif {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+.dl-btn.dl-gif .dl-gif-txt {
+  line-height: 1;
+}
 @media (max-width: 600px) {
   .ev-card {
     display: grid;
@@ -552,11 +578,10 @@ onMounted(() => {
   .ev-card .info { grid-column: 2; grid-row: 1; padding: 0; }
   .ev-card .row { flex-wrap: wrap; gap: 6px; }
   .ev-card .name { white-space: normal; overflow-wrap: anywhere; }
-  .ev-card .del { position: static; grid-column: 2; grid-row: 2; justify-self: end; }
   .ev-card .dl-btns { position: static; grid-column: 1; grid-row: 2; }
   :global(body.care .events-page .ev-card .media) { width: 100%; }
-  :global(body.care .events-page .ev-card .del),
-  :global(body.care .events-page .ev-card .dl-btn) { width: 44px; height: 44px; }
+  :global(body.care .events-page .ev-card .dl-btn),
+  :global(body.care .events-page .ev-card .del) { width: 44px; height: 44px; }
 }
 .dl-btn:active {
   color: var(--nvr-accent);
@@ -573,6 +598,8 @@ onMounted(() => {
   margin: 0 12px 12px;
   border-radius: var(--nvr-radius);
   overflow: hidden;
+  /* 同 .type-chips：overflow:hidden 使 min-height=0，长列表下会被 flex 压没 */
+  flex-shrink: 0;
 }
 .filter-row {
   display: flex;

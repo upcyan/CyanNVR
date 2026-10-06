@@ -2,11 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from './stores/settings'
+import { useAuthStore } from './stores/auth'
 import { useDeviceStore } from './stores/devices'
 import { useNotifications } from './utils/notify'
 import { http } from './api/client'
+import { server } from './api/server'
 
 const settings = useSettingsStore()
+const auth = useAuthStore()
 const route = useRoute()
 
 // 登录页与服务器设置页属于独立流程，不应出现侧边栏与底部导航
@@ -34,48 +37,96 @@ async function loadVersion() {
 
 let mq: MediaQueryList | null = null
 let onMqChange: ((e: MediaQueryListEvent) => void) | null = null
+/** 已完成初始化的会话代次：避免重复初始化、也能识别「换会话」 */
+let initializedEpoch = -1
 
 function applyA11y() {
   const s = settings.settings
+  // 关怀模式生效位 = 本地开关 || 用户级关怀（管理员在用户管理里为本账号勾选）。
+  // 用户级关怀开启时设置页隐藏字号/关怀开关，二者不会互相覆盖。
+  const careActive = s.careMode || !!auth.user?.careMode
   const fontScale = { normal: '1', large: '1.2', xlarge: '1.4' }
   // 只放大文字，保持布局视口、导航断点与弹窗定位一致。
-  document.documentElement.style.setProperty('--nvr-font-scale', s.careMode ? '1' : fontScale[s.fontSize] || '1')
-  document.documentElement.dataset.fontSize = s.careMode ? 'normal' : s.fontSize
-  document.body.classList.toggle('care', s.careMode)
+  document.documentElement.style.setProperty('--nvr-font-scale', careActive ? '1' : fontScale[s.fontSize] || '1')
+  document.documentElement.dataset.fontSize = careActive ? 'normal' : s.fontSize
+  document.body.classList.toggle('care', careActive)
   document.body.classList.toggle('light', s.theme === 'light')
   document.body.classList.toggle('dark', s.theme === 'dark')
 }
 
-onMounted(async () => {
-  // 关键时序：登录后首次进入受保护路由时，pinia auth store 可能还没把
-  // nvr_token 写进 localStorage（登录动作与 App 挂载存在竞争）。此时
-  // devices.load() 会发出不带 Authorization 的 /api/devices → 401 →
-  // 拦截器清空 token 并跳回登录页，表现为「登录成功却看到暂无设备」。
-  // 这里等一小会儿直到 token 就位再加载设备，避免首屏 401。
-  // 注意：如果 40 次轮询后仍无 token，可能是用户未登录或 token 已过期，
-  // 此时 devices.load() 会正常走 401 拦截逻辑跳登录页，不会死循环。
-  for (let i = 0; i < 40 && !localStorage.getItem('nvr_token'); i++) {
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  // 双重检查：如果此时仍无 token，说明用户未登录，直接跳登录页
-  if (!localStorage.getItem('nvr_token')) {
-    if (location.hash && !location.hash.includes('/login')) {
-      location.hash = '#/login'
-    }
-    return
-  }
-  devices.load().then(() => devices.startPolling())
+/** 视口相关的初始化：与登录状态无关，任何情况下都必须执行 */
+function setupViewport() {
+  if (mq) return
   mq = window.matchMedia('(min-width: 900px)')
   isDesktop.value = mq.matches
   onMqChange = (e) => (isDesktop.value = e.matches)
   mq.addEventListener('change', onMqChange)
-  applyA11y()
+}
+
+/** 建立会话相关资源：设备列表 + 轮询 + 实时通知 + 版本自检 */
+function startSession(epoch: number) {
+  settings.reset()
+  void settings.loadFromServer()
+  devices.load().then(() => {
+    // 期间又换了会话（退出/重登）：不要为旧会话启动轮询
+    if (epoch !== auth.sessionEpoch) return
+    devices.startPolling()
+  })
   connectSSE()
   loadVersion()
+}
+
+/** 结束会话相关资源并清空身份关联数据 */
+function stopSession() {
+  settings.reset()
+  devices.reset()
+  disconnectSSE()
+}
+
+/**
+ * 会话驱动的初始化。
+ *
+ * 关键修复：此前只在根组件 onMounted 里「最多等 2 秒 token」，等到就初始化，
+ * 等不到就 return。但用户通常是在登录页停留一会儿才登录，而登录成功只是
+ * 切换路由、**不会重新挂载根组件**，于是设备加载/轮询/SSE 永远不会启动，
+ * 表现为「登录成功却没有任何设备」。
+ *
+ * 现在改为监听会话本身：登录（token 由空变有）→ 初始化；退出 → 清理。
+ * 无论用户在登录页停留多久，登录后都一定会初始化。
+ */
+function syncSession() {
+  const epoch = auth.sessionEpoch
+  const loggedIn = auth.isLoggedIn
+  if (loggedIn && initializedEpoch !== epoch) {
+    initializedEpoch = epoch
+    startSession(epoch)
+    return
+  }
+  if (!loggedIn && initializedEpoch !== -1) {
+    initializedEpoch = -1
+    stopSession()
+  }
+}
+
+onMounted(() => {
+  // 视口与无障碍设置与登录无关，立即初始化（此前被 token 等待分支跳过，
+  // 导致登录后窗口尺寸变化不生效）
+  setupViewport()
+  applyA11y()
+  // 会话可能已经存在（刷新页面/信任窗口内重开），也可能稍后才建立（登录）。
+  // 两种情况都由同一个同步函数处理。
+  syncSession()
+  // 已登录但未跳转到受保护路由时（例如直接停在登录页），交由路由守卫处理
 })
 
+// 登录/退出/切换账号都会改变 token 或会话代次 → 自动重建或清理会话资源
 watch(
-  () => [settings.settings.fontSize, settings.settings.careMode, settings.settings.theme],
+  () => [auth.token, auth.sessionEpoch] as const,
+  () => syncSession(),
+)
+
+watch(
+  () => [settings.settings.fontSize, settings.settings.careMode, settings.settings.theme, auth.user?.careMode],
   applyA11y,
   { immediate: true },
 )
@@ -83,9 +134,19 @@ watch(
 watch(
   () => settings.settings.demoMode,
   () => {
+    // 演示模式切换会整体换数据源：重置并重新加载
+    devices.reset()
     devices.load().then(() => devices.startPolling())
   },
 )
+
+watch(() => server.base, () => {
+  // A different backend may have a different user database; never reuse its session/data.
+  settings.reset()
+  devices.reset()
+  disconnectSSE()
+  auth.logout()
+})
 
 onBeforeUnmount(() => {
   devices.stopPolling()
@@ -148,10 +209,6 @@ onBeforeUnmount(() => {
             <span class="nav-ico"><van-icon name="video-o" size="18" /></span>
             <span>录像管理</span>
           </router-link>
-          <router-link to="/events" class="nav-item" active-class="on">
-            <span class="nav-ico"><van-icon name="bell" size="18" /></span>
-            <span>事件中心</span>
-          </router-link>
         </nav>
 
         <div class="nav-group">系统</div>
@@ -182,7 +239,6 @@ onBeforeUnmount(() => {
         <van-tabbar v-if="!isDesktop && showTabbar" route fixed placeholder safe-area-inset-bottom>
           <van-tabbar-item replace to="/live" icon="play-circle-o">摄像机</van-tabbar-item>
           <van-tabbar-item replace to="/playback" icon="video-o">录像</van-tabbar-item>
-          <van-tabbar-item replace to="/events" icon="bell">事件</van-tabbar-item>
           <van-tabbar-item replace to="/settings" icon="setting-o">设置</van-tabbar-item>
         </van-tabbar>
     </div>

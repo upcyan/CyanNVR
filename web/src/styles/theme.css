@@ -1,3 +1,18 @@
+/* ── 字号缩放（设置页「字体大小」）──
+   应用内自绘文字走 --nvr-font-scale（见各处 calc(Npx * var(--nvr-font-scale))），
+   但 Vant 组件用的是它自家的 px 字号变量，导致改字号时「绝大部分字体没变化」。
+   这里把 Vant 的 5 个基础字号变量也接到同一缩放系数上，全部文字统一缩放。 */
+:root {
+  --van-font-size-xs: calc(10px * var(--nvr-font-scale, 1));
+  --van-font-size-sm: calc(12px * var(--nvr-font-scale, 1));
+  --van-font-size-md: calc(14px * var(--nvr-font-scale, 1));
+  --van-font-size-lg: calc(16px * var(--nvr-font-scale, 1));
+  --van-font-size-xl: calc(18px * var(--nvr-font-scale, 1));
+}
+body {
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+
 :root {
   /* ── 表面层（背景/面板/边框）── */
   --nvr-bg: #060709;
@@ -168,8 +183,22 @@ body:not(.light) button:focus-visible {
   overflow-x: hidden;
 }
 
+/* ── 移动端高度链补全（关键）──
+   Vant 的 ConfigProvider 会在 #app 与 .app-shell 之间插入一个
+   .van-config-provider 包裹 div。该 div 默认没有高度，于是
+   .app-shell 的 height:100% 相对「内容高度」解析（实测 1856px 而非视口 844px）：
+     · 整条高度链断裂 → 滚动发生在 body 上；
+     · .page 的 overflow-y:auto 因高度不受约束而失效，不成为滚动容器；
+     · 页内 position:sticky 找不到可锚定的滚动祖先 → 直接随页面滚走
+       （实测移动端回放播放器会滚出视口）。
+   补上这一环后，移动端与桌面端共用同一模型：.page 是唯一滚动容器。 */
+#app > .van-config-provider {
+  height: 100%;
+}
+
 .page {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-bottom: 56px;
   display: flex;
@@ -194,6 +223,17 @@ body.light .van-action-sheet {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
+/* 桌面端设置页已扁平化（见 SettingsView.vue 的 >=900px 规则）：
+   分组不再是卡片，必须连阴影一起去掉——只删边框圆角而保留阴影，
+   仍会有「卡片浮起」的观感，去卡片化就不彻底。
+   窄屏保持上面的原有阴影，移动端观感与改造前一致。 */
+@media (min-width: 900px) {
+  .settings-page .set-block,
+  body.light .settings-page .set-block {
+    box-shadow: none;
+  }
+}
+
 /* 悬停提升（仅桌面端，移动端无悬停）。
    注意：这里绝不能加 transform/filter —— 它们会创建层叠上下文，
    把卡片内未 teleport 的 position:fixed 弹窗（Vant picker 等）
@@ -207,6 +247,11 @@ body.light .van-action-sheet {
   }
   body.light .set-block:hover {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+  /* 桌面端扁平工作区：分组无卡片，悬停也不应「浮起」 */
+  .settings-page .set-block:hover,
+  body.light .settings-page .set-block:hover {
+    box-shadow: none;
   }
 }
 
@@ -759,18 +804,85 @@ body.care .settings-page .van-cell__value,
 body.care .server-page .van-cell__value {
   min-width: 0;
 }
-/* 关怀模式字号放大后，cell 右侧内容（开关/单选组/按钮）容易溢出：
-   允许 value 区换行并占满整行，radio-group 在任意宽度下都可换行。
-   此前只在 <=360px 生效，桌面窄窗 + 关怀模式同样会截断。 */
-body.care .settings-page .van-cell,
-body.care .server-page .van-cell {
+/* 关怀模式字号放大后，cell 右侧的复杂控件（滑条/字号组/进度条/单选组/输入组）
+   容易溢出：这些行允许换行并让控件占满整行（标题一行、控件一行的堆叠布局）。
+   注意必须用 :has 限定到复杂控件行——早期无差别作用于全部 cell，会把简单的
+   开关行也挤成「标题一行、开关掉到下一行左对齐」，移动端关怀模式布局凌乱。 */
+body.care .settings-page .van-cell:has(.days-combo),
+body.care .settings-page .van-cell:has(.slider-box),
+body.care .settings-page .van-cell:has(.font-opts),
+body.care .settings-page .van-cell:has(.progress),
+body.care .settings-page .van-cell:has(.strategy-radios),
+body.care .settings-page .van-cell:has(.trust-box),
+body.care .settings-page .van-cell:has(.time-field),
+body.care .server-page .van-cell:has(.qr-box),
+body.care .server-page .van-cell:has(.tls-actions),
+body.care .server-page .van-cell:has(.strategy-radios) {
   flex-wrap: wrap;
   row-gap: 8px;
 }
-body.care .settings-page .van-cell__value,
-body.care .server-page .van-cell__value {
+body.care .settings-page .van-cell:has(.days-combo) .van-cell__value,
+body.care .settings-page .van-cell:has(.slider-box) .van-cell__value,
+body.care .settings-page .van-cell:has(.font-opts) .van-cell__value,
+body.care .settings-page .van-cell:has(.progress) .van-cell__value,
+body.care .settings-page .van-cell:has(.strategy-radios) .van-cell__value,
+body.care .settings-page .van-cell:has(.trust-box) .van-cell__value,
+body.care .settings-page .van-cell:has(.time-field) .van-cell__value,
+body.care .server-page .van-cell:has(.qr-box) .van-cell__value,
+body.care .server-page .van-cell:has(.tls-actions) .van-cell__value,
+body.care .server-page .van-cell:has(.strategy-radios) .van-cell__value {
   flex-basis: 100%;
   text-align: left;
+}
+/* Vant 默认 title 是 flex-basis:0；value 独占整行后 title 只能分到极窄的剩余
+   空间，「存储空间」等标题会变成一字一行竖排。title 同样占整行才是预期的
+   「标题一行、控件一行」堆叠布局。 */
+body.care .settings-page .van-cell:has(.days-combo) .van-cell__title,
+body.care .settings-page .van-cell:has(.slider-box) .van-cell__title,
+body.care .settings-page .van-cell:has(.font-opts) .van-cell__title,
+body.care .settings-page .van-cell:has(.progress) .van-cell__title,
+body.care .settings-page .van-cell:has(.strategy-radios) .van-cell__title,
+body.care .settings-page .van-cell:has(.trust-box) .van-cell__title,
+body.care .settings-page .van-cell:has(.time-field) .van-cell__title,
+body.care .server-page .van-cell:has(.qr-box) .van-cell__title,
+body.care .server-page .van-cell:has(.tls-actions) .van-cell__title,
+body.care .server-page .van-cell:has(.strategy-radios) .van-cell__title {
+  flex-basis: 100%;
+}
+/* 录像策略等「文字 + 右侧单选圆点」行保持一行：堆叠会把圆点挤到下一行
+   且被行高裁掉一半（实测关怀模式移动端图标残缺）。 */
+body.care .settings-page .van-cell:has(.van-radio) {
+  flex-wrap: nowrap;
+}
+/* 横向单选（如服务器页「连接策略」）：关怀字号下 label 行高超出默认 20px
+   图标高度会被裁剪，撑到 32px 并垂直居中 */
+body.care .van-radio--horizontal {
+  min-height: 32px;
+  align-items: center;
+}
+/* care 全局把 .van-icon 放大到 24px，但单选圆点的图标盒仍是默认 20px 高——
+   30px 的圆在 20px 盒里上下被裁成残月（实测连接策略/录像策略）。盒子跟随
+   图标尺寸成正方形并居中。 */
+body.care .van-radio__icon {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.care .van-radio__icon .van-icon {
+  line-height: 1;
+}
+body.care .settings-page .van-cell:has(.van-radio) .van-cell__title {
+  flex-basis: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+body.care .settings-page .van-cell:has(.van-radio) .van-cell__right-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
 }
 .van-radio-group.strategy-radios,
 body.care .van-radio-group {

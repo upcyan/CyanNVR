@@ -26,16 +26,21 @@ func (s *Server) streamAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 			return
 		}
-		claims, err := s.am.Parse(token)
+		// 与主鉴权中间件一致：token 过期但仍在免登录信任窗口内时放行。
+		// App 端只用 query token 拉流、拿不到 X-Renewed-Token 续签响应头，
+		// 若此处严格校验过期，视频流会在 token 每日过期时断流一次。
+		claims, withinTrust, err := s.am.ParseWithTrust(token)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
 		// 与主鉴权中间件一致：改密后旧 token 不能在流媒体接口继续使用
+		//（信任窗口不豁免这一条）。
 		if s.am.Revoked(claims) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "密码已变更，请重新登录"})
 			return
 		}
+		_ = withinTrust
 		c.Set("auth_user", &auth.AuthUser{ID: claims.Sub, Role: models.Role(claims.Role)})
 		c.Set("stream_token", token)
 		c.Next()

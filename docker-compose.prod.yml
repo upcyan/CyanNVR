@@ -10,7 +10,9 @@ services:
       - NVR_DATA=/data
       - NVR_WEB=/app/dist
       - NVR_JWT_SECRET=${NVR_JWT_SECRET:?请在 .env 设置 NVR_JWT_SECRET}
-      - NVR_ADMIN_PASSWORD=${NVR_ADMIN_PASSWORD:-admin123}
+      # 与 NVR_JWT_SECRET 同样强制：缺失即拒绝启动，杜绝弱默认口令静默上线
+      #（首次启动空库时才用于建管理员；数据库已初始化则忽略此值）
+      - NVR_ADMIN_PASSWORD=${NVR_ADMIN_PASSWORD:?请在 .env 设置强管理员口令（至少 8 位）}
       - NVR_AI_ENABLED=${NVR_AI_ENABLED:-false}
       - NVR_AI_BASE_URL=${NVR_AI_BASE_URL:-https://api.openai.com/v1}
       - NVR_AI_MODEL=${NVR_AI_MODEL:-gpt-4o-mini}

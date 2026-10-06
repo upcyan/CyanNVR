@@ -2,10 +2,15 @@ module cyannvr/server
 
 go 1.25.0
 
+// 钉住工具链：go1.25.12 及之前的标准库有 6 项 govulncheck 可达漏洞
+// （net/url、crypto/tls、net/http×2、encoding/xml、encoding/asn1），
+// 1.25.13 全部修复；不钉则随构建镜像/本地工具链漂移。
+toolchain go1.25.13
+
 require (
 	github.com/beevik/etree v1.4.1
 	github.com/gin-gonic/gin v1.10.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/use-go/onvif v0.0.10-0.20240929072509-67386c9fecef

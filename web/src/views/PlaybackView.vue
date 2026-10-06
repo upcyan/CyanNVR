@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
@@ -8,11 +8,14 @@ import { apiBase, createPlayback, downloadRecordingURL, fetchDaySegments, fetchE
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
+import EventsView from './EventsView.vue'
 import TimelineBar from '../components/TimelineBar.vue'
 import PlaybackPlayer from '../components/PlaybackPlayer.vue'
+import PlaybackDateBar from '../components/PlaybackDateBar.vue'
 
 const store = useDeviceStore()
 const route = useRoute()
+const router = useRouter()
 
 const today = new Date()
 const p2 = (n: number) => String(n).padStart(2, '0')
@@ -44,6 +47,24 @@ let loadToken = 0
 let monthToken = 0
 let active = true
 let sessionEnd = 0
+// 页内主 tab：回放 / 事件（原独立「事件中心」页并入此处，路由 /events 仍可直达）
+const activeTab = ref<'playback' | 'events'>(
+  (route.query.tab as string) === 'events' ? 'events' : 'playback',
+)
+const eventsMounted = ref(activeTab.value === 'events')
+// 移动端内嵌日历收进弹层：<900px 隐藏侧栏日历，改点「选日期」弹出
+const calOpen = ref(false)
+watch(activeTab, (t) => {
+  if (t === 'events') eventsMounted.value = true
+  if (route.query.tab !== (t === 'events' ? 'events' : undefined)) {
+    router.replace({ query: { ...route.query, tab: t === 'events' ? 'events' : undefined } })
+  }
+})
+// 已挂载时直达 /playback?tab=events（如从 /events 旧链接重定向）也要切过去
+watch(() => route.query.tab, (t) => {
+  const want = t === 'events' ? 'events' : 'playback'
+  if (want !== activeTab.value) activeTab.value = want
+})
 const jumpTime = ref('12:00:00')
 
 function releasePlayback() {
@@ -106,7 +127,9 @@ async function loadSegments() {
     segments.value = result.sort((a, b) => a.start - b.start)
   } catch (e: any) {
     if (token !== loadToken || !active) return
-    playError.value = e?.response?.data?.error || '录像加载失败，请重试'
+    // 连接故障（ConnUnavailableError）没有 response，回退到 message，
+    // 否则把「服务器不可达」显示成「录像加载失败」，误导排查方向
+    playError.value = e?.response?.data?.error || e?.message || '录像加载失败，请重试'
   } finally {
     if (token === loadToken) loading.value = false
   }
@@ -346,7 +369,7 @@ async function buildSession(fromTs: number) {
     // （HEVC 源需转码，实测首片要数秒）。把后端给的原因显示出来，
     // 否则用户只看到进度条不动，无从判断。
     seekPending.value = false
-    const msg = e?.response?.data?.error
+    const msg = e?.response?.data?.error || e?.message
     playError.value = msg || '回放准备失败，请重试'
   }
 }
@@ -417,10 +440,31 @@ function onSeekEnd(ts: number) {
   }, 300)
 }
 
+const jumpInvalid = ref(false)
+
+// 跳转时间输入：格式化为 HH:MM:SS（自动补冒号）。
+// 原生 <input type="time"> 的显示格式跟随浏览器语言（英文环境显示 12:00:00 PM），
+// 在全中文界面里不一致，改为自绘文本输入统一观感。
+function onJumpInput() {
+  const digits = jumpTime.value.replace(/\D/g, '').slice(0, 6)
+  let out = digits
+  if (digits.length > 4) out = `${digits.slice(0, 2)}:${digits.slice(2, 4)}:${digits.slice(4)}`
+  else if (digits.length > 2) out = `${digits.slice(0, 2)}:${digits.slice(2)}`
+  jumpTime.value = out
+  jumpInvalid.value = false
+}
+
 function jumpToTime() {
-  const [h, m, sec = 0] = jumpTime.value.split(':').map(Number)
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return
-  onSeekEnd(dayStart.value + (h * 3600 + m * 60 + sec) * 1000)
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(jumpTime.value.trim())
+  const h = m ? Number(m[1]) : NaN
+  const min = m ? Number(m[2]) : NaN
+  const sec = m ? Number(m[3]) : NaN
+  if (!m || h > 23 || min > 59 || sec > 59) {
+    jumpInvalid.value = true
+    showToast('请输入有效时间，格式 HH:MM:SS')
+    return
+  }
+  onSeekEnd(dayStart.value + (h * 3600 + min * 60 + sec) * 1000)
 }
 
 function onEnded() {
@@ -442,6 +486,11 @@ function onToggle() {
 function onSpeed(n: number) {
   speed.value = n
   playable?.setSpeed(n)
+}
+
+function onCalPick(d: string) {
+  calOpen.value = false
+  onSelectDate(d)
 }
 
 function onSelectSegment(s: RecordingSegment) {
@@ -513,14 +562,25 @@ onMounted(() => {
   startTimer()
 })
 
-// 关键修复：App.vue 的 devices.load() 是异步的，直接进入/刷新本页时
-// 设备列表可能尚未就绪。此处等列表到位后自动选设备并加载，
-// 否则 deviceId 为空会请求 /api/devices//recordings 而始终没有画面。
+// 设备列表变化时保证 deviceId 始终指向一个真实存在的设备。
+// 关键修复：此前只监听 devices.length 且只在「当前无选中」时选设备，
+// 以下情况会留下失效的 deviceId（请求落在已删除的设备上，页面永远空）：
+//   · 设备被删除或不再是本账号可见；
+//   · 设备数量不变但整体被替换（同数量替换）；
+//   · 从设备 A 的直链进入后 A 消失，B 才是有效设备。
 watch(
-  () => store.devices.length,
+  () => store.devices.map((d) => d.id).join(','),
   () => {
-    // 只负责选设备；后续加载由 deviceId 的 watch 统一驱动，避免重复请求
-    if (!deviceId.value) pickInitialDevice()
+    const q = route.query.device as string | undefined
+    // 当前选中仍有效：什么都不做，避免打断正在播放的回放
+    if (deviceId.value && store.byId(deviceId.value)) return
+    // 直链指定的设备可用时优先选它
+    if (q && store.byId(q)) {
+      deviceId.value = q
+      return
+    }
+    if (store.devices.length) deviceId.value = store.devices[0].id
+    else deviceId.value = ''
   },
 )
 
@@ -549,6 +609,28 @@ onActivated(() => {
   startTimer()
 })
 
+// 结束服务端回放会话（停掉转码进程）并返回被结束的会话名。
+// 转码是「一次性顺序转码整个请求窗口」，不主动停就会在后台白跑十几分钟
+// 并持续占用编码器（实测 80% CPU）。
+function takeCurrentSession(): string {
+  const s = currentSession
+  currentSession = ''
+  return s
+}
+
+// 用 sendBeacon 而非普通请求：页面卸载时 fetch 会被浏览器取消，
+// beacon 由浏览器在后台发出。注意 beacon 以 POST 发空体、不带
+// Authorization 头，只能靠 query token 鉴权（后端 streamAuth 支持 ?token=）。
+function releaseSessionOnUnload() {
+  const session = takeCurrentSession()
+  if (!session) return
+  if (!isBackend() || isDemoMode()) return
+  const token = localStorage.getItem('nvr_token')
+  const url = `${apiBase()}/api/playback/${session}/stop${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  const ok = navigator.sendBeacon?.(url)
+  if (!ok) void stopPlayback(session)
+}
+
 onBeforeUnmount(() => {
   active = false
   loadToken++
@@ -557,18 +639,9 @@ onBeforeUnmount(() => {
   if (seekTimer) window.clearTimeout(seekTimer)
   playable?.destroy()
   playable = null
-  // 离开回放页立即结束服务端会话：转码是「一次性顺序转码整个请求窗口」，
-  // 不主动停就会在后台白跑十几分钟并持续占用编码器（实测 80% CPU）。
-  // 用 sendBeacon 而非普通请求：页面卸载时 fetch 可能被浏览器取消。
-  if (currentSession && isBackend() && !isDemoMode()) {
-    const token = localStorage.getItem('nvr_token')
-    const url = `${apiBase()}/api/playback/${currentSession}/stop${token ? `?token=${encodeURIComponent(token)}` : ''}`
-    const ok = navigator.sendBeacon?.(url)
-    // sendBeacon 以 POST 发送空体，不带 Authorization 头，因此后端
-    // 通过 query 里的 token 鉴权；不支持时退回普通请求。
-    if (!ok) stopPlayback(currentSession)
-    currentSession = ''
-  }
+  // 兜底：keep-alive 的 onDeactivated 通常已释放会话，但 App 被杀死、
+  // 标签页直接关闭等场景它可能没执行，这里必须再做一次。
+  releaseSessionOnUnload()
 })
 </script>
 
@@ -583,59 +656,102 @@ onBeforeUnmount(() => {
       </template>
     </van-nav-bar>
 
-    <div class="pb-body">
+    <div class="pb-tabs" role="tablist">
+      <button type="button" class="pb-tab" :class="{ on: activeTab === 'playback' }" role="tab" :aria-selected="activeTab === 'playback'" @click="activeTab = 'playback'">回放</button>
+      <button type="button" class="pb-tab" :class="{ on: activeTab === 'events' }" role="tab" :aria-selected="activeTab === 'events'" @click="activeTab = 'events'">事件</button>
+    </div>
+
+    <div v-show="activeTab === 'events'" class="pb-events-panel">
+      <EventsView v-if="eventsMounted" embedded />
+    </div>
+
+    <!-- 移动端日期选择弹层（内嵌日历在小屏隐藏，见 .pb-inline-cal） -->
+    <van-popup v-model:show="calOpen" position="bottom" round :style="{ maxHeight: '80vh', overflowY: 'auto' }">
+      <CalendarHeat :days="monthDays" :selected="dateStr" @select="onCalPick" />
+    </van-popup>
+
+    <div v-show="activeTab === 'playback'" class="pb-body">
+      <!-- 桌面左栏：日期条 + 内嵌月历（移动端整列隐藏，日历走底部弹层） -->
       <div class="pb-left">
-        <div class="date-bar">
-          <button type="button" class="control-button" aria-label="前一天" @click="shiftDay(-1)"><van-icon name="arrow-left" size="20" /></button>
-          <span class="date mono">{{ dateStr }}</span>
-          <button type="button" class="control-button" aria-label="后一天" @click="shiftDay(1)"><van-icon name="arrow" size="20" /></button>
-        </div>
-        <CalendarHeat :days="monthDays" :selected="dateStr" @select="onSelectDate" />
+        <PlaybackDateBar
+          :date="dateStr"
+          :show-calendar-button="false"
+          @prev="shiftDay(-1)"
+          @next="shiftDay(1)"
+          @pick-calendar="calOpen = true"
+        />
+        <CalendarHeat class="pb-inline-cal" :days="monthDays" :selected="dateStr" @select="onSelectDate" />
       </div>
 
       <div class="pb-right">
-        <div class="player-wrap">
-          <!-- 播放器常驻：原先 v-if/v-else 会在加载时销毁并重建组件，
-               导致 playerRef 时序错乱、画面闪烁与播放位置重置 -->
-          <PlaybackPlayer
-            ref="playerRef"
-            :display-time="currentTs"
-            :playing="playing"
-            :speed="speed"
-            :has-stream="segments.length > 0"
-            :device-name="device?.name ?? ''"
-            @toggle="onToggle"
-            @speed="onSpeed"
-            @fullscreen="onFullscreen"
-            @ended="onEnded"
-            @error="playError = '视频加载失败，请重试'; playing = false"
-          />
-          <div v-if="loading || seekPending || playError" class="loading-mask">
-            <van-loading v-if="loading || seekPending" />
-            <span v-if="seekPending && !loading" class="seek-hint">正在准备回放…</span>
-            <span v-else-if="playError && !loading" class="seek-hint err">{{ playError }}</span>
-            <van-button v-if="playError && !loading && !seekPending" size="small" @click="loadSegments">重新加载</van-button>
+        <!-- 顶部固定区：移动端固定在内容区顶部，不随下方内容滚动 -->
+        <div class="pb-pinned">
+          <div class="player-wrap">
+            <!-- 播放器常驻：原先 v-if/v-else 会在加载时销毁并重建组件，
+                 导致 playerRef 时序错乱、画面闪烁与播放位置重置 -->
+            <PlaybackPlayer
+              ref="playerRef"
+              :display-time="currentTs"
+              :playing="playing"
+              :speed="speed"
+              :has-stream="segments.length > 0"
+              :device-name="device?.name ?? ''"
+              @toggle="onToggle"
+              @speed="onSpeed"
+              @fullscreen="onFullscreen"
+              @ended="onEnded"
+              @error="playError = '视频加载失败，请重试'; playing = false"
+            />
+            <div v-if="loading || seekPending || playError" class="loading-mask">
+              <van-loading v-if="loading || seekPending" />
+              <span v-if="seekPending && !loading" class="seek-hint">正在准备回放…</span>
+              <span v-else-if="playError && !loading" class="seek-hint err">{{ playError }}</span>
+              <van-button v-if="playError && !loading && !seekPending" size="small" @click="loadSegments">重新加载</van-button>
+            </div>
           </div>
         </div>
 
-        <div class="timeline-wrap">
-          <div class="tl-head">
-            <span class="mono">{{ dateStr }} 录像</span>
-            <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
-          </div>
-          <TimelineBar
-            :day-start="dayStart"
-            :segments="segments"
-            :events="timelineEvents"
-            :value="currentTs"
-            @seek="onSeek"
+        <!-- 下方滚动区：移动端唯一滚动容器，日期/时间轴/列表都在这里滚动 -->
+        <div class="pb-scroll">
+          <!-- 移动端日期条：位于播放器下方、随内容滚动（桌面端由左栏承担，故隐藏） -->
+          <PlaybackDateBar
+            class="pb-mobile-date"
+            :date="dateStr"
+            :show-calendar-button="true"
+            @prev="shiftDay(-1)"
+            @next="shiftDay(1)"
+            @pick-calendar="calOpen = true"
+          />
+
+          <div class="timeline-wrap">
+            <div class="tl-head">
+              <span class="mono">{{ dateStr }} 录像</span>
+              <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
+            </div>
+            <TimelineBar
+              :day-start="dayStart"
+              :segments="segments"
+              :events="timelineEvents"
+              :value="currentTs"
+              @seek="onSeek"
             @seekend="onSeekEnd"
           />
           <div class="seek-tools">
             <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs - 30000)">后退30秒</button>
             <form class="time-jump" @submit.prevent="jumpToTime">
               <label for="playback-time">跳转时间</label>
-              <input id="playback-time" v-model="jumpTime" type="time" step="1" required />
+              <input
+                id="playback-time"
+                v-model="jumpTime"
+                type="text"
+                inputmode="numeric"
+                placeholder="HH:MM:SS"
+                maxlength="8"
+                autocomplete="off"
+                :class="{ invalid: jumpInvalid }"
+                :aria-invalid="jumpInvalid"
+                @input="onJumpInput"
+              />
               <button class="control-button" :disabled="!segments.length || loading" type="submit">跳转</button>
             </form>
             <button class="control-button" :disabled="!segments.length || loading" @click="onSeekEnd(currentTs + 30000)">前进30秒</button>
@@ -722,6 +838,7 @@ onBeforeUnmount(() => {
 
           <span v-if="!segments.length" class="none">当日无录制</span>
         </div>
+        </div><!-- /.pb-scroll 下方滚动区结束 -->
       </div>
     </div>
 
@@ -761,7 +878,10 @@ onBeforeUnmount(() => {
 .time-jump input {
   min-height: 44px;
   max-width: 100%;
+  width: 96px;
   font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
   color: var(--nvr-text);
   background: var(--nvr-panel-2);
   border: 1px solid var(--nvr-border);
@@ -769,21 +889,17 @@ onBeforeUnmount(() => {
   padding: 6px;
   color-scheme: dark;
 }
+.time-jump input::placeholder { color: var(--nvr-text-2); opacity: .7; }
+.time-jump input.invalid {
+  border-color: var(--nvr-red);
+  box-shadow: 0 0 0 1px var(--nvr-red);
+}
 :global(body.light .time-jump input) { color-scheme: light; }
 .device-picker {
   font-size: calc(13px * var(--nvr-font-scale, 1));
   display: flex;
   align-items: center;
   gap: 4px;
-}
-.date-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
-  padding: 8px 0;
-  font-size: calc(15px * var(--nvr-font-scale, 1));
-  font-weight: 600;
 }
 .player-wrap {
   position: relative;
@@ -1001,7 +1117,60 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+/* 移动端日历收纳：<900px 隐藏内嵌日历（占用近一屏），改由日期条的
+   「选日期」按钮弹出底部弹层（按钮显隐见 PlaybackDateBar.vue）。 */
+@media (max-width: 899px) {
+  .pb-left {
+    display: none;
+  }
+}
+:global(body.care .pb-tab) {
+  min-height: 44px;
+  padding: 8px 22px;
+}
+
+/* 页内主 tab：回放 / 事件 */
+.pb-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px 0;
+  flex-shrink: 0;
+}
+.pb-tab {
+  padding: 7px 18px;
+  border-radius: var(--nvr-radius-full);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel);
+  color: var(--nvr-text-2);
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+  min-height: 36px;
+}
+.pb-tab.on {
+  background: var(--nvr-accent-soft-2);
+  border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+  font-weight: 600;
+}
+.pb-events-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .pb-body {
+  flex: 1;
+  min-height: 0;
+  /* 移动端滚动完全交给 .pb-scroll；本容器自身不滚动 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* .pb-right 是「固定播放区 + 滚动内容区」的纵向 flex 容器。
+   它必须显式 min-height:0，否则 flex 项的默认 min-height:auto 会让它按
+   内容高度撑开（实测 1918px > 可视 638px），于是 .pb-scroll 的 flex:1
+   没有可用空间、被撑成内容高度（scrollHeight == clientHeight），
+   滚动就落到 .page 上——播放器随之被滚走，「固定在顶部」失效。 */
+.pb-right {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1017,6 +1186,9 @@ onBeforeUnmount(() => {
   .pb-left {
     width: 360px;
     flex-shrink: 0;
+    /* flex 项默认 min-width:auto=内容最小宽度：关怀模式的 44px 格子+17px 字体
+       会把日历最小宽度顶到 600px+，把定宽列撑到近半屏，必须显式归零 */
+    min-width: 0;
     overflow-y: auto;
     padding-bottom: 20px;
   }
@@ -1026,6 +1198,8 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     padding-bottom: 20px;
   }
+  /* 桌面端滚动回到右列自身，两段式容器不再裁剪 */
+  .pb-body { overflow: visible; }
   .player-wrap {
     padding: 0;
   }
@@ -1047,9 +1221,81 @@ onBeforeUnmount(() => {
     border-color: var(--nvr-accent);
     color: var(--nvr-accent);
   }
-  .date-bar .van-icon:hover {
-    color: var(--nvr-accent);
-    cursor: pointer;
+}
+
+/* ── 移动端：播放组件固定在顶部，其余组件在下方独立滚动 ──
+   与之前用 position:sticky 的区别：sticky 下播放器**先随内容下移**
+   （它初始位于日期栏之下），滚到顶才吸附，视觉上是「跟着滚一段再钉住」。
+   这里改为显式两段式布局：
+     .pb-pinned —— 固定在内容区顶部的播放区，自始至终不移动；
+     .pb-scroll —— 下方唯一的滚动容器，日期条/时间轴/分段列表都在其中。
+   两者是上下排列的兄弟节点而非覆盖关系，因此不存在「固定区遮挡内容」。
+   桌面端（>=1200）在下方恢复左右分栏、关闭两段式。 */
+.pb-pinned {
+  flex-shrink: 0;
+}
+.pb-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+/* 移动端日期条：只在 <900px 显示。
+   900–1199px 走原有单列布局（左栏的日期条 + 内嵌月历在播放器上方），
+   若此处也显示就会出现两条日期条。 */
+.pb-mobile-date {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .player-wrap {
+    padding: 8px 12px;
+    background: var(--nvr-bg);
+  }
+  /* 播放器高度：竖屏接近 16:9；横屏（如 844×390）下 56.25vw=475px 会占满整屏，
+     因此用 62vh 封顶，视频自身 object-fit:contain 居中留黑边。 */
+  .player-wrap :deep(.player) {
+    aspect-ratio: auto;
+    height: clamp(176px, 56.25vw, 62vh);
+  }
+}
+
+/* 矮屏横屏（手机横放，如 844×390 / 740×360）：
+   竖向空间要同时容纳导航栏+页签+固定播放区+内容区+底部导航栏。
+   关怀模式这些控件更高（实测 56+54+72=182px），若播放器仍按 62vh 取值，
+   固定播放区会高达 258px 而内容区只剩 8px——下方「其他组件」实际不可用。
+   这里改为按「扣除固定占位后的剩余高度」来计算播放器高度，
+   并给内容区保底高度，确保横屏关怀模式下仍能看到并操作下方组件。 */
+@media (max-width: 1199px) and (max-height: 520px) {
+  .player-wrap :deep(.player) {
+    /* 190px ≈ 导航栏+页签+底部导航栏（按关怀模式取较大值），96px 留给内容区，
+       再给播放器 80px 下限：避免在 360px 高的屏上把画面压到不可辨认。
+       上限 45vh 防止普通字体下播放器又占掉大半屏。 */
+    height: clamp(80px, calc(100dvh - 190px - 96px), 45vh);
+  }
+  .pb-scroll {
+    min-height: 80px;
+  }
+}
+
+/* <900px：左栏（日期条 + 内嵌月历）整体隐藏，日期条改挂到下方滚动区 */
+@media (max-width: 899px) {
+  .pb-mobile-date {
+    display: block;
+  }
+}
+
+@media (min-width: 1200px) {
+  /* 桌面端：右列自身滚动，两段式布局与移动日期条都关闭 */
+  .pb-pinned,
+  .pb-scroll {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+  .pb-mobile-date {
+    display: none;
   }
 }
 </style>

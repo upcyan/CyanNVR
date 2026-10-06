@@ -32,6 +32,7 @@ func (s *Server) getSettings(c *gin.Context) {
 	if u == nil || u.Role != models.RoleAdmin {
 		out.AI.APIKey = maskKey(out.AI.APIKey)
 	}
+	c.Header("ETag", settingsETag(out))
 	c.JSON(http.StatusOK, gin.H{"settings": out})
 }
 
@@ -43,8 +44,31 @@ func maskKey(k string) string {
 }
 
 func (s *Server) putSettings(c *gin.Context) {
+	s.settingsWriteMu.Lock()
+	defer s.settingsWriteMu.Unlock()
+	s.settingsMu.Lock()
+	current := *s.settings
+	s.settingsMu.Unlock()
+	// Old cached clients must not blindly replace the complete configuration.
+	if c.Request.Method == http.MethodPut && c.GetHeader("If-Match") == "" {
+		c.JSON(http.StatusPreconditionRequired, gin.H{"error": "界面版本过旧，请刷新或升级后保存设置"})
+		return
+	}
+	if match := c.GetHeader("If-Match"); match != "" && match != settingsETag(current) {
+		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "设置已被其他终端修改，请重新读取"})
+		return
+	}
 	var in AppSettings
-	if err := c.ShouldBindJSON(&in); err != nil {
+	if c.Request.Method == http.MethodPatch {
+		body, err := readSettingsBody(c.Request.Body)
+		if err == nil {
+			in, err = mergeSettings(current, body)
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
@@ -89,9 +113,14 @@ func (s *Server) putSettings(c *gin.Context) {
 	if in.AI.APIKey != "" && len(in.AI.APIKey) < 20 && s.settings.AI.APIKey != "" {
 		in.AI.APIKey = s.settings.AI.APIKey
 	}
+	s.settingsMu.Unlock()
+	if err := s.persistSettingsValue(in); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置写入失败，未改变已保存配置"})
+		return
+	}
+	s.settingsMu.Lock()
 	s.settings = &in
 	s.settingsMu.Unlock()
-	s.saveSettings()
 	s.applySettings()
 	newTLS := s.CurrentTLSConfig()
 	if newTLS != oldTLS {
@@ -101,6 +130,7 @@ func (s *Server) putSettings(c *gin.Context) {
 	out := *s.settings
 	s.settingsMu.Unlock()
 	out.AI.APIKey = maskKey(out.AI.APIKey)
+	c.Header("ETag", settingsETag(out))
 	c.JSON(http.StatusOK, gin.H{"settings": out})
 }
 

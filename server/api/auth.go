@@ -117,6 +117,7 @@ func publicUser(u *models.User) gin.H {
 		"createdAt": u.CreatedAt,
 		// nil=跟随全局；>=0 为用户专属窗口（供前端展示免登录配置）
 		"trustWindowHours": u.TrustWindowHours,
+		"careMode":         u.CareMode,
 	}
 }
 
@@ -209,6 +210,8 @@ func (s *Server) updateUser(c *gin.Context) {
 		Username string      `json:"username"`
 		// TrustWindowHours 用户级免登录窗口；指针区分「未提供」与「显式清零」
 		TrustWindowHours *int64 `json:"trustWindowHours"`
+		// CareMode 用户级关怀模式；指针区分「未提供」与「显式关闭」
+		CareMode *bool `json:"careMode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -273,6 +276,16 @@ func (s *Server) updateUser(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存免登录窗口失败"})
 			return
 		}
+	}
+	if req.CareMode != nil {
+		if err := s.st.UpdateUserCareMode(id, *req.CareMode); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存关怀模式失败"})
+			return
+		}
+	}
+	if u, _ := s.st.GetUserByID(id); u != nil {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "user": u})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

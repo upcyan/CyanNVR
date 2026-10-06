@@ -26,6 +26,9 @@ type User struct {
 	// TrustWindowHours 用户级免登录窗口（小时）。nil=跟随全局设置；
 	// >=0 为专属覆盖（0=该用户关闭免登录）。
 	TrustWindowHours *int64 `json:"trustWindowHours,omitempty"`
+	// CareMode 用户级关怀模式：开启后该账号登录即进入关怀模式（更大字体与按钮），
+	// 且设置页不再展示「字体大小」「关怀模式」两项（避免与用户级设置互相覆盖）。
+	CareMode bool `json:"careMode"`
 }
 
 type DeviceSource string

@@ -1393,6 +1393,17 @@ func (m *Manager) indexDeviceDay(deviceID, dayDir string) {
 			if match == nil {
 				continue
 			}
+			// 只索引已收尾的分段。ffmpeg 分段封装器仅在收尾时写 moov，
+			// 正在录制的分段没有 moov、无法播放；若按「文件名推时间 + 假定
+			// 5 分钟」直接入库，回放会取到它并报 mov/mp4 "moov atom not found"
+			// （索引循环每 15 秒跑一次，所以必然踩中当前段）。
+			info, statErr := f.Info()
+			if statErr != nil {
+				continue
+			}
+			if !hasMoovBox(filepath.Join(dayDir, sub.Name(), f.Name()), info.ModTime()) {
+				continue
+			}
 			hh := atoi(match[1][0:2])
 			mi := atoi(match[1][2:4])
 			ss := atoi(match[1][4:6])
@@ -1599,6 +1610,58 @@ func (m *Manager) cleanupOldRecordings() {
 	// 6) 空目录回收：删除录像后 deviceID/YYYYMMDD 会留下空壳，
 	// 长期运行会堆积大量空目录。放在最后做，此时可删的目录已全部删完。
 	m.pruneEmptyDirs(m.cfg.RecordDir, 0)
+
+	// 7) 索引一致性：清掉指向已不存在文件的索引行。
+	// 升级/重启中断的分段会留下「有库行、无文件」的记录，回放按它取流会失败。
+	m.pruneMissingSegmentRows()
+}
+
+// indexPruneWindow 是一次索引一致性检查覆盖的时间范围。
+const indexPruneWindow = 48 * time.Hour
+
+// pruneMissingSegmentRows 删除指向不存在文件的索引行。
+// 只处理近期记录：更早的行随保留策略一并清除，全表遍历代价过高。
+func (m *Manager) pruneMissingSegmentRows() {
+	if m.st == nil {
+		return
+	}
+	segs, err := m.st.RecentSegments(time.Now().Add(-indexPruneWindow))
+	if err != nil {
+		log.Printf("prune missing segments: query: %v", err)
+		return
+	}
+	removed := 0
+	for _, seg := range segs {
+		if seg.Path == "" {
+			continue
+		}
+		if _, err := os.Stat(seg.Path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			// 无法判断（权限/IO 抖动）时不动索引，避免误删正常记录
+			continue
+		}
+		if err := m.st.DeleteSegmentByPath(seg.Path); err != nil {
+			log.Printf("prune missing segment %s: %v", seg.Path, err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		log.Printf("prune: 已清理指向缺失文件的索引行 %d 条", removed)
+	}
+}
+
+// removeSegmentRowsForPath 删除指向某个不可播放分段文件的索引行。
+// 索引循环按文件名推断时间入库，可能把仍在录制的分段（尚无 moov）写进库；
+// 只删文件不删行的话，回放仍会按库里那一行去打开坏文件并报 moov 缺失。
+func removeSegmentRowsForPath(st *store.Store, path string) {
+	if st == nil {
+		return
+	}
+	if err := st.DeleteSegmentByPath(path); err != nil {
+		log.Printf("sweep: 删除分段索引行失败 %s: %v", path, err)
+	}
 }
 
 // brokenSweepMinAge 是「半截文件」的最小存活时间：太新的文件可能正在写，
@@ -1652,6 +1715,9 @@ func (m *Manager) sweepBrokenSegments() {
 		if hasMoovBox(p, info.ModTime()) {
 			return nil
 		}
+		// 先删数据库行再删文件：否则回放仍会按已入库的分段去打开这个
+		// 没有 moov 的文件，报「moov atom not found」。
+		removeSegmentRowsForPath(m.st, p)
 		if err := os.Remove(p); err != nil {
 			log.Printf("sweep remove %s: %v", p, err)
 			return nil

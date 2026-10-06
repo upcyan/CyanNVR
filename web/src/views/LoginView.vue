@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { useAuthStore } from '../stores/auth'
-import { apiResetConfirm, apiResetRequest, apiResetVerify, backendOk } from '../api'
+import { apiResetConfirm, apiResetRequest, apiResetVerify, connState, isBackend, refreshConnection } from '../api'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -12,6 +12,19 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
+
+/* 连接状态驱动界面提示：
+   · offline  —— 服务器不可达，给出明确提示与重试入口（不再谎称「演示模式」）；
+   · connected —— 后端可用，才显示「忘记密码」（该流程需要服务端生成重置码）。 */
+const offline = computed(() => connState.value === 'offline')
+const checking = computed(() => connState.value === 'checking')
+const connected = computed(() => isBackend())
+
+async function retryConnection() {
+  const ok = await refreshConnection()
+  if (ok) showToast('已连接服务器')
+  else showToast('仍无法连接服务器')
+}
 
 async function submit() {
   if (!username.value.trim() || !password.value) {
@@ -26,7 +39,8 @@ async function submit() {
     const redirect = raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('://') ? raw : '/live'
     router.replace(redirect)
   } catch (e: any) {
-    showToast(e?.response?.data?.error || '登录失败')
+    // 连接类错误由 auth.login 直接抛出 Error（无 response），也要显示出来
+    showToast(e?.response?.data?.error || e?.message || '登录失败')
   } finally {
     loading.value = false
   }
@@ -177,10 +191,12 @@ function closeReset() {
     </div>
 
     <van-cell-group inset class="form">
-      <van-field v-model="username" label="用户名" placeholder="请输入用户名" />
+      <van-field v-model="username" name="username" autocomplete="username" autocapitalize="none" label="用户名" placeholder="请输入用户名" />
       <van-field
         v-model="password"
         type="password"
+        name="password"
+        autocomplete="current-password"
         label="密码"
         placeholder="请输入密码"
         @keyup.enter="submit"
@@ -192,11 +208,15 @@ function closeReset() {
       <van-button plain block round style="margin-top: 10px" @click="$router.push('/server')">
         服务器设置
       </van-button>
-      <button v-if="backendOk" class="forgot" type="button" @click="openReset">忘记密码？</button>
+      <button v-if="connected" class="forgot" type="button" @click="openReset">忘记密码？</button>
     </div>
 
-    <p class="tip" v-if="!backendOk">
-      当前为演示模式（未检测到后端），任意账号密码均可进入
+    <p class="tip offline" v-if="offline">
+      无法连接服务器，请检查网络或
+      <a href="#/server">服务器设置</a>。
+      <button type="button" class="retry" :disabled="checking" @click="retryConnection">
+        {{ checking ? '正在重试…' : '重试连接' }}
+      </button>
     </p>
 
     <!-- 重置密码：1 生成重置码 → 2 验证换凭证 → 3 设置新密码 -->
@@ -353,6 +373,30 @@ body.light .login::before {
   position: relative;
   z-index: 1;
 }
+.tip.offline {
+  color: var(--nvr-warning);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.6;
+}
+.tip.offline a { color: var(--nvr-accent); }
+.retry {
+  min-height: 40px;
+  padding: 6px 16px;
+  border-radius: var(--nvr-radius-full);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text);
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+  cursor: pointer;
+}
+.retry:disabled { opacity: .6; cursor: progress; }
+.tip {
+  position: relative;
+  z-index: 1;
+}
 /* 关怀模式：登录页字号偏小，按钮和品牌区需放大；form 限宽让大屏更易扫读 */
 :global(body.care .login .brand h1) {
   font-size: calc(30px * var(--nvr-font-scale, 1));
@@ -411,6 +455,30 @@ body.light .login::before {
   width: 100%;
   max-width: 420px;
   margin: 0 auto;
+}
+.form :deep(.van-field__control) {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--nvr-border);
+  border-radius: 12px;
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.form :deep(.van-field__control:focus) {
+  outline: 2px solid var(--nvr-accent);
+  outline-offset: 1px;
+}
+.form :deep(input:-webkit-autofill) {
+  -webkit-text-fill-color: var(--nvr-text);
+  caret-color: var(--nvr-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--nvr-panel-2) inset;
+  border-radius: 12px;
+}
+.form :deep(input:autofill) {
+  border-radius: 12px;
 }
 .btns {
   width: 100%;

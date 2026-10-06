@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
@@ -13,7 +13,6 @@ import {
   fetchUsers,
   isBackend,
   updateUser,
-  saveAppSettings,
   type ManagedUser,
   type StatusInfo,
 } from '../api'
@@ -21,6 +20,7 @@ import {
 const store = useSettingsStore()
 const auth = useAuthStore()
 const router = useRouter()
+const buildId = __APP_BUILD_ID__
 
 /* ── 设置分组折叠状态 ──
    高频分组默认展开，低频分组默认收起，减少首屏认知负荷。
@@ -50,6 +50,73 @@ function toggleGroup(key: string) {
 }
 function isCollapsed(key: string) {
   return collapsedGroups.value.has(key)
+}
+
+/* ── 桌面端左侧分区导航（>=900px）──
+   宽屏下设置项平铺成「卡片流」需要不断滚动才能找目标分组；
+   改为「左侧固定分区导航 + 右侧扁平表单区」：一次点击直达分组，
+   当前分组高亮。窄屏（<1200px）完全走原有单列布局，导航不渲染。 */
+const isDesktopSettings = ref(false)
+const activeSection = ref('display')
+const pageRef = ref<HTMLElement | null>(null)
+let mqSettings: MediaQueryList | null = null
+function onSettingsMqChange(e: MediaQueryListEvent | MediaQueryList) {
+  isDesktopSettings.value = e.matches
+}
+// 分组键与模板里 set-block 的 key 一一对应；可见性条件必须与模板保持一致，
+// 否则导航会出现「点了没反应」的死项（如非管理员的登录安全/用户管理）。
+const navGroups = computed<Array<{ key: string; label: string; icon: string }>>(() => {
+  const items = [
+    { key: 'display', label: '显示与无障碍', icon: 'eye-o' },
+    { key: 'notify', label: '通知', icon: 'bell' },
+    { key: 'server', label: '服务器', icon: 'desktop-o' },
+  ]
+  if (auth.isAdmin) items.push({ key: 'security', label: '登录安全', icon: 'shield-o' })
+  if (isBackend() && auth.isAdmin) items.push({ key: 'users', label: '用户管理', icon: 'friends-o' })
+  items.push(
+    { key: 'storage', label: '存储管理', icon: 'cluster-o' },
+    { key: 'record', label: '录像策略', icon: 'video-o' },
+    { key: 'ai', label: 'AI 画面识别', icon: 'photo-o' },
+  )
+  return items
+})
+function persistCollapsed() {
+  localStorage.setItem('nvr_settings_collapsed', JSON.stringify([...collapsedGroups.value]))
+}
+function goToSection(key: string) {
+  if (collapsedGroups.value.has(key)) {
+    collapsedGroups.value.delete(key)
+    persistCollapsed()
+  }
+  activeSection.value = key
+  // 展开是 v-show 切换，等一帧再测量位置，否则滚动到折叠前的高度
+  nextTick(() => {
+    const el = document.getElementById('sec-' + key)
+    const container = pageRef.value
+    if (!el || !container) return
+    // 用「两者视口顶边之差 + 当前滚动量」换算目标滚动位置。
+    // 不用 el.offsetTop - container.offsetTop：offsetTop 是相对 offsetParent 的，
+    // 而本页的 offsetParent 实际是 .app-shell（不是滚动容器），两者坐标系不同，
+    // 只是当前布局恰好让 .app-shell 顶边与容器顶边重合才没出错。
+    // 另外滚动会被容器高度钳制：目标分组靠页面底部时无法滚到顶边，
+    // 此时浏览器停在最大滚动量，属于正确行为（由界面测试断言「可见」而非「贴顶」）。
+    const delta = el.getBoundingClientRect().top - container.getBoundingClientRect().top
+    container.scrollTo({ top: container.scrollTop + delta, behavior: 'smooth' })
+  })
+}
+// 滚动时高亮「最靠近顶部」的分组，让导航始终反映当前阅读位置
+function onSettingsScroll() {
+  if (!isDesktopSettings.value) return
+  const container = pageRef.value
+  if (!container) return
+  const base = container.getBoundingClientRect().top
+  let current = navGroups.value[0]?.key ?? 'display'
+  for (const g of navGroups.value) {
+    const el = document.getElementById('sec-' + g.key)
+    if (!el) continue
+    if (el.getBoundingClientRect().top - base <= 32) current = g.key
+  }
+  activeSection.value = current
 }
 
 // entering from the tabbar there may be no history to go back to
@@ -144,16 +211,28 @@ async function loadStatus() {
   }
 }
 
+/* 弹窗代次：打开时 +1，关闭/停用时 +1 使在途的打开流程失效。
+   此前 openStatus 先 await 两次请求、最后才注册轮询——若用户在这 1.2 秒内
+   关闭弹窗，异步流程仍会在「已关闭」状态下把 5 秒轮询装上，导致弹窗关着
+   却持续请求 /api/status。 */
+let statusEpoch = 0
+
 // CPU 是「两次采样之间的占用」，单次调用拿不到，因此连采两次
 async function openStatus() {
+  const epoch = ++statusEpoch
   showStatus.value = true
   await loadStatus()
+  if (epoch !== statusEpoch || !showStatus.value) return
   await new Promise((r) => setTimeout(r, 1200))
+  if (epoch !== statusEpoch || !showStatus.value) return
   await loadStatus()
+  if (epoch !== statusEpoch || !showStatus.value) return
   closeStatusTimer()
   statusTimer = window.setInterval(loadStatus, 5000)
 }
 function closeStatusTimer() {
+  // 让在途的 openStatus 失效
+  statusEpoch++
   if (statusTimer) {
     window.clearInterval(statusTimer)
     statusTimer = undefined
@@ -184,10 +263,39 @@ async function loadAboutVersion() {
 }
 
 onMounted(() => {
-  store.loadFromServer().then(initTrustHours)
+  // 设置加载完成后才能做「自动补默认模型」这类写操作：
+  // 写操作会整份 PUT，必须建立在服务端真实值之上，否则会用前端默认值
+  // 覆盖用户已保存的设置（AI 开关被改回关闭即由此引起）。
+  store.loadFromServer().then(() => {
+    initTrustHours()
+  })
   loadUsers()
   loadAboutVersion()
   initTrustHours()
+  // 桌面分区导航：>=1200px 才启用（与 CSS 断点一致，避免「导航在但布局没切」）
+  mqSettings = window.matchMedia('(min-width: 900px)')
+  onSettingsMqChange(mqSettings)
+  mqSettings.addEventListener('change', onSettingsMqChange)
+})
+
+onUnmounted(() => {
+  mqSettings?.removeEventListener('change', onSettingsMqChange)
+  mqSettings = null
+  closeStatusTimer()
+})
+
+/* KeepAlive：设置页被缓存时 onUnmounted 不会触发，
+   若此时「运行状态」弹窗仍开着，5 秒轮询会一直空转。
+   停用时停止轮询；再次激活且弹窗仍开着则恢复。 */
+onDeactivated(() => {
+  closeStatusTimer()
+})
+onActivated(() => {
+  void store.loadFromServer().then(initTrustHours)
+  if (showStatus.value) {
+    closeStatusTimer()
+    statusTimer = window.setInterval(loadStatus, 5000)
+  }
 })
 
 const modeOptions = [
@@ -338,19 +446,24 @@ const backendHint = computed(() => {
   return ''
 })
 
+/**
+ * 服务端 AI 列表就绪后，若用户还没选过模型，补一个可用默认值。
+ *
+ * 为什么不能直接在 loadAIModels 里补：loadAIModels 与 loadFromServer 并行，
+ * 它可能先返回，此时 store 里还是前端默认值（ai.enabled=false）。一旦在
+ * 这个时刻调用 store.set()，store 会对非本地键做整份 PUT，把用户已保存的
+ * AI 开关覆盖成关闭——实测打开设置页 +53ms 就发出 PUT enabled=false，
+ * 表现为「每次打开 AI 识别都是关闭状态」。
+ * 因此这里改为等 store.loaded（服务端设置已合并）之后再补。
+ */
+// Loading the catalog is read-only. Model selection is persisted only after an explicit user action.
+
 async function loadAIModels() {
   try {
     const { data: j } = await http.get('/api/ai/models')
     aiInfo.value = j
     aiError.value = ''
     aiModels.value = (j.models || []).map((p: string) => p.split(/[\\/]/).pop())
-    if (!s.ai.modelPath && aiModels.value.length) {
-      const def =
-        aiModels.value.find(m => m.includes('yolo11n')) ||
-        aiModels.value.find(m => m.includes('yolov8n')) ||
-        aiModels.value[0]
-      store.set({ ai: { ...s.ai, modelPath: def } })
-    }
   } catch (e: any) {
     // worker 未就绪（依赖缺失 / 正在启动）：给出原因并自动重试，
     // 启动成功后推理后端会自动刷出来，而不是永远显示「未知」。
@@ -435,10 +548,8 @@ async function saveTrustHours() {
   }
   trustHoursSaving.value = true
   try {
-    const cur = { ...(store.settings as any) }
-    cur.trustWindowHours = hours
-    const saved = await saveAppSettings(settingsToBackendLocal(cur))
-    Object.assign(store.settings, (saved as any).settings ?? saved)
+    store.set({ trustWindowHours: hours }, false)
+    await store.save()
     showToast(hours > 0 ? `已保存：登录后 ${hours} 小时内免重复登录` : '已关闭免登录')
   } catch (e: any) {
     showToast(e?.response?.data?.error || '保存失败')
@@ -447,31 +558,16 @@ async function saveTrustHours() {
   }
 }
 
-// settingsToBackend 的本地包装：store.settings 形状与 Settings 一致
-function settingsToBackendLocal(s: any) {
-  return {
-    retentionDays: s.retentionDays,
-    retentionSizeGB: s.retentionSizeGB,
-    recordMode: s.recordMode,
-    scheduleStart: s.scheduleStart,
-    scheduleEnd: s.scheduleEnd,
-    motionPush: s.motionPush,
-    offlinePush: s.offlinePush,
-    https: s.https,
-    httpsPort: s.httpsPort,
-    tlsCertMode: s.tlsCertMode,
-    tlsDomain: s.tlsDomain,
-    acmeEmail: s.acmeEmail,
-    ai: s.ai,
-    trustWindowHours: s.trustWindowHours ?? 0,
-  }
-}
-
 // ---- user management ----
 
 const users = ref<ManagedUser[]>([])
 const usersLoaded = ref(false)
 const showUserDialog = ref(false)
+// 用户级关怀生效位：当前登录账号被勾选了关怀模式（隐藏设置页字号/关怀开关）
+const userCareActive = computed(() => !!auth.user?.careMode)
+// 编辑弹窗中的关怀开关（即点即存，与改名/改密码一致）
+const userCareDraft = ref(false)
+const careAppliedMsg = ref('')
 const editingUser = ref<ManagedUser | null>(null)
 const userForm = ref({ username: '', password: '', role: 'user' as string })
 // 用户级免登录窗口草稿：''=未改；数字串=小时；'-1'=清除跟随全局
@@ -507,9 +603,31 @@ function openEditUser(u: ManagedUser) {
   editingUser.value = u
   userForm.value = { username: u.username, password: '', role: u.role }
   userTrustText.value = u.trustWindowHours == null ? '' : String(u.trustWindowHours)
+  userCareDraft.value = !!u.careMode
   trustAppliedId.value = ''
   trustAppliedMsg.value = ''
+  careAppliedMsg.value = ''
   showUserDialog.value = true
+}
+
+// 保存该用户的关怀模式：开启后其登录即进入关怀界面
+async function applyUserCare() {
+  const u = editingUser.value
+  if (!u) return
+  try {
+    const { data } = await http.put(`/api/users/${u.id}`, { careMode: userCareDraft.value })
+    await loadUsers()
+    editingUser.value = { ...u, careMode: userCareDraft.value }
+    if (auth.user && auth.user.id === u.id) {
+      await auth.refreshMe()
+    }
+    careAppliedMsg.value = userCareDraft.value
+      ? '已开启：该用户下次打开应用即进入关怀模式'
+      : '已关闭：该用户恢复常规界面与字号设置'
+    showToast((data as any)?.ok ? '已保存' : '已保存')
+  } catch (e: any) {
+    showToast(e?.response?.data?.error || '保存关怀模式失败')
+  }
 }
 
 // 保存该用户的免登录窗口：空串=清除跟随全局；数字=专属小时数
@@ -636,12 +754,34 @@ async function removeUser(u: ManagedUser) {
 </script>
 
 <template>
-  <div class="page settings-page">
+  <div ref="pageRef" class="page settings-page" :class="{ 'has-sidenav': isDesktopSettings }" @scroll.passive="onSettingsScroll">
     <van-nav-bar title="设置" left-arrow @click-left="goBack" />
 
-    <div class="settings-columns">
+    <!-- 桌面端分区导航：窄屏不渲染（完全走原有单列布局） -->
+    <nav v-if="isDesktopSettings" class="settings-nav" aria-label="设置分区导航">
+      <button
+        v-for="g in navGroups"
+        :key="g.key"
+        type="button"
+        class="settings-nav-item"
+        :class="{ on: activeSection === g.key }"
+        :aria-current="activeSection === g.key ? 'true' : undefined"
+        @click="goToSection(g.key)"
+      >
+        <van-icon :name="g.icon" size="16" />
+        <span>{{ g.label }}</span>
+      </button>
+    </nav>
+
+    <div v-if="isBackend() && (!store.loaded || store.loading || store.error || store.storageError)" class="settings-load-state" role="status">
+      <span v-if="store.error">设置读取失败：{{ store.error }}。AI 状态尚未确认，不代表已关闭。</span>
+      <span v-else-if="!store.loaded || store.loading">正在读取服务器设置…</span>
+      <span v-else>{{ store.storageError }}</span>
+      <van-button size="small" :loading="store.loading" @click="store.loadFromServer()">重试读取</van-button>
+    </div>
+    <div class="settings-columns" :inert="isBackend() && (!store.loaded || store.loading || !!store.error) ? true : undefined">
       <section class="settings-column" aria-label="显示、通知与账户">
-    <div class="set-block">
+    <div id="sec-display" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('display')" @keydown.enter.prevent="toggleGroup('display')" @keydown.space.prevent="toggleGroup('display')" @click="toggleGroup('display')">
         <span class="set-block-title">显示与无障碍</span>
         <van-icon :name="isCollapsed('display') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -652,7 +792,10 @@ async function removeUser(u: ManagedUser) {
           <van-switch aria-label="深色模式" :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
         </template>
       </van-cell>
-      <van-cell v-if="!s.careMode" title="字体大小" label="立即生效" class="opt-cell">
+      <!-- 用户级关怀（管理员在用户管理为本账号勾选）生效时，
+           字号/关怀两项由用户资料控制，本地开关隐藏以免互相覆盖 -->
+      <van-cell v-if="userCareActive" title="关怀模式已开启" label="已由管理员在本账号的用户设置中启用；如需调整请联系管理员" />
+      <van-cell v-if="!s.careMode && !userCareActive" title="字体大小" label="立即生效" class="opt-cell">
         <template #value>
           <div class="font-opts">
             <button
@@ -670,7 +813,7 @@ async function removeUser(u: ManagedUser) {
           </div>
         </template>
       </van-cell>
-      <van-cell title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
+      <van-cell v-if="!userCareActive" title="关怀模式" label="更大字体与按钮、更高对比度，方便长辈使用">
         <template #right-icon>
           <van-switch aria-label="关怀模式" :model-value="s.careMode" @update:model-value="setCareMode" />
         </template>
@@ -684,7 +827,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block">
+    <div id="sec-notify" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('notify')" @keydown.enter.prevent="toggleGroup('notify')" @keydown.space.prevent="toggleGroup('notify')" @click="toggleGroup('notify')">
         <span class="set-block-title">通知</span>
         <van-icon :name="isCollapsed('notify') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -703,7 +846,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block">
+    <div id="sec-server" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('server')" @keydown.enter.prevent="toggleGroup('server')" @keydown.space.prevent="toggleGroup('server')" @click="toggleGroup('server')">
         <span class="set-block-title">服务器</span>
         <van-icon :name="isCollapsed('server') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -720,7 +863,7 @@ async function removeUser(u: ManagedUser) {
 
     <!-- 免登录信任窗口：仅管理员可见。token 有效期内本就免登录；
          这里配置的是 token 过期后的静默续期窗口。 -->
-    <div class="set-block" v-if="auth.isAdmin">
+    <div id="sec-security" class="set-block" v-if="auth.isAdmin">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('security')" @keydown.enter.prevent="toggleGroup('security')" @keydown.space.prevent="toggleGroup('security')" @click="toggleGroup('security')">
         <span class="set-block-title">登录安全</span>
         <van-icon :name="isCollapsed('security') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -744,7 +887,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block" v-if="isBackend() && auth.isAdmin">
+    <div id="sec-users" class="set-block" v-if="isBackend() && auth.isAdmin">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('users')" @keydown.enter.prevent="toggleGroup('users')" @keydown.space.prevent="toggleGroup('users')" @click="toggleGroup('users')">
         <span class="set-block-title">用户管理</span>
         <van-icon :name="isCollapsed('users') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -786,7 +929,7 @@ async function removeUser(u: ManagedUser) {
 
       </section>
       <section class="settings-column" aria-label="存储、录像与识别">
-    <div class="set-block">
+    <div id="sec-storage" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('storage')" @keydown.enter.prevent="toggleGroup('storage')" @keydown.space.prevent="toggleGroup('storage')" @click="toggleGroup('storage')">
         <span class="set-block-title">存储管理</span>
         <van-icon :name="isCollapsed('storage') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -860,7 +1003,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block">
+    <div id="sec-record" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('record')" @keydown.enter.prevent="toggleGroup('record')" @keydown.space.prevent="toggleGroup('record')" @click="toggleGroup('record')">
         <span class="set-block-title">录像策略</span>
         <van-icon :name="isCollapsed('record') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -887,7 +1030,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div class="set-block">
+    <div id="sec-ai" class="set-block">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('ai')" @keydown.enter.prevent="toggleGroup('ai')" @keydown.space.prevent="toggleGroup('ai')" @click="toggleGroup('ai')">
         <span class="set-block-title">AI 画面识别</span>
         <van-icon :name="isCollapsed('ai') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -1036,11 +1179,11 @@ async function removeUser(u: ManagedUser) {
       </section>
     </div>
     <div v-if="appVersion" class="about-version">
-      CyanNVR v{{ appVersion }}
+      CyanNVR v{{ appVersion }} · 界面 {{ buildId }}
     </div>
 
     <div class="save-area">
-      <van-button type="primary" block round :loading="saving" @click="save">
+      <van-button type="primary" block round :loading="saving" :disabled="isBackend() && (!store.loaded || store.loading || !!store.error)" @click="save">
         保存设置
       </van-button>
       <van-button
@@ -1177,6 +1320,16 @@ async function removeUser(u: ManagedUser) {
           <van-button plain type="primary" size="small" round @click="applyUserTrust">应用免登录窗口</van-button>
           <span v-if="trustAppliedId === editingUser.id" class="trust-applied">{{ trustAppliedMsg }}</span>
         </div>
+        <!-- 用户级关怀模式：该账号登录即进入大字关怀界面，
+             且其设置页不再展示「字体大小」「关怀模式」两项 -->
+        <van-field v-if="editingUser" label="关怀模式" center clearable>
+          <template #input>
+            <van-switch v-model="userCareDraft" aria-label="该用户关怀模式" @change="applyUserCare" />
+          </template>
+        </van-field>
+        <div v-if="editingUser && careAppliedMsg" class="field-action">
+          <span class="trust-applied">{{ careAppliedMsg }}</span>
+        </div>
       </van-cell-group>
       <div class="dialog-actions">
         <van-button v-if="editingUser" plain block round @click="closeUserDialog">完成（角色已随选择即时保存）</van-button>
@@ -1196,6 +1349,12 @@ async function removeUser(u: ManagedUser) {
 </template>
 
 <style scoped>
+.settings-load-state { padding: 12px 16px; color: var(--nvr-warning); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+@media (min-width: 900px) {
+  .settings-page.has-sidenav:has(.settings-load-state) > .settings-load-state { grid-row: 2; }
+  .settings-page.has-sidenav:has(.settings-load-state) > .settings-nav,
+  .settings-page.has-sidenav:has(.settings-load-state) > .settings-columns { grid-row: 3; }
+}
 .settings-page {
   padding-bottom: 30px;
 }
@@ -1675,21 +1834,114 @@ async function removeUser(u: ManagedUser) {
     margin-top: 0 !important;
   }
   .set-block { margin-bottom: 20px; }
-  .set-block :deep(.van-cell-group) {
-    border: 1px solid var(--nvr-border);
-    border-radius: var(--nvr-radius-md);
-    overflow: hidden;
-  }
+  /* 注：这里不再给 .van-cell-group 加边框+圆角。
+     桌面端统一走下方 >=900px 的「扁平表单工作区」，任何卡片外壳
+     （边框/圆角/阴影）都会与去卡片化的目标冲突。 */
   .settings-page :deep(.van-cell__title) { min-width: 0; }
   .settings-page :deep(.van-cell__label) { line-height: 1.6; }
 }
-@media (min-width: 1200px) {
-  .settings-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
-  .settings-page :deep(.van-cell:has(.days-combo)),
-  .settings-page :deep(.van-cell:has(.slider-box)) { flex-wrap: wrap; gap: 10px; }
-  .settings-page :deep(.van-cell:has(.days-combo) > .van-cell__value),
-  .settings-page :deep(.van-cell:has(.slider-box) > .van-cell__value) { flex: 0 0 100%; }
-  .settings-page .slider-box { justify-content: flex-start; }
+@media (min-width: 900px) {
+  /* ── 桌面端：分区导航 + 扁平表单工作区（取代原两列卡片流）──
+     原先是「两列卡片流」：每个分组自成一张卡片、分两列平铺，宽屏下视线要在
+     两条纵列间来回跳，且要不断滚动才能找到目标分组。
+     现改为「左侧固定分区导航 + 右侧单列扁平表单」：
+     · 导航一次点击直达分组，滚动时自动高亮当前阅读位置；
+     · 右侧去掉卡片外壳（无边框/无圆角卡片），改为带分隔线的扁平区块，
+       视觉上是一条连续表单流，而不是一堆并列卡片；
+     · 单列保证「标题 → 控件」的阅读方向唯一。 */
+  .settings-page.has-sidenav {
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
+    /* 第 2 行必须按内容高度（auto），不能用 minmax(0, 1fr)：
+       用 1fr 时该行被固定为「可视高度」，而 .settings-columns 的内容
+       远高于它（实测 1595px vs 633px，overflow 可见），内容会溢出到
+       下一行区域，与底部的保存栏/版本行重叠——保存栏因此盖住
+       「免登录窗口」等表单文字。改成 auto 后内容与保存栏回到正常文档流，
+       页面整体滚动，保存栏的 sticky bottom 才符合预期。 */
+    grid-template-rows: auto auto;
+    column-gap: 28px;
+    align-content: start;
+  }
+  .settings-page.has-sidenav > .van-nav-bar,
+  .settings-page.has-sidenav > .settings-load-state,
+  .settings-page.has-sidenav > .about-version,
+  .settings-page.has-sidenav > .save-area { grid-column: 1 / -1; }
+
+  .settings-nav {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: start;
+    position: sticky;
+    top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    background: var(--nvr-panel);
+    border: 1px solid var(--nvr-border);
+    border-radius: var(--nvr-radius-md);
+  }
+  .settings-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--nvr-radius-sm);
+    background: transparent;
+    color: var(--nvr-text-2);
+    font-size: calc(13px * var(--nvr-font-scale, 1));
+    text-align: left;
+    cursor: pointer;
+  }
+  .settings-nav-item:hover { background: var(--nvr-panel-2); color: var(--nvr-text); }
+  .settings-nav-item.on {
+    background: var(--nvr-accent-soft-2);
+    color: var(--nvr-accent);
+    font-weight: 600;
+  }
+  .settings-nav-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 右侧：单列扁平；两段 settings-column 依次堆叠，顺序与导航一致 */
+  .settings-page.has-sidenav .settings-columns {
+    grid-column: 2;
+    grid-row: 2;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    max-width: 980px;
+    margin: 0;
+  }
+  .settings-page.has-sidenav .set-block { margin-bottom: 30px; }
+  /* 去卡片化：分组变成「带下划线的标题 + 扁平行」，不再是独立卡片 */
+  .settings-page.has-sidenav .set-block-header {
+    padding: 4px 2px 10px;
+    background: transparent;
+    border-bottom: 1px solid var(--nvr-border);
+    border-radius: 0;
+  }
+  .settings-page.has-sidenav .set-block-header:active { background: transparent; }
+  .settings-page.has-sidenav .set-block-title { font-size: 15px; }
+  .settings-page.has-sidenav .set-block :deep(.van-cell-group),
+  .settings-page.has-sidenav .set-block:has(.set-block-header) :deep(.van-cell-group) {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  /* 行只靠分隔线区分，不再嵌套卡片 */
+  .settings-page.has-sidenav .set-block :deep(.van-cell) {
+    background: transparent;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  .settings-page.has-sidenav .set-block :deep(.van-cell)::after {
+    left: 2px;
+    right: 2px;
+  }
+  /* 窄控件行仍是「标题左、控件右」；仅在真的放不下时才换行 */
+  .settings-page.has-sidenav :deep(.van-cell:has(.days-combo)),
+  .settings-page.has-sidenav :deep(.van-cell:has(.slider-box)) { flex-wrap: wrap; gap: 10px; }
 }
 /* 推理后端标签：GPU 类后端用醒目色，CPU 用中性色，避免用户误以为已开硬件加速 */
 .backend-tag {

@@ -110,7 +110,7 @@ semver_bump() {
 source_hash() {
     local pathspec="$1"
     {
-        git -C "$PROJECT_ROOT" ls-files -z -- $pathspec 2>/dev/null |
+        git -C "$PROJECT_ROOT" ls-files --cached --others --exclude-standard -z -- $pathspec 2>/dev/null |
             grep -zv '^server/version\.go$' |
             tr '\0' '\n'
     } | sort | while IFS= read -r f; do
@@ -302,7 +302,16 @@ dist_stamp_ok() {
     # 主包里必然出现 CoreVersion，但引号形式不保证：rolldown 压出来的是反引号
     # 模板字面量（let e=`1.7.3`），也曾见过单/双引号。用数字边界匹配，避免
     # 误把 1.7.30、11.7.3 当成命中。
-    grep -qE "(^|[^0-9.])${CORE_VERSION}([^0-9.]|$)" "$DIST"/assets/index-*.js 2>/dev/null
+    if [ -f "$DIST/build.json" ]; then
+        python3 - "$DIST/build.json" "$CORE_VERSION" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+sys.exit(0 if data.get('version') == sys.argv[2] and data.get('buildId') else 1)
+PY
+    else
+        grep -qE "(^|[^0-9.])${CORE_VERSION}([^0-9.]|$)" "$DIST"/assets/index-*.js 2>/dev/null
+    fi
 }
 if [ "$DIST_STALE" = "0" ] && ! dist_stamp_ok; then
     DIST_STALE=1
@@ -437,34 +446,10 @@ if grep -q "bell-o" "$DIST"/assets/index-*.js 2>/dev/null; then
     error "前端产物仍含 Vant 不存在的 bell-o 图标，产物过期，请检查构建流程"
 fi
 
-# ── 彻底禁用前端缓存（构建期覆写，不依赖插件版本）──
-# 背景：Service Worker 会拦截导航并从预缓存供旧页面，普通 F5 绕不过去；
-# sw.js 无缓存头还会被浏览器启发式缓存拖延更新——局域网 NVR 排错成本
-# 远高于离线收益，直接禁用：
-#   sw.js         -> 透传型（仅承担「旧 sw 换代」的触发作用，不做任何缓存）
-#   registerSW.js -> 注销全部历史 SW 并清空 CacheStorage（解掉已卡死的客户端）
-cat > "$DIST/sw.js" <<'SWEOF'
-/* CyanNVR: 缓存已禁用 —— 透传型 Service Worker，仅用于触发旧 sw 换代 */
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });
-SWEOF
-cat > "$DIST/registerSW.js" <<'SWEOF'
-/* CyanNVR: 卸载历史 Service Worker 并清空预缓存 —— 所有请求直达服务器 */
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', async () => {
-    try {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      for (const r of regs) await r.unregister();
-      if (window.caches) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k)));
-      }
-    } catch (_) { /* ignore */ }
-  });
-}
-SWEOF
-info "已覆写 sw.js/registerSW.js（缓存禁用）"
+# Cache migration scripts are produced and tested by Vite.
+# Never replace them here: the old override wiped unrelated origin caches.
+[ -f "$DIST/build.json" ] && [ -f "$DIST/sw.js" ] || error "缺少构建指纹或缓存迁移产物"
+info "保留已测试的限定范围缓存迁移脚本与构建指纹"
 
 # ── 2. 填充 app/ 目录 ──
 info "填充 app/ ..."
@@ -516,10 +501,13 @@ info "调用 fnpack 打包..."
 
 # 权限归一：目录必须可进入（755），否则 fnpack 复制文件时会 permission denied。
 # Docker 产物与部分工具会带回 000 权限，且 cp 会保留源权限。
-find "$SCRIPT_DIR" -type d -exec chmod 755 {} \; 2>/dev/null
-find "$SCRIPT_DIR" -type f -exec chmod 644 {} \; 2>/dev/null
-chmod 755 "$SCRIPT_DIR"/cmd/* "$SCRIPT_DIR/build-fpk.sh" 2>/dev/null
-chmod 755 "$SCRIPT_DIR/app/cyannvr" 2>/dev/null
+# Normalize generated staging files only, not other users' source/archived packages.
+find "$APP_DIR" -type d -exec chmod 755 {} \;
+find "$APP_DIR" -type f -exec chmod 644 {} \;
+chmod 755 "$APP_DIR/cyannvr"
+for lifecycle in "$SCRIPT_DIR"/cmd/*; do
+    [ -x "$lifecycle" ] || error "生命周期脚本不可执行: $lifecycle"
+done
 
 cd "$SCRIPT_DIR"
 rm -f "$SCRIPT_DIR/${APPNAME}.fpk"

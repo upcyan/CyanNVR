@@ -83,6 +83,8 @@ func (s *Store) migrate() error {
 		`ALTER TABLE devices ADD COLUMN retention_size_gb INTEGER NOT NULL DEFAULT 0`,
 		// 免登录信任窗口（小时）：NULL=跟随全局设置，>=0 为用户专属覆盖
 		`ALTER TABLE users ADD COLUMN trust_window_hours INTEGER`,
+		// 用户级关怀模式：登录即进入大字关怀界面
+		`ALTER TABLE users ADD COLUMN care_mode INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, a := range alters {
 		if _, err := s.db.Exec(a); err != nil {
@@ -135,27 +137,29 @@ func (s *Store) CreateUser(u models.User) error {
 }
 
 func (s *Store) GetUserByName(name string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users WHERE username=?`, name)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours, care_mode FROM users WHERE username=?`, name)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(id string) (*models.User, error) {
-	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours, care_mode FROM users WHERE id=?`, id)
 	return scanUser(row)
 }
 
 func (s *Store) ListUsers() ([]models.User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours FROM users ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, role, created_at, password_changed_at, uid, trust_window_hours, care_mode FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []models.User
+	// 非 nil 空切片：nil 经 JSON 序列化成 null，App 等严格客户端会解析失败
+	out := []models.User{}
 	for rows.Next() {
 		u := models.User{}
 		var changed sql.NullTime
 		var tw sql.NullInt64
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw); err != nil {
+		var care sql.NullInt64
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw, &care); err != nil {
 			return nil, err
 		}
 		if changed.Valid {
@@ -164,9 +168,23 @@ func (s *Store) ListUsers() ([]models.User, error) {
 		if tw.Valid {
 			u.TrustWindowHours = &tw.Int64
 		}
+		u.CareMode = care.Int64 != 0
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// UpdateUserCareMode 设置用户级关怀模式。
+func (s *Store) UpdateUserCareMode(id string, on bool) error {
+	_, err := s.db.Exec(`UPDATE users SET care_mode=? WHERE id=?`, boolInt(on), id)
+	return err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // UpdateUserPassword 写入新密码哈希，并把 password_changed_at 记为当前时间。
@@ -230,7 +248,8 @@ func scanUser(row *sql.Row) (*models.User, error) {
 	u := models.User{}
 	var changed sql.NullTime
 	var tw sql.NullInt64
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw)
+	var care sql.NullInt64
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &changed, &u.UID, &tw, &care)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -243,6 +262,7 @@ func scanUser(row *sql.Row) (*models.User, error) {
 	if tw.Valid {
 		u.TrustWindowHours = &tw.Int64
 	}
+	u.CareMode = care.Int64 != 0
 	return &u, nil
 }
 
@@ -257,7 +277,8 @@ func (s *Store) ListDevices() ([]models.Device, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []models.Device
+	// 非 nil 空切片：nil 经 JSON 序列化成 null，App 等严格客户端会解析失败
+	out := []models.Device{}
 	for rows.Next() {
 		d, err := scanDevice(rows)
 		if err != nil {
@@ -449,8 +470,29 @@ func (s *Store) SegmentsCountOnDay(deviceID string, dayStart, dayEnd time.Time) 
 	return n, err
 }
 
+// DeleteSegmentByPath removes an index row whose recording file is unusable.
+// The indexer could insert a row for a segment still being written (no moov yet),
+// and playback then opens an unplayable file and reports "moov atom not found".
+func (s *Store) DeleteSegmentByPath(path string) error {
+	_, err := s.db.Exec(`DELETE FROM segments WHERE path=?`, path)
+	return err
+}
+
+// RecentSegments returns segments starting at or after since, for a bounded
+// consistency check of the index against the filesystem.
+func (s *Store) RecentSegments(since time.Time) ([]models.RecordingSegment, error) {
+	rows, err := s.db.Query(`SELECT id, device_id, start, end, path FROM segments WHERE start >= ?`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSegments(rows)
+}
+
 func scanSegments(rows *sql.Rows) ([]models.RecordingSegment, error) {
-	var out []models.RecordingSegment
+	// 非 nil 空切片：nil 经 gin 序列化成 null，前端对 null 调 .map 会抛
+	// TypeError，把「当日无录像」误报成「录像加载失败」
+	out := []models.RecordingSegment{}
 	for rows.Next() {
 		seg := models.RecordingSegment{}
 		if err := rows.Scan(&seg.ID, &seg.DeviceID, &seg.Start, &seg.End, &seg.Path); err != nil {
@@ -542,7 +584,8 @@ func (s *Store) CountEvents(deviceID, eventType string, dayStart, dayEnd *time.T
 }
 
 func scanEvents(rows *sql.Rows) ([]models.Event, error) {
-	var out []models.Event
+	// 非 nil 空切片：nil 经 JSON 序列化成 null，App 等严格客户端会解析失败
+	out := []models.Event{}
 	for rows.Next() {
 		e := models.Event{}
 		var vs, ve sql.NullTime

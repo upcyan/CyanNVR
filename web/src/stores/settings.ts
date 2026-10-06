@@ -1,139 +1,146 @@
 import { defineStore } from 'pinia'
 import { showToast } from 'vant'
 import type { Settings } from '../types'
-import {
-  fetchAppSettings,
-  fetchStorageInfo,
-  isBackend,
-  isDemoMode,
-  saveAppSettings,
-  setDemoMode,
-  type AppSettings,
-} from '../api'
+import { fetchAppSettings, fetchStorageInfo, isBackend, isDemoMode, patchAppSettings, setDemoMode, type AppSettings, type AppSettingsPatch } from '../api'
 import { defaultSettings } from '../mocks/generator'
 
 const SK = 'nvr_settings_local'
-
-interface LocalSettings {
-  theme: 'dark' | 'light'
-  fontSize: 'normal' | 'large' | 'xlarge'
-  careMode: boolean
-  demoMode: boolean
-}
-
+interface LocalSettings { theme: 'dark' | 'light'; fontSize: 'normal' | 'large' | 'xlarge'; careMode: boolean; demoMode: boolean }
+const LOCAL_KEYS = ['theme', 'fontSize', 'careMode', 'demoMode'] as const
 function loadLocal(): LocalSettings {
-  const def: LocalSettings = { theme: 'dark', fontSize: 'normal', careMode: false, demoMode: false }
+  const result: LocalSettings = { theme: 'dark', fontSize: 'normal', careMode: false, demoMode: false }
   try {
-    const raw = localStorage.getItem(SK)
-    if (raw) return { ...def, ...JSON.parse(raw) }
-  } catch {
-    /* ignore */
+    const raw = JSON.parse(localStorage.getItem(SK) || '{}')
+    if (raw?.theme === 'dark' || raw?.theme === 'light') result.theme = raw.theme
+    if (['normal', 'large', 'xlarge'].includes(raw?.fontSize)) result.fontSize = raw.fontSize
+    if (typeof raw?.careMode === 'boolean') result.careMode = raw.careMode
+    if (typeof raw?.demoMode === 'boolean') result.demoMode = raw.demoMode
+    // Migrate old whole-settings objects; never spread arbitrary local keys into server settings.
+    localStorage.setItem(SK, JSON.stringify(result))
+  } catch { /* invalid JSON/storage disabled: use display defaults only */ }
+  return result
+}
+function localOf(s: Settings): LocalSettings { return { theme: s.theme, fontSize: s.fontSize, careMode: s.careMode, demoMode: s.demoMode } }
+function saveLocal(s: LocalSettings) { try { localStorage.setItem(SK, JSON.stringify(s)) } catch { /* private mode */ } }
+function fromBackend(remote: AppSettings, local: LocalSettings): Settings {
+  return { ...defaultSettings(), ...remote, ai: { ...defaultSettings().ai, ...remote.ai }, ...local } as Settings
+}
+function toBackend(s: Settings): AppSettings {
+  return { retentionDays: s.retentionDays, retentionSizeGB: s.retentionSizeGB, recordMode: s.recordMode,
+    scheduleStart: s.scheduleStart, scheduleEnd: s.scheduleEnd, motionPush: s.motionPush, offlinePush: s.offlinePush,
+    https: s.https, httpsPort: s.httpsPort, tlsCertMode: s.tlsCertMode, tlsDomain: s.tlsDomain,
+    acmeEmail: s.acmeEmail, ai: s.ai, trustWindowHours: s.trustWindowHours ?? 0 }
+}
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
+/** Compute changed leaf fields, not the whole stale AI object. */
+function difference(base: AppSettings, next: AppSettings): AppSettingsPatch {
+  const patch: Record<string, unknown> = {}
+  for (const key of Object.keys(next) as (keyof AppSettings)[]) {
+    if (key === 'ai') {
+      const ai: Record<string, unknown> = {}
+      for (const field of Object.keys(next.ai) as (keyof AppSettings['ai'])[]) {
+        if (next.ai[field] !== base.ai[field]) ai[field] = next.ai[field]
+      }
+      if (Object.keys(ai).length) patch.ai = ai
+    } else if (next[key] !== base[key]) patch[key] = next[key]
   }
-  return def
+  return patch as AppSettingsPatch
 }
-
-function saveLocal(s: LocalSettings) {
-  localStorage.setItem(SK, JSON.stringify(s))
-}
-
-function backendToSettings(b: AppSettings, local: LocalSettings): Settings {
-  return {
-    retentionDays: b.retentionDays ?? 30,
-    retentionSizeGB: b.retentionSizeGB ?? 0,
-    recordMode: (b.recordMode as Settings['recordMode']) ?? 'continuous',
-    scheduleStart: b.scheduleStart ?? '08:00',
-    scheduleEnd: b.scheduleEnd ?? '20:00',
-    motionPush: b.motionPush ?? true,
-    offlinePush: b.offlinePush ?? true,
-    https: b.https ?? false,
-    httpsPort: b.httpsPort ?? 443,
-    tlsCertMode: b.tlsCertMode ?? '',
-    tlsDomain: b.tlsDomain ?? '',
-    acmeEmail: b.acmeEmail ?? '',
-    trustWindowHours: (b as any).trustWindowHours ?? 0,
-    ai: (b.ai ?? defaultSettings().ai) as Settings['ai'],
-    ...local,
-  }
-}
-
-function settingsToBackend(s: Settings): AppSettings {
-  return {
-    retentionDays: s.retentionDays,
-    retentionSizeGB: s.retentionSizeGB,
-    recordMode: s.recordMode,
-    scheduleStart: s.scheduleStart,
-    scheduleEnd: s.scheduleEnd,
-    motionPush: s.motionPush,
-    offlinePush: s.offlinePush,
-    https: s.https,
-    httpsPort: s.httpsPort,
-    tlsCertMode: s.tlsCertMode,
-    tlsDomain: s.tlsDomain,
-    acmeEmail: s.acmeEmail,
-    ai: s.ai,
-    trustWindowHours: (s as any).trustWindowHours ?? 0,
-  }
-}
+let epoch = 0
+let savingFlight: Promise<void> | null = null
+let loadingFlight: Promise<void> | null = null
 
 export const useSettingsStore = defineStore('settings', {
-  state: () => ({
-    settings: { ...defaultSettings(), ...loadLocal() } as Settings,
-    storage: { totalGB: 0, usedGB: 0 },
-    saving: false,
-    loaded: false,
-  }),
-  getters: {
-    theme: (s) => s.settings.theme,
-  },
+  state: () => ({ settings: { ...defaultSettings(), ...loadLocal() } as Settings,
+    storage: { totalGB: 0, usedGB: 0 }, saving: false, loading: false, loaded: false,
+    error: '', storageError: '', baseline: null as AppSettings | null }),
+  getters: { theme: s => s.settings.theme },
   actions: {
-    set(patch: Partial<Settings>) {
-      // 原地合并，保持 settings 对象引用不变。
-      // 若整对象替换，组件中 `const s = store.settings` 持有的旧引用会失效，
-      // 导致开关等控件的显示与实际值不一致。
-      Object.assign(this.settings, patch)
-      const local: LocalSettings = {
-        theme: this.settings.theme,
-        fontSize: this.settings.fontSize,
-        careMode: this.settings.careMode,
-        demoMode: this.settings.demoMode,
+    reset() {
+      epoch++
+      savingFlight = null
+      loadingFlight = null
+      // Keep the object reference used by SettingsView; remove identity-bound values.
+      Object.assign(this.settings, { ...defaultSettings(), ...loadLocal() })
+      this.loaded = false; this.loading = false; this.saving = false; this.baseline = null
+      this.error = ''; this.storageError = ''; this.storage = { totalGB: 0, usedGB: 0 }
+    },
+    set(patch: Partial<Settings>, autosave = true) {
+      const serverEdit = Object.keys(patch).some(key => !(LOCAL_KEYS as readonly string[]).includes(key))
+      if (serverEdit && isBackend() && !isDemoMode() && (!this.loaded || this.loading || !!this.error)) {
+        showToast('设置尚未读取成功，请先重试读取')
+        return
       }
-      saveLocal(local)
-      setDemoMode(this.settings.demoMode)
-      const localKeys = ['theme', 'fontSize', 'careMode', 'demoMode']
-      if (isBackend() && !isDemoMode() && Object.keys(patch).some(key => !localKeys.includes(key))) {
-        saveAppSettings(settingsToBackend(this.settings)).catch(() => showToast('设置保存失败，请重试'))
+      Object.assign(this.settings, patch)
+      saveLocal(localOf(this.settings)); setDemoMode(this.settings.demoMode)
+      if (autosave && serverEdit && isBackend() && !isDemoMode()) {
+        void this.flush().catch(() => showToast('设置保存失败，请重试'))
       }
     },
-    async loadFromServer() {
-      if (!isBackend() || isDemoMode()) return
-      try {
-        const [remote, sto] = await Promise.all([fetchAppSettings(), fetchStorageInfo()])
-        const local = loadLocal()
-        Object.assign(this.settings, backendToSettings(remote, local))
-        this.storage = sto
-        this.loaded = true
-      } catch {
-        /* ignore */
-      }
+    flush(): Promise<void> {
+      if (!isBackend() || isDemoMode()) return Promise.resolve()
+      if (!this.loaded || !this.baseline || this.loading || this.error) return Promise.reject(new Error('设置正在读取或读取失败，请重试后保存'))
+      if (savingFlight) return savingFlight
+      const generation = epoch
+      this.saving = true
+      const flight = (async () => {
+        while (generation === epoch && this.baseline) {
+          const sent = clone(toBackend(this.settings))
+          const patch = difference(this.baseline, sent)
+          if (!Object.keys(patch).length) return
+          const saved = await patchAppSettings(patch)
+          if (generation !== epoch) return
+          // Preserve edits made while this request was in flight; next iteration saves them.
+          const later = difference(sent, toBackend(this.settings))
+          Object.assign(this.settings, fromBackend(saved, localOf(this.settings)))
+          if (later.ai) Object.assign(this.settings.ai, later.ai)
+          const { ai: _ai, ...rest } = later
+          Object.assign(this.settings, rest)
+          this.baseline = clone(saved)
+          this.error = ''
+        }
+      })()
+      savingFlight = flight
+      void flight.finally(() => {
+        if (generation === epoch) { this.saving = false; savingFlight = null }
+      }).catch(() => {})
+      return flight
+    },
+    loadFromServer(): Promise<void> {
+      if (!isBackend() || isDemoMode()) return Promise.resolve()
+      if (loadingFlight) return loadingFlight
+      const generation = epoch
+      this.loading = true; this.error = ''
+      const flight = (async () => {
+        // Do not discard unsaved edits on re-entry or visibility refresh.
+        if (savingFlight) await savingFlight
+        const remote = await fetchAppSettings()
+        if (generation !== epoch) return
+        const dirty = this.baseline ? difference(this.baseline, toBackend(this.settings)) : {}
+        Object.assign(this.settings, fromBackend(remote, localOf(this.settings)))
+        if (dirty.ai) Object.assign(this.settings.ai, dirty.ai)
+        const { ai: _ai, ...rest } = dirty
+        Object.assign(this.settings, rest)
+        this.baseline = clone(remote); this.loaded = true; this.loading = false
+        // Storage status is independent: a disk query failure must not mask AI settings.
+        try {
+          const storage = await fetchStorageInfo()
+          if (generation === epoch) { this.storage = storage; this.storageError = '' }
+        } catch {
+          if (generation === epoch) this.storageError = '磁盘信息读取失败'
+        }
+      })().catch((err: any) => {
+        if (generation === epoch) this.error = err?.response?.data?.error || err?.message || '设置读取失败'
+      })
+      loadingFlight = flight
+      void flight.finally(() => {
+        if (generation === epoch) { this.loading = false; loadingFlight = null }
+      })
+      return flight
     },
     async save() {
-      this.saving = true
-      const local: LocalSettings = {
-        theme: this.settings.theme,
-        fontSize: this.settings.fontSize,
-        careMode: this.settings.careMode,
-        demoMode: this.settings.demoMode,
-      }
-      saveLocal(local)
-      setDemoMode(this.settings.demoMode)
-      try {
-        if (isBackend() && !isDemoMode()) {
-          const saved = await saveAppSettings(settingsToBackend(this.settings))
-          Object.assign(this.settings, backendToSettings(saved, local))
-        }
-      } finally {
-        this.saving = false
-      }
+      saveLocal(localOf(this.settings)); setDemoMode(this.settings.demoMode)
+      await this.flush()
     },
   },
 })

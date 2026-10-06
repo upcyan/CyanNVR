@@ -28,8 +28,9 @@ type Server struct {
 	reset *resetManager
 	tls   *tlsx.Runner
 
-	settingsMu sync.Mutex
-	settings   *AppSettings
+	settingsMu      sync.Mutex
+	settingsWriteMu sync.Mutex // serialize merge + persistence across clients
+	settings        *AppSettings
 }
 
 type AIConfig struct {
@@ -198,7 +199,18 @@ func (s *Server) Router() http.Handler {
 	r.Use(gin.Logger(), gin.Recovery())
 
 	api := r.Group("/api")
-	api.GET("/health", s.health)
+	api.Use(func(c *gin.Context) {
+		// Authenticated mutable data must never be cached by browsers/proxies.
+		c.Header("Cache-Control", "no-store")
+		c.Next()
+	})
+	// /api/health 是连通性探测端点（无鉴权、无敏感信息）。页面可能从与探测目标
+	// 不同的源打开（如经 localhost/主机名打开后探测局域网 IP），不放开 CORS 时
+	// 服务器页「测试连通性」会被浏览器拦截、永远显示不可达。
+	api.GET("/health", func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		s.health(c)
+	})
 	api.GET("/events/sse", s.sseHandler)
 
 	authGrp := api.Group("/auth")
@@ -247,6 +259,7 @@ func (s *Server) Router() http.Handler {
 
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)
+	protected.PATCH("/settings", s.requireAdmin, s.putSettings)
 	protected.GET("/tls/status", s.tlsStatus)
 	protected.POST("/tls/manual-cert", s.requireAdmin, s.uploadManualCert)
 	protected.POST("/tls/reload", s.requireAdmin, s.reloadTLS)
@@ -267,6 +280,10 @@ func (s *Server) Router() http.Handler {
 
 	if s.cfg.WebDir != "" {
 		if _, err := os.Stat(s.cfg.WebDir + "/index.html"); err == nil {
+			r.GET("/build.json", func(c *gin.Context) {
+				c.Header("Cache-Control", "no-store")
+				c.File(s.cfg.WebDir + "/build.json")
+			})
 			r.Static("/assets", s.cfg.WebDir+"/assets")
 			r.StaticFile("/manifest.webmanifest", s.cfg.WebDir+"/manifest.webmanifest")
 			r.StaticFile("/manifest.json", s.cfg.WebDir+"/manifest.json")
@@ -276,14 +293,26 @@ func (s *Server) Router() http.Handler {
 			r.StaticFile("/icon-maskable-512.png", s.cfg.WebDir+"/icon-maskable-512.png")
 			r.StaticFile("/registerSW.js", s.cfg.WebDir+"/registerSW.js")
 			r.StaticFile("/sw.js", s.cfg.WebDir+"/sw.js")
-			r.NoRoute(func(c *gin.Context) {
-				if c.Request.Method == http.MethodGet {
-					c.File(s.cfg.WebDir + "/index.html")
-					return
-				}
-				c.Status(http.StatusNotFound)
-			})
+
 		}
 	}
+
+	// 未匹配路由统一收口（gin 只保留最后一次注册的 NoRoute，故只注册这一个）：
+	// /api/* 必须返回 JSON 404——App 等非浏览器客户端按 JSON 解析响应，
+	// 回 SPA index.html（200+HTML）或空体 404 会让其解析崩溃且无从判断错误；
+	// 非 /api 的 GET 维持 SPA 回退，其余空体 404。
+	r.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		if c.Request.Method == http.MethodGet && s.cfg.WebDir != "" {
+			if _, err := os.Stat(s.cfg.WebDir + "/index.html"); err == nil {
+				c.File(s.cfg.WebDir + "/index.html")
+				return
+			}
+		}
+		c.Status(http.StatusNotFound)
+	})
 	return r
 }

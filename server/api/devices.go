@@ -701,6 +701,23 @@ func (s *Server) playbackNeedsTranscode(d *models.Device) bool {
 	if d.Source == models.SourceTest {
 		return true
 	}
+	// 优先探测本地录像文件（毫秒级）：回放的数据源就是这些文件，其编码才是
+	// 真相。此前探测摄像头 RTSP 流——每次建会话要开两次 RTSP（实测 3.5s+/次），
+	// 且摄像头是 HEVC、录像却是转码后的 H.264，导致明明可以 -c:v copy 秒开的
+	// 回放走了完整转码路径，首片延迟 20s+。
+	if segs, err := s.st.SegmentsForDay(d.ID, time.Now().AddDate(0, 0, -2), time.Now().AddDate(0, 0, 1)); err == nil {
+		probed := 0
+		for i := len(segs) - 1; i >= 0 && probed < 3; i-- {
+			if _, err := os.Stat(segs[i].Path); err != nil {
+				continue
+			}
+			codec := ffmpeg.ProbeFileVideoCodec(s.cfg.Ffmpeg, segs[i].Path)
+			if codec != "" {
+				return codec != "h264"
+			}
+			probed++
+		}
+	}
 	for _, url := range []string{s.recStreamURL(d), d.RTSPURL} {
 		if url == "" {
 			continue

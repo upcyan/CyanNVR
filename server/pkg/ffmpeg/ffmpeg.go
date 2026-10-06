@@ -190,6 +190,18 @@ func parseVideoStream(msg string) (codec string, width, height int) {
 	return "", 0, 0
 }
 
+// ProbeFileVideoCodec 与 ProbeVideoCodec 类似，但用于本地文件：
+// 不能带 -rtsp_transport（该选项仅注册于 RTSP 协议，对文件输入会直接报
+// "Option rtsp_transport not found" 而探测失败）。
+func ProbeFileVideoCodec(bin, path string) string {
+	var out bytes.Buffer
+	cmd := exec.Command(bin, "-hide_banner", "-i", path, "-t", "1", "-f", "null", "-")
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	_ = cmd.Run()
+	return parseCodecLine(out.String())
+}
+
 // ProbeVideoCodec detects the video codec of an RTSP (or file) input by
 // reading ffmpeg's stream info. Returns "h264", "hevc" or "" on failure.
 func ProbeVideoCodec(bin, url string) string {
@@ -198,7 +210,10 @@ func ProbeVideoCodec(bin, url string) string {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	_ = cmd.Run()
-	msg := out.String()
+	return parseCodecLine(out.String())
+}
+
+func parseCodecLine(msg string) string {
 	// Match the "Stream #0:0: Video: hevc (Main)..." line
 	for _, line := range strings.Split(msg, "\n") {
 		if !strings.Contains(line, "Video:") {

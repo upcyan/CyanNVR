@@ -155,6 +155,28 @@ func (m *Manager) Middleware() gin.HandlerFunc {
 	}
 }
 
+// ParseWithTrust 解析 token；签名有效但已过期时，若仍在免登录信任窗口内
+// 则按窗口放行（withinTrust=true）。供流媒体等「客户端只持 query token、
+// 无法走响应头续签」的鉴权路径使用：App 长期驻留后台，token 每日过期，
+// 不放行的话视频流每天断一次，即使免登录窗口尚未结束。
+func (m *Manager) ParseWithTrust(tokenStr string) (*Claims, bool, error) {
+	claims, err := m.Parse(tokenStr)
+	if err == nil {
+		return claims, false, nil
+	}
+	if !strings.Contains(err.Error(), "token is expired") {
+		return nil, false, err
+	}
+	lenient, lerr := m.ParseLenient(tokenStr)
+	if lerr != nil {
+		return nil, false, err
+	}
+	if lenient.TrustUntil != nil && time.Now().Before(lenient.TrustUntil.Time) {
+		return lenient, true, nil
+	}
+	return nil, false, ErrInvalid
+}
+
 // isExpiredErr 判断 jwt 解析错误是否为「签名有效但已过期」。
 func isExpiredErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "token is expired")

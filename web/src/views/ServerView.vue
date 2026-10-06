@@ -3,11 +3,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import QRCode from 'qrcode'
-import { detectAndApply, probe, server, setServerAddrs } from '../api/server'
+import { probe, resolveBase, server, setServerAddrs } from '../api/server'
 import {
+  refreshConnection,
   fetchAppSettings,
   fetchTLSStatus,
-  saveAppSettings,
+  patchAppSettings,
   uploadManualCert,
   type TLSStatus,
 } from '../api'
@@ -19,7 +20,11 @@ const form = reactive({
   mode: server.mode,
 })
 const testing = ref(false)
-const result = ref('')
+// 连通性结果：每行 {label, status}，status: ok=可达 fail=不可达 na=未设置（用于着色）
+const result = ref<Array<{ label: string; status: 'ok' | 'fail' | 'na' }>>([])
+function statusText(s: 'ok' | 'fail' | 'na'): string {
+  return s === 'ok' ? '可达' : s === 'fail' ? '不可达' : '未设置'
+}
 
 // ---- HTTPS / 证书 ----
 const tls = reactive({
@@ -80,17 +85,17 @@ async function uploadCert() {
   }
 }
 
-// PUT /settings 是整对象替换：先拉取最新设置，仅合并 HTTPS 字段后再保存
+// TLS settings must not replace unrelated AI/device configuration from another terminal.
 async function saveTLS(): Promise<string | null> {
   if (!tlsEditable.value) return null
   try {
-    const s = await fetchAppSettings()
-    s.https = tls.https
-    s.httpsPort = Number(tls.httpsPort) || 443
-    s.tlsCertMode = tls.https ? tls.certMode : ''
-    s.tlsDomain = tls.domain.trim()
-    s.acmeEmail = tls.email.trim()
-    await saveAppSettings(s)
+    await patchAppSettings({
+      https: tls.https,
+      httpsPort: Number(tls.httpsPort) || 443,
+      tlsCertMode: tls.https ? tls.certMode : '',
+      tlsDomain: tls.domain.trim(),
+      acmeEmail: tls.email.trim(),
+    })
     setTimeout(loadTLS, 1500) // 等待热生效后刷新状态
     return null
   } catch {
@@ -135,17 +140,13 @@ watch(() => form.lanUrl, scheduleQr, { immediate: true })
 
 async function test() {
   testing.value = true
-  result.value = ''
+  result.value = []
   try {
-    const sameOrigin = await probe('')
-    const lan = form.lanUrl.replace(/\/+$/, '')
-    const pub = form.publicUrl.replace(/\/+$/, '')
-    const lines: string[] = []
-    if (sameOrigin) lines.push('本机地址（同源）: 可达')
-    else lines.push('本机地址（同源）: 不可达')
-    lines.push(`局域网 ${form.lanUrl || '(未设置)'}: ${lan ? await probe(lan) ? '可达' : '不可达' : '-'}`)
-    lines.push(`公网 ${form.publicUrl || '(未设置)'}: ${pub ? await probe(pub) ? '可达' : '不可达' : '-'}`)
-    result.value = lines.join('\n')
+    const lan = resolveBase(form.lanUrl)
+    const pub = resolveBase(form.publicUrl)
+    result.value.push({ label: '本机地址（同源）', status: await probe('') ? 'ok' : 'fail' })
+    result.value.push({ label: `局域网 ${form.lanUrl || '(未设置)'}`, status: lan ? (await probe(lan) ? 'ok' : 'fail') : 'na' })
+    result.value.push({ label: `公网 ${form.publicUrl || '(未设置)'}`, status: pub ? (await probe(pub) ? 'ok' : 'fail') : 'na' })
   } finally {
     testing.value = false
   }
@@ -154,7 +155,7 @@ async function test() {
 async function save() {
   setServerAddrs(form.lanUrl.trim(), form.publicUrl.trim(), form.mode)
   const tlsErr = await saveTLS()
-  const ok = await detectAndApply()
+  const ok = await refreshConnection()
   if (ok) {
     showToast(`已连接：${server.current === 'same-origin' ? '本机' : server.current === 'lan' ? '局域网' : '公网'}${tlsErr ? '；' + tlsErr : ''}`)
   } else if (tlsErr) {
@@ -191,8 +192,11 @@ function goBack() {
       <van-button plain block round style="margin-top: 10px" @click="save">保存并应用</van-button>
     </div>
 
-    <div v-if="result" class="result">
-      <pre>{{ result }}</pre>
+    <div v-if="result.length" class="result">
+      <div v-for="(r, i) in result" :key="i" class="result-line">
+        <span class="result-label">{{ r.label }}</span>
+        <span class="result-status" :class="r.status">{{ statusText(r.status) }}</span>
+      </div>
     </div>
 
     <van-cell-group title="配对二维码">
@@ -297,11 +301,21 @@ function goBack() {
   border: 1px solid var(--nvr-border);
   font-size: calc(13px * var(--nvr-font-scale, 1));
 }
-.result pre {
-  margin: 0;
-  white-space: pre-wrap;
+.result-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
   font-family: ui-monospace, Menlo, monospace;
 }
+.result-status {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.result-status.ok { color: var(--nvr-green); }
+.result-status.fail { color: var(--nvr-red); }
+.result-status.na { color: var(--nvr-text-2); font-weight: 400; }
 .tip {
   padding: 16px;
   font-size: calc(12px * var(--nvr-font-scale, 1));

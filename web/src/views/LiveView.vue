@@ -4,7 +4,13 @@ import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { Device, DiscoveredDevice } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { isBackend, isDemoMode, liveStreamUrl } from '../api'
+import { isBackend, isDemoMode, liveStreamUrl, refreshConnection } from '../api'
+import { server } from '../api/server'
+const sourceLabel = computed(() => server.base || window.location.origin)
+async function retryDevices() {
+  if (!isBackend()) await refreshConnection()
+  await store.load()
+}
 import CameraCard from '../components/CameraCard.vue'
 import LiveViewer from '../components/LiveViewer.vue'
 import VideoGrid from '../components/VideoGrid.vue'
@@ -151,6 +157,7 @@ function onViewerPlayback(d: Device) {
       </div>
     </header>
 
+    <p class="data-source" role="status">{{ isDemoMode() ? '演示数据（非已添加设备）' : `当前服务器：${sourceLabel}` }}</p>
     <div class="cards">
       <CameraCard
         v-for="d in store.devices"
@@ -164,7 +171,12 @@ function onViewerPlayback(d: Device) {
         <van-loading size="30" color="#2ea8ff" />
         <p>正在加载摄像机…</p>
       </div>
-      <div v-else-if="!store.devices.length" class="empty">
+      <div v-else-if="store.status === 'error'" class="empty" role="alert">
+        <p>摄像头读取失败，不代表没有已添加设备</p>
+        <p class="sub">{{ store.error }}</p>
+        <van-button @click="retryDevices">重试读取</van-button>
+      </div>
+      <div v-else-if="store.isEmpty" class="empty">
         <van-icon name="video-o" size="46" color="#3a4252" />
         <p>暂无设备</p>
         <p class="sub">点击右上角 + 添加摄像机</p>
@@ -220,6 +232,7 @@ function onViewerPlayback(d: Device) {
 </template>
 
 <style scoped>
+.data-source { margin: 0; padding: 4px 16px 12px; color: var(--nvr-text-2); font-size: 12px; overflow-wrap: anywhere; }
 .live2 {
   background: var(--nvr-bg);
 }

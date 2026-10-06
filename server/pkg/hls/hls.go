@@ -152,10 +152,14 @@ func (h *Hls) CreatePlayback(deviceID string, start, end time.Time, transcode bo
 	args := []string{"-loglevel", "error", "-y"}
 	// 缩小探测范围：concat 输入默认会读很大一段来识别流信息，
 	// 对多片段拼接会明显拖慢起播。
+	// -ss 必须放在 -i 之前（输入侧 seek）：concat demuxer 支持按虚拟时间轴定位，
+	// 秒级出首片。原先放在 -i 之后是输出侧 seek，从中段起播要先解码丢弃
+	// 目标点之前的全部内容（实测 18~40s），前端 15s 超时直接报
+	// 「回放准备失败」——这正是点时间轴必失败、进页面自动播放（rel≈0）却正常的原因。
 	args = append(args,
 		"-probesize", "5M", "-analyzeduration", "2M",
-		"-f", "concat", "-safe", "0", "-i", listPath,
 		"-ss", fmt.Sprintf("%.3f", rel),
+		"-f", "concat", "-safe", "0", "-i", listPath,
 		"-t", fmt.Sprintf("%.3f", dur),
 		"-an",
 	)
