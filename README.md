@@ -66,7 +66,7 @@ REGISTRY=<你的镜像仓库> docker compose -f docker-compose.prod.yml up -d --
 ### fnOS（飞牛）FPK 打包
 
 ```bash
-fpk/build-fpk.sh        # 产物 fpk/CyanNVR_<版本>_x86.fpk
+fpk/build-fpk.sh        # 产物 dist/CyanNVR_<版本>_x86.fpk
 ```
 
 需要 PATH 中有 `fnpack`；脚本会按源码变更范围自动 bump 版本（详见 `fpk/version.env` 注释），本机无 Go 工具链时借 Docker 镜像出包。

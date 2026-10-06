@@ -41,7 +41,7 @@
 
 ## 部署与验收
 
-- 1.8.1-1 产物：fpk/CyanNVR_1.8.1-1_x86.fpk（fnpack 打包，版本戳校验通过）。
+- 1.8.1-1 产物：dist/CyanNVR_1.8.1-1_x86.fpk（fnpack 打包，版本戳校验通过）。
 - 部署：备份旧版后替换 /vol1/@appcenter/CyanNVR/{cyannvr,dist,ai_detect.py}，
   经生命周期脚本（/var/apps/CyanNVR/cmd/main stop/start）以 cyannvr 身份重启；
   /api/health 返回 version 1.8.1，双摄像头录像与 AI 检测自动恢复，无孤儿 ffmpeg。

@@ -499,6 +499,23 @@ grep -q "^version" "$SCRIPT_DIR/manifest" || error "manifest.tpl 缺少 version 
 # ── 4. 用 fnpack 打包 ──
 info "调用 fnpack 打包..."
 
+# 产物统一放到仓库根的 dist/：fpk/ 只保留「源码 + 构建脚本」。
+#
+# 为什么必须分离：appcenter-cli 的 install-local --dir 会把目标目录**整体**
+# 当成应用包。此前产物直接落在 fpk/，导致 --dir fpk 时把 29 个历史 .fpk、
+# __pycache__、package/ 等杂物一起打包，appcenter 报
+#   10237: fork/exec .../cmd/install_init: permission denied
+# 并回滚（日志 package contents dirs="[__pycache__ cmd config package wizard]"）。
+# 分离后 fpk/ 是干净的源码树，误用 --dir 也不会把旧产物带进包。
+DIST_DIR="$PROJECT_ROOT/dist"
+mkdir -p "$DIST_DIR"
+
+# 源码目录不允许残留产物：一旦有，--dir fpk 就会把它们打进包（上面的 10237 根因）。
+# 必须在打包**之前**检查——放在后面会导致校验失败时已覆盖掉 dist/ 里的好产物。
+if compgen -G "$SCRIPT_DIR/*.fpk" > /dev/null; then
+    error "fpk/ 目录残留 *.fpk 产物，请先移入 dist/（否则 install-local --dir fpk 会打包杂物）"
+fi
+
 # 权限归一：目录必须可进入（755），否则 fnpack 复制文件时会 permission denied。
 # Docker 产物与部分工具会带回 000 权限，且 cp 会保留源权限。
 # Normalize generated staging files only, not other users' source/archived packages.
@@ -509,23 +526,58 @@ for lifecycle in "$SCRIPT_DIR"/cmd/*; do
     [ -x "$lifecycle" ] || error "生命周期脚本不可执行: $lifecycle"
 done
 
+# 先打到临时位置，自检通过后再原子替换 dist/ 产物，
+# 避免构建失败时把上一版可用的包弄丢。
+TMP_FPK="$DIST_DIR/.${APPNAME}_${VERSION}_x86.fpk.tmp"
+rm -f "$TMP_FPK"
+
 cd "$SCRIPT_DIR"
 rm -f "$SCRIPT_DIR/${APPNAME}.fpk"
 "$FNPACK" build 2>&1 | tail -3
 
 # fnpack 输出 <appname>.fpk，重命名为带完整版本号的规范名
 if [ -f "$SCRIPT_DIR/${APPNAME}.fpk" ]; then
-    mv -f "$SCRIPT_DIR/${APPNAME}.fpk" "$SCRIPT_DIR/${APPNAME}_${VERSION}_x86.fpk"
+    mv -f "$SCRIPT_DIR/${APPNAME}.fpk" "$TMP_FPK"
 fi
+[ -f "$TMP_FPK" ] || error "打包失败，未生成 fpk"
 
-FPK_FILE="$SCRIPT_DIR/${APPNAME}_${VERSION}_x86.fpk"
-[ -f "$FPK_FILE" ] || error "打包失败，未生成 fpk"
+# 自检：包内必须含全部生命周期脚本（缺一个都会让安装/升级/卸载异常）
+verify_package() {
+    local missing=""
+    for f in cmd/main cmd/install_init cmd/install_callback cmd/upgrade_init \
+             cmd/upgrade_callback cmd/uninstall_init cmd/uninstall_callback \
+             manifest app.tgz ICON.PNG; do
+        tar tzf "$1" "$f" >/dev/null 2>&1 || missing="${missing} ${f}"
+    done
+    [ -z "$missing" ] || error "包内缺少关键文件:${missing}"
+    info "包内关键文件自检通过（10 项）"
+}
+verify_package "$TMP_FPK"
+
+chmod 644 "$TMP_FPK"
+FPK_FILE="$DIST_DIR/${APPNAME}_${VERSION}_x86.fpk"
+mv -f "$TMP_FPK" "$FPK_FILE"
 
 info "=========================================="
-info "  构建完成: $FPK_FILE ($(du -h "$FPK_FILE" | cut -f1))"
+info "  构建完成: $FPK_FILE ($(stat -c%s "$FPK_FILE") bytes)"
 info "=========================================="
 echo ""
-echo "安装：飞牛应用中心 → 手动安装 → 上传该 fpk"
+echo "安装：飞牛应用中心 → 手动安装 → 上传该 fpk（推荐，走 upgrade 路径）"
 echo "端口：安装向导中可自定义（默认 18182）"
 echo "数据：安装后如需迁移旧 Docker 数据，执行 sudo ./migrate-data.sh"
 echo "账号：安装向导中可自定义（默认 admin / admin123）"
+echo ""
+echo "⚠ CLI 安装说明（appcenter-cli 对已安装应用不会真正升级）："
+echo "  install-fpk 检测到应用已安装时只打印 'is installed.' 并退出 0，"
+echo "  **不会**向 appcenter 发起任何请求，版本不会变化。"
+echo "  · 已安装时请改用「应用中心 → 手动安装」上传本包；"
+echo "  · 或先卸载再装：appcenter-cli uninstall $APPNAME && \\"
+echo "      appcenter-cli install-fpk $FPK_FILE --volume 1"
+echo "    （卸载按设计保留数据目录；会短暂停机）"
+echo ""
+echo "安装后务必核对版本（退出码 0 不代表升级成功）："
+echo "  1) 清单版本：appcenter-cli list | grep $APPNAME"
+echo "  2) 运行版本：curl -s http://127.0.0.1:18182/api/health"
+echo "  3) 界面指纹：curl -s http://127.0.0.1:18182/build.json"
+echo "  期望核心版本：${CORE_VERSION}（本包 ${VERSION}）"
+
