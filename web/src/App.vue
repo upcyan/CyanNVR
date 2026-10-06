@@ -19,6 +19,13 @@ const showSidebar = computed(() => isDesktop.value && showTabbar.value)
 const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
+// 系统深浅色（theme='auto' 时跟随）：初始化即读取，变化由 setupColorScheme 监听
+const sysDark = ref(typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+// 实际生效的主题：'auto' 折算成系统当前值，其余为用户显式选择
+const uiTheme = computed<'dark' | 'light'>(() => {
+  if (settings.settings.theme === 'auto') return sysDark.value ? 'dark' : 'light'
+  return settings.settings.theme === 'light' ? 'light' : 'dark'
+})
 // 侧边栏状态卡的在线率（0-100），有设备时展示迷你进度条
 const onlineRate = computed(() =>
   devices.devices.length ? Math.round((devices.onlineCount / devices.devices.length) * 100) : 0,
@@ -37,6 +44,19 @@ async function loadVersion() {
 
 let mq: MediaQueryList | null = null
 let onMqChange: ((e: MediaQueryListEvent) => void) | null = null
+let mqDark: MediaQueryList | null = null
+let onMqDark: ((e: MediaQueryListEvent) => void) | null = null
+// 系统深浅色变化监听：theme='auto' 时立即重算生效主题
+function setupColorScheme() {
+  if (mqDark) return
+  mqDark = window.matchMedia('(prefers-color-scheme: dark)')
+  sysDark.value = mqDark.matches
+  onMqDark = (e) => {
+    sysDark.value = e.matches
+    applyA11y()
+  }
+  mqDark.addEventListener('change', onMqDark)
+}
 /** 已完成初始化的会话代次：避免重复初始化、也能识别「换会话」 */
 let initializedEpoch = -1
 
@@ -54,8 +74,8 @@ function applyA11y() {
   document.documentElement.style.setProperty('--nvr-font-scale', careActive ? fontScale.xlarge : fontScale[s.fontSize] || '1')
   document.documentElement.dataset.fontSize = careActive ? 'normal' : s.fontSize
   document.body.classList.toggle('care', careActive)
-  document.body.classList.toggle('light', s.theme === 'light')
-  document.body.classList.toggle('dark', s.theme === 'dark')
+  document.body.classList.toggle('light', uiTheme.value === 'light')
+  document.body.classList.toggle('dark', uiTheme.value === 'dark')
 }
 
 /** 视口相关的初始化：与登录状态无关，任何情况下都必须执行 */
@@ -116,6 +136,7 @@ onMounted(() => {
   // 视口与无障碍设置与登录无关，立即初始化（此前被 token 等待分支跳过，
   // 导致登录后窗口尺寸变化不生效）
   setupViewport()
+  setupColorScheme()
   applyA11y()
   // 会话可能已经存在（刷新页面/信任窗口内重开），也可能稍后才建立（登录）。
   // 两种情况都由同一个同步函数处理。
@@ -156,11 +177,12 @@ onBeforeUnmount(() => {
   devices.stopPolling()
   disconnectSSE()
   if (mq && onMqChange) mq.removeEventListener('change', onMqChange)
+  if (mqDark && onMqDark) mqDark.removeEventListener('change', onMqDark)
 })
 </script>
 
 <template>
-  <van-config-provider :theme="settings.settings.theme">
+  <van-config-provider :theme="uiTheme">
     <div
       class="app-shell"
       :class="[isDesktop ? 'desktop' : '']"

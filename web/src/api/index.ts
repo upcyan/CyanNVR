@@ -284,6 +284,38 @@ export function downloadRecordingURL(deviceId: string, date: string, time: strin
   return `${server.base}/api/devices/${deviceId}/recordings/${date}/${time}/download?token=${token}`
 }
 
+// ── 录像导出：起止时间范围的后台拼接任务 ──
+export interface ExportTask {
+  id: string
+  deviceId: string
+  deviceName: string
+  start: string
+  end: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  error?: string
+  fileName?: string
+  size?: number
+  createdAt: string
+}
+
+export function createExport(deviceId: string, startMs: number, endMs: number): Promise<ExportTask> {
+  return http.post(`/api/devices/${deviceId}/export`, { start: startMs, end: endMs }).then((r) => r.data)
+}
+
+export async function fetchExports(): Promise<ExportTask[]> {
+  const { data } = await http.get('/api/exports')
+  return data.tasks || []
+}
+
+export function deleteExport(id: string): Promise<{ ok: boolean }> {
+  return http.delete(`/api/exports/${id}`).then((r) => r.data)
+}
+
+export function exportFileURL(id: string): string {
+  const token = localStorage.getItem('nvr_token') || ''
+  return `${server.base}/api/exports/${id}/file?token=${encodeURIComponent(token)}`
+}
+
 export function downloadEventSnapshotURL(eventId: string): string {
   const token = localStorage.getItem('nvr_token') || ''
   return `${server.base}/api/events/${eventId}/snapshot/download?token=${token}`

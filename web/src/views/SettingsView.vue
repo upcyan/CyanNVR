@@ -341,8 +341,13 @@ function setMode(m: RecordMode) {
   store.set({ recordMode: m })
 }
 
-function setTheme() {
-  store.set({ theme: s.theme === 'dark' ? 'light' : 'dark' })
+const themeOptions = [
+  { value: 'auto', text: '跟随系统' },
+  { value: 'light', text: '浅色' },
+  { value: 'dark', text: '深色' },
+] as const
+function setTheme(v: 'auto' | 'dark' | 'light') {
+  store.set({ theme: v })
 }
 
 const fontSizeOptions = [
@@ -787,9 +792,15 @@ async function removeUser(u: ManagedUser) {
         <van-icon :name="isCollapsed('display') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
       </div>
       <van-cell-group v-show="!isCollapsed('display')" title="">
-      <van-cell title="深色模式" label="切换界面主题">
-        <template #right-icon>
-          <van-switch aria-label="深色模式" :model-value="s.theme === 'dark'" @update:model-value="setTheme" />
+      <van-cell title="深色模式" label="跟随系统：随系统夜间自动切换" class="opt-cell">
+        <template #value>
+          <div class="theme-opts" role="radiogroup" aria-label="界面主题">
+            <button
+              v-for="o in themeOptions" :key="o.value" type="button" class="theme-opt control-button"
+              role="radio" :aria-checked="s.theme === o.value" :class="{ on: s.theme === o.value }"
+              @click="setTheme(o.value)"
+            >{{ o.text }}</button>
+          </div>
         </template>
       </van-cell>
       <!-- 用户级关怀（管理员在用户管理为本账号勾选）生效时，
@@ -1595,6 +1606,39 @@ async function removeUser(u: ManagedUser) {
   border-color: var(--nvr-accent);
   color: var(--nvr-accent);
   background: rgba(46, 168, 255, 0.12);
+}
+/* 主题三选项（跟随系统/浅色/深色）：与字号选项同款分段按钮 */
+.theme-opts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.theme-opt {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+  border-radius: var(--nvr-radius-sm);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nvr-text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.theme-opt.on {
+  border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+  background: rgba(46, 168, 255, 0.12);
+}
+:global(body.care .settings-page .theme-opt) {
+  min-width: 88px;
+  min-height: 52px;
+  font-size: calc(17px * var(--nvr-font-scale, 1));
 }
 @media (max-width: 480px) {
   .settings-page :deep(.van-cell:has(.slider-box)),

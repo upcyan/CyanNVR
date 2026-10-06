@@ -122,7 +122,7 @@ export interface Settings {
   /** 免登录信任窗口（小时），0=关闭 */
   trustWindowHours: number
   ai: AIConfig
-  theme: 'dark' | 'light'
+  theme: 'auto' | 'dark' | 'light'
   fontSize: FontSize
   careMode: boolean
   demoMode: boolean

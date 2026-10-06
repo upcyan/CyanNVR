@@ -19,14 +19,15 @@ import (
 )
 
 type Server struct {
-	cfg   *config.Config
-	st    *store.Store
-	rec   *recorder.Manager
-	hls   *hls.Hls
-	am    *auth.Manager
-	hub   *SSEHub
-	reset *resetManager
-	tls   *tlsx.Runner
+	cfg     *config.Config
+	st      *store.Store
+	rec     *recorder.Manager
+	hls     *hls.Hls
+	am      *auth.Manager
+	hub     *SSEHub
+	reset   *resetManager
+	tls     *tlsx.Runner
+	exports *exportManager
 
 	settingsMu      sync.Mutex
 	settingsWriteMu sync.Mutex // serialize merge + persistence across clients
@@ -68,7 +69,7 @@ type AppSettings struct {
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
-	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am, hub: hub, reset: newResetManager(cfg.DataDir)}
+	s := &Server{cfg: cfg, st: st, rec: rec, hls: h, am: am, hub: hub, reset: newResetManager(cfg.DataDir), exports: newExportManager(cfg, st)}
 	s.loadSettings()
 	s.applySettings()
 	s.rec.ShouldRecordFn = func() (string, string, string) {
@@ -245,6 +246,11 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/devices/:id/snapshot", s.deviceSnapshot)
 	protected.GET("/devices/:id/recordings", s.deviceRecordings)
 	protected.GET("/devices/:id/recordings/:date/:time/download", s.downloadRecording)
+	// 录像导出：自定义起止时间，后台拼接成单个 mp4；任务列表/徽标见 /exports
+	protected.POST("/devices/:id/export", s.requireOperator, s.createExport)
+	protected.GET("/exports", s.listExports)
+	protected.DELETE("/exports/:tid", s.requireOperator, s.deleteExport)
+	protected.GET("/exports/:tid/file", s.downloadExportFile)
 	protected.GET("/devices/:id/month", s.deviceMonth)
 	protected.POST("/devices/:id/playback", s.createPlayback)
 	// 结束回放会话：前端离开页面时调用，立即停掉转码进程

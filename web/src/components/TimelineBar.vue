@@ -8,6 +8,8 @@ const props = defineProps<{
   value: number
   /** 当日事件（time 已由调用方转为毫秒）；用于时间轴着色与刻度 */
   events?: { time: number; type: string }[]
+  /** 用户标记的时间点（毫秒）：导出弹窗可快速选用的起止候选 */
+  marks?: number[]
 }>()
 
 const EV_STYLE: Record<string, string> = {
@@ -26,6 +28,7 @@ const EV_TICK: Record<string, string> = {
 }
 
 const evList = computed(() => props.events ?? [])
+const markList = computed(() => props.marks ?? [])
 
 // 含事件的录像段整段着色；同段多事件时按首个事件取色
 const eventRanges = computed(() => {
@@ -158,6 +161,12 @@ function onKeydown(e: KeyboardEvent) {
         :key="'et-' + i"
         :style="{ left: pct(e.time) + '%', background: EV_TICK[e.type] || '#ff4d4f' }"
       />
+      <div
+        class="mark-flag"
+        v-for="(m, i) in markList"
+        :key="'mk-' + i"
+        :style="{ left: pct(m) + '%' }"
+      />
       <div class="cursor" :style="{ left: pct(value) + '%' }">
         <span class="knob" />
       </div>
@@ -196,6 +205,22 @@ function onKeydown(e: KeyboardEvent) {
   top: 0;
   bottom: 0;
   pointer-events: none;
+}
+.mark-flag {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 10px;
+  background: #ffd447;
+  pointer-events: none;
+}
+.mark-flag::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -3px;
+  border: 4px solid transparent;
+  border-top-color: #ffd447;
 }
 .ev-tick {
   position: absolute;

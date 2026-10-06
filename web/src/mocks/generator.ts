@@ -185,7 +185,7 @@ export function defaultSettings(): Settings {
       cooldown: 60,
       threshold: 0.5,
     },
-    theme: 'dark',
+    theme: 'auto',
     fontSize: 'normal',
     careMode: false,
     demoMode: false,

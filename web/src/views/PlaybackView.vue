@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { apiBase, createPlayback, downloadRecordingURL, fetchDaySegments, fetchEvents, fetchMonthRecords, isBackend, isDemoMode, stopPlayback } from '../api'
+import { apiBase, createExport, createPlayback, deleteExport, downloadRecordingURL, exportFileURL, fetchDaySegments, fetchEvents, fetchExports, fetchMonthRecords, isBackend, isDemoMode, stopPlayback, type ExportTask } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -71,6 +71,202 @@ watch(() => route.query.tab, (t) => {
   const want = t === 'events' ? 'events' : 'playback'
   if (want !== activeTab.value) activeTab.value = want
 })
+
+// ── 时间轴标记：在当前播放位置打点，导出弹窗可一键填入起止时间 ──
+const marks = ref<number[]>([])
+const markBtnOn = computed(() => marks.value.some((m) => Math.abs(m - currentTs.value) < 1500))
+function toggleMark() {
+  if (!segments.value.length) {
+    showToast('当前没有录像，无法标记')
+    return
+  }
+  const hit = marks.value.findIndex((m) => Math.abs(m - currentTs.value) < 1500)
+  if (hit >= 0) {
+    marks.value = marks.value.filter((_, i) => i !== hit)
+    showToast('已取消该标记')
+    return
+  }
+  marks.value = [...marks.value, currentTs.value].sort((a, b) => a - b)
+  if (marks.value.length > 12) marks.value = marks.value.slice(-12)
+  showToast(`已标记 ${fmtHM(currentTs.value)}`)
+}
+
+// ── 导出：独立按钮 + 弹窗（起止时间滚轮选择 / 标记快填 / 任务列表）──
+const exportOpen = ref(false)
+const exports = ref<ExportTask[]>([])
+let exportTimer: number | null = null
+const exportStart = ref(0) // 当日 00:00 起的秒数
+const exportEnd = ref(0)
+const markStage = ref(0) // 0=等待选起点 1=等待选终点
+const creating = ref(false)
+const timePickOpen = ref(false)
+const timePickValues = ref<number[]>([0, 0, 0])
+let timePickField: 'start' | 'end' = 'start'
+
+const runningExports = computed(() => exports.value.filter((t) => t.status === 'running').length)
+
+async function refreshExports() {
+  if (!isBackend() || isDemoMode()) return
+  try {
+    const prev = new Map(exports.value.map((t) => [t.id, t.status]))
+    exports.value = await fetchExports()
+    // 只对「亲眼看着它跑起来」的任务提示完成，避免进页面被历史任务刷屏
+    for (const t of exports.value) {
+      if (t.status === 'done' && prev.get(t.id) === 'running') {
+        showToast('导出完成，点导出按钮可下载')
+      }
+    }
+  } catch {
+    /* 轮询失败静默，下一轮再取 */
+  }
+}
+function startExportPoll() {
+  if (exportTimer != null) return
+  void refreshExports()
+  exportTimer = window.setInterval(() => void refreshExports(), 3000)
+}
+function stopExportPoll() {
+  if (exportTimer != null) {
+    window.clearInterval(exportTimer)
+    exportTimer = null
+  }
+}
+
+function secOfDay(ts: number) {
+  const d = new Date(ts)
+  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
+}
+function fmtSec(sec: number) {
+  const v = Math.max(0, Math.min(86399, Math.round(sec)))
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(Math.floor(v / 3600))}:${p(Math.floor(v / 60) % 60)}:${p(v % 60)}`
+}
+function fmtSizeMB(n: number) {
+  const mb = n / 1048576
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`
+}
+function exportStatusText(t: ExportTask) {
+  if (t.status === 'running') return '导出中…'
+  if (t.status === 'done') return '已完成'
+  if (t.status === 'pending') return '排队中'
+  return t.error || '失败'
+}
+
+function openExportDialog() {
+  // 默认导出范围 = 当天有录像的区间（首段起点 → 末段终点），无录像则当前时刻前 30 分钟
+  if (segments.value.length) {
+    exportStart.value = secOfDay(segments.value[0].start)
+    exportEnd.value = Math.max(
+      exportStart.value + 60,
+      secOfDay(segments.value[segments.value.length - 1].end - 1000),
+    )
+  } else {
+    const now = secOfDay(Date.now())
+    exportStart.value = Math.max(0, now - 1800)
+    exportEnd.value = now
+  }
+  markStage.value = 0
+  exportOpen.value = true
+  void refreshExports()
+}
+
+const hourCol = Array.from({ length: 24 }, (_, i) => ({ text: `${String(i).padStart(2, '0')} 时`, value: i }))
+const minCol = Array.from({ length: 60 }, (_, i) => ({ text: `${String(i).padStart(2, '0')} 分`, value: i }))
+const secCol = Array.from({ length: 60 }, (_, i) => ({ text: `${String(i).padStart(2, '0')} 秒`, value: i }))
+const timeColumns = [hourCol, minCol, secCol]
+
+function openTimePick(field: 'start' | 'end') {
+  const v = field === 'start' ? exportStart.value : exportEnd.value
+  timePickValues.value = [Math.floor(v / 3600), Math.floor(v / 60) % 60, v % 60]
+  timePickField = field
+  timePickOpen.value = true
+}
+function onTimePickConfirm({ selectedValues }: { selectedValues: number[] }) {
+  const [h, m, s] = selectedValues.map(Number)
+  const v = h * 3600 + m * 60 + s
+  if (timePickField === 'start') exportStart.value = v
+  else exportEnd.value = v
+  timePickOpen.value = false
+}
+
+// 标记快填：第一次点 = 起点，第二次点 = 终点（终点更早时自动对调）
+function pickMark(m: number) {
+  const sec = secOfDay(m)
+  if (markStage.value === 0) {
+    exportStart.value = sec
+    markStage.value = 1
+    showToast('已设为起点，再点一个标记作为终点')
+  } else if (sec > exportStart.value) {
+    exportEnd.value = sec
+    markStage.value = 0
+  } else {
+    exportEnd.value = exportStart.value
+    exportStart.value = sec
+    markStage.value = 0
+  }
+}
+
+async function confirmExport() {
+  if (!deviceId.value || creating.value) return
+  if (exportEnd.value <= exportStart.value) {
+    showToast('截止时间必须晚于起始时间')
+    return
+  }
+  creating.value = true
+  try {
+    await createExport(deviceId.value, dayStart.value + exportStart.value * 1000, dayStart.value + exportEnd.value * 1000)
+    showToast('导出任务已创建')
+    exportOpen.value = false
+    void refreshExports()
+  } catch (err: any) {
+    showToast(err?.response?.data?.error || '导出任务创建失败')
+  } finally {
+    creating.value = false
+  }
+}
+async function removeExport(t: ExportTask) {
+  try {
+    await deleteExport(t.id)
+    exports.value = exports.value.filter((x) => x.id !== t.id)
+  } catch {
+    showToast('删除失败')
+  }
+}
+
+// ── 事件页/深链跳转：?device=&date=YYYY-MM-DD&t=<毫秒> ──
+// 消费一次后按 key 去重；日期变化走 watch 触发重载，
+// 分段加载完成后 rebuildPlayable 直接用 pendingSeekTs 定位（避免二次建会话）。
+let pendingSeekTs = 0
+let lastSeekQuery = ''
+function consumeSeekQuery(): boolean {
+  const q = route.query
+  const date = typeof q.date === 'string' ? q.date : ''
+  const t = Number(q.t)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(t) || t <= 0) return false
+  const key = `${date}|${t}`
+  if (key === lastSeekQuery) return false
+  lastSeekQuery = key
+  datePicked = true
+  pendingSeekTs = t
+  if (dateStr.value !== date) dateStr.value = date
+  else loadSegments()
+  return true
+}
+// 把请求时刻吸附到真实存在的录像段（与 onSeekEnd 同一套兜底）
+function snapToSegment(ts: number): number {
+  const containing = segments.value.find((s) => ts >= s.start && ts < s.end)
+  if (containing) return ts
+  const next = segments.value.find((s) => s.start >= ts)
+  if (next) return next.start
+  const last = segments.value[segments.value.length - 1]
+  return Math.max(last.start, last.end - 1000)
+}
+watch(
+  () => [String(route.query.date ?? ''), String(route.query.t ?? '')].join('|'),
+  () => {
+    if (route.path === '/playback') consumeSeekQuery()
+  },
+)
 
 function releasePlayback() {
   sessionToken++
@@ -315,8 +511,20 @@ async function rebuildPlayable() {
   // 等待 DOM 更新完成再取 video 元素，避免 ref 尚未就绪导致画面空白
   await nextTick()
   const el = playerRef.value?.getVideoEl()
-  if (!active || !el || !device.value || !segments.value.length) return
-  const start = earliestInterestingStart()
+  if (!active || !el || !device.value || !segments.value.length) {
+    // 没有分段时定位无从谈起：放弃挂起的跳转请求
+    pendingSeekTs = 0
+    return
+  }
+  let start: number
+  if (pendingSeekTs) {
+    const snapped = snapToSegment(pendingSeekTs)
+    if (snapped !== pendingSeekTs) showToast('所选时间无录像，已定位到最近录像')
+    start = snapped
+    pendingSeekTs = 0
+  } else {
+    start = earliestInterestingStart()
+  }
   currentTs.value = start
   playing.value = true
   if (isBackend() && !isDemoMode()) {
@@ -515,17 +723,39 @@ function onSelectSegment(s: RecordingSegment) {
   onSeekEnd(s.start)
 }
 
-function downloadSegment(s: RecordingSegment) {
-  if (!deviceId.value) return
+// 分段下载：先探一下文件是否还在（此前「空目录误删」会让 DB 里的段没有
+// 对应文件，下载表现为「点了没反应」），确认可用后交给浏览器原生下载
+// （流式写盘，不占内存）。每一步都有提示，不再静默失败。
+const dlBusyId = ref('')
+async function downloadSegment(s: RecordingSegment) {
+  if (!deviceId.value || dlBusyId.value) return
   const d = new Date(s.start)
   const p2 = (n: number) => String(n).padStart(2, '0')
   const date = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
   const time = `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
   const url = downloadRecordingURL(deviceId.value, date, time)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${device.value?.name || 'recording'}_${date}_${time}.mp4`
-  a.click()
+  dlBusyId.value = s.id
+  try {
+    // Range: bytes=0-0 只探可用性；无论服务器回 206 还是整段 200，读完首块即断开
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' } })
+    if (!res.ok) {
+      if (res.status === 404) showToast('该段录像文件已不存在（可能已被清理）')
+      else if (res.status === 401) showToast('登录已过期，请重新登录后再下载')
+      else showToast(`下载失败（HTTP ${res.status}）`)
+      return
+    }
+    res.body?.cancel().catch(() => {})
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${device.value?.name || 'recording'}_${date}_${time}.mp4`
+    a.rel = 'noopener'
+    a.click()
+    showToast('已开始下载录像文件')
+  } catch {
+    showToast('下载失败，请检查网络后重试')
+  } finally {
+    dlBusyId.value = ''
+  }
 }
 
 function onSelectDate(date: string) {
@@ -580,6 +810,9 @@ function pickInitialDevice(): boolean {
 
 onMounted(() => {
   pickInitialDevice()
+  // 事件页/外部深链：?device=&date=&t= 直接定位到对应时刻
+  consumeSeekQuery()
+  if (isBackend() && !isDemoMode()) startExportPoll()
   startTimer()
 })
 
@@ -606,11 +839,13 @@ watch(
 )
 
 watch(deviceId, () => {
+  marks.value = []
   loadMonth()
   loadSegments()
 })
 watch(ym, loadMonth)
 watch(dateStr, () => {
+  marks.value = []
   loadSegments()
 })
 onDeactivated(() => {
@@ -620,18 +855,28 @@ onDeactivated(() => {
   releasePlayback()
   if (timer) window.clearInterval(timer)
   timer = null
+  stopExportPoll()
 })
 onActivated(() => {
-  if (active) return
+  if (active) {
+    // 页面还活着时带着新的跳转参数回来（事件页跳转）：消费并按需重载
+    if (consumeSeekQuery()) loadMonth()
+    startExportPoll()
+    startTimer()
+    return
+  }
   active = true
   // 跨零点：keep-alive 页面不会自己刷新日期，此前凌晨重新打开时仍停在昨天的
   // 日期与昨天的段数上（会被误认为「自动回落昨天」）。用户没主动选过日期时
   // 激活即对齐到当天；主动选过则尊重用户选择（可能就是要看昨天）。
-  const dayChanged = !datePicked && dateStr.value !== todayLocal()
+  // 事件页/深链跳转优先：?date=&t= 未消费则按参数定位（datePicked 会被置真）
+  const consumed = consumeSeekQuery()
+  const dayChanged = !consumed && !datePicked && dateStr.value !== todayLocal()
   if (dayChanged) dateStr.value = todayLocal()
   const q = route.query.device as string | undefined
   if (q && q !== deviceId.value && store.byId(q)) deviceId.value = q
-  else if (!dayChanged) { loadMonth(); loadSegments() }
+  else if (!consumed && !dayChanged) { loadMonth(); loadSegments() }
+  startExportPoll()
   startTimer()
 })
 
@@ -668,6 +913,7 @@ onBeforeUnmount(() => {
   // 兜底：keep-alive 的 onDeactivated 通常已释放会话，但 App 被杀死、
   // 标签页直接关闭等场景它可能没执行，这里必须再做一次。
   releaseSessionOnUnload()
+  stopExportPoll()
 })
 </script>
 
@@ -695,6 +941,19 @@ onBeforeUnmount(() => {
         @next="shiftDay(1)"
         @pick-calendar="calOpen = true"
       />
+      <!-- 独立导出入口：自定义起止时间后台拼接；徽标 = 进行中的导出任务数 -->
+      <button
+        v-if="isBackend() && !isDemoMode()"
+        type="button"
+        class="export-btn control-button"
+        :class="{ live: runningExports > 0 }"
+        aria-label="导出录像"
+        @click="openExportDialog"
+      >
+        <van-badge :content="runningExports" :show-zero="false" max="9+">
+          <van-icon name="down" />
+        </van-badge>
+      </button>
     </div>
 
     <div v-show="activeTab === 'events'" class="pb-events-panel">
@@ -747,14 +1006,30 @@ onBeforeUnmount(() => {
             <!-- 段数/时长/事件数在移动端与下方分段工具行重复，<1200px 隐藏（见 .tl-stats） -->
             <span class="tl-stats">{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
-          <TimelineBar
-            :day-start="dayStart"
-            :segments="segments"
-            :events="timelineEvents"
-            :value="currentTs"
-            @seek="onSeek"
-            @seekend="onSeekEnd"
-          />
+          <div class="tl-row">
+            <div class="tl-main">
+              <TimelineBar
+                :day-start="dayStart"
+                :segments="segments"
+                :events="timelineEvents"
+                :value="currentTs"
+                :marks="marks"
+                @seek="onSeek"
+                @seekend="onSeekEnd"
+              />
+            </div>
+            <button
+              v-if="isBackend() && !isDemoMode()"
+              type="button"
+              class="mark-btn control-button"
+              :class="{ on: markBtnOn }"
+              :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
+              :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
+              @click="toggleMark"
+            >
+              <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -860,6 +1135,66 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- 导出：自定义起止时间（滚轮快选 / 标记快填）+ 任务列表 -->
+    <van-popup v-model:show="exportOpen" position="bottom" round :style="{ maxHeight: '88%' }">
+      <div class="exp-head">
+        <span class="exp-title">导出录像</span>
+        <span class="exp-date mono">{{ dateStr }}</span>
+      </div>
+      <div class="exp-body">
+        <button type="button" class="exp-row control-button" @click="openTimePick('start')">
+          <span class="exp-label">起始时间</span>
+          <span class="exp-val mono">{{ fmtSec(exportStart) }} <van-icon name="arrow" /></span>
+        </button>
+        <button type="button" class="exp-row control-button" @click="openTimePick('end')">
+          <span class="exp-label">截止时间</span>
+          <span class="exp-val mono">{{ fmtSec(exportEnd) }} <van-icon name="arrow" /></span>
+        </button>
+
+        <div v-if="marks.length" class="exp-marks">
+          <div class="exp-marks-hint">{{ markStage === 1 ? '已选起点：再点一个标记作为终点' : '点标记快速填充（先起点后终点）' }}</div>
+          <div class="exp-mark-chips">
+            <button
+              v-for="(m, i) in marks" :key="i" type="button"
+              class="mark-chip mono"
+              :class="{ sel: markStage === 1 && secOfDay(m) === exportStart }"
+              @click="pickMark(m)"
+            >{{ fmtHM(m) }}</button>
+          </div>
+        </div>
+
+        <div v-if="exports.length" class="exp-tasks">
+          <div class="exp-tasks-title">导出任务</div>
+          <div v-for="t in exports" :key="t.id" class="exp-task">
+            <div class="exp-task-main">
+              <span class="exp-task-name">{{ t.deviceName }} {{ fmtHM(new Date(t.start).getTime()) }}-{{ fmtHM(new Date(t.end).getTime()) }}</span>
+              <span class="exp-task-status" :class="t.status">{{ exportStatusText(t) }}<template v-if="t.status === 'done' && t.size"> · {{ fmtSizeMB(t.size) }}</template></span>
+            </div>
+            <div class="exp-task-ops">
+              <a v-if="t.status === 'done'" :href="exportFileURL(t.id)" class="exp-dl control-button" title="下载导出文件"><van-icon name="down" /></a>
+              <button class="exp-del control-button" aria-label="删除导出任务" @click="removeExport(t)"><van-icon name="delete-o" /></button>
+            </div>
+          </div>
+        </div>
+
+        <van-button type="primary" block :loading="creating" :disabled="exportEnd <= exportStart" class="exp-confirm" @click="confirmExport">
+          确定导出
+        </van-button>
+      </div>
+    </van-popup>
+
+    <!-- 起止时间滚轮选择 -->
+    <van-popup v-model:show="timePickOpen" position="bottom" round>
+      <van-picker
+        v-picker-desktop
+        :columns="timeColumns"
+        v-model="timePickValues"
+        title="选择时间点"
+        @confirm="onTimePickConfirm"
+        @cancel="timePickOpen = false"
+      />
+    </van-popup>
+
     <van-popup v-model:show="showDevicePicker" position="bottom" round>
       <div class="picker-head">选择设备</div>
       <van-cell-group inset>
@@ -938,6 +1273,165 @@ onBeforeUnmount(() => {
 .tl-head span:first-child {
   color: var(--nvr-text);
   font-weight: 600;
+}
+/* 时间轴 + 标记按钮：按钮固定在时间轴右侧，时间轴让位 */
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+}
+.tl-main {
+  flex: 1;
+  min-width: 0;
+}
+.mark-btn {
+  flex: 0 0 auto;
+  width: calc(34px * var(--nvr-font-scale, 1));
+  height: calc(34px * var(--nvr-font-scale, 1));
+  border-radius: var(--nvr-radius-full);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+.mark-btn.on {
+  color: #ffd447;
+  border-color: rgba(255, 212, 71, 0.6);
+  background: rgba(255, 212, 71, 0.12);
+}
+/* 独立导出按钮（日期条右侧）：有进行中任务时徽标计数 + 呼吸提示 */
+.export-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: calc(34px * var(--nvr-font-scale, 1));
+  height: calc(32px * var(--nvr-font-scale, 1));
+  padding: 0 calc(10px * var(--nvr-font-scale, 1));
+  border-radius: var(--nvr-radius-full);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel);
+  color: var(--nvr-text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+.export-btn.live {
+  color: var(--nvr-accent);
+  border-color: rgba(46, 168, 255, 0.55);
+  animation: export-pulse 1.6s ease-in-out infinite;
+}
+@keyframes export-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 168, 255, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(46, 168, 255, 0); }
+}
+/* 导出弹窗 */
+.exp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 6px;
+}
+.exp-title {
+  font-weight: 700;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+.exp-date {
+  color: var(--nvr-text-2);
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+}
+.exp-body {
+  padding: 4px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+.exp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: calc(12px * var(--nvr-font-scale, 1)) calc(14px * var(--nvr-font-scale, 1));
+  border-radius: var(--nvr-radius-sm);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+.exp-label {
+  color: var(--nvr-text-2);
+}
+.exp-val {
+  color: var(--nvr-text);
+}
+.exp-marks-hint {
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  color: var(--nvr-text-2);
+  margin-bottom: 6px;
+}
+.exp-mark-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mark-chip {
+  padding: calc(6px * var(--nvr-font-scale, 1)) calc(12px * var(--nvr-font-scale, 1));
+  border-radius: var(--nvr-radius-full);
+  border: 1px solid var(--nvr-border);
+  background: var(--nvr-panel-2);
+  color: var(--nvr-text-2);
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+  cursor: pointer;
+}
+.mark-chip.sel {
+  border-color: var(--nvr-accent);
+  color: var(--nvr-accent);
+  background: rgba(46, 168, 255, 0.12);
+}
+.exp-tasks-title {
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+  color: var(--nvr-text-2);
+  margin-bottom: 4px;
+}
+.exp-task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--nvr-border);
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+}
+.exp-task-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.exp-task-name {
+  color: var(--nvr-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exp-task-status {
+  color: var(--nvr-text-2);
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+}
+.exp-task-status.done { color: #2ecc8f; }
+.exp-task-status.error { color: #ff4d4f; }
+.exp-task-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.exp-confirm {
+  margin-top: 6px;
+  font-size: calc(15px * var(--nvr-font-scale, 1));
 }
 .seg-wrap {
   padding: 4px 14px 14px;

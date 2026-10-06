@@ -5,13 +5,13 @@ import { fetchAppSettings, fetchStorageInfo, isBackend, isDemoMode, patchAppSett
 import { defaultSettings } from '../mocks/generator'
 
 const SK = 'nvr_settings_local'
-interface LocalSettings { theme: 'dark' | 'light'; fontSize: 'normal' | 'large' | 'xlarge'; careMode: boolean; demoMode: boolean }
+interface LocalSettings { theme: 'auto' | 'dark' | 'light'; fontSize: 'normal' | 'large' | 'xlarge'; careMode: boolean; demoMode: boolean }
 const LOCAL_KEYS = ['theme', 'fontSize', 'careMode', 'demoMode'] as const
 function loadLocal(): LocalSettings {
-  const result: LocalSettings = { theme: 'dark', fontSize: 'normal', careMode: false, demoMode: false }
+  const result: LocalSettings = { theme: 'auto', fontSize: 'normal', careMode: false, demoMode: false }
   try {
     const raw = JSON.parse(localStorage.getItem(SK) || '{}')
-    if (raw?.theme === 'dark' || raw?.theme === 'light') result.theme = raw.theme
+    if (raw?.theme === 'dark' || raw?.theme === 'light' || raw?.theme === 'auto') result.theme = raw.theme
     if (['normal', 'large', 'xlarge'].includes(raw?.fontSize)) result.fontSize = raw.fontSize
     if (typeof raw?.careMode === 'boolean') result.careMode = raw.careMode
     if (typeof raw?.demoMode === 'boolean') result.demoMode = raw.demoMode

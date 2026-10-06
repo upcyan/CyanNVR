@@ -131,6 +131,22 @@ function onPreview(e: EventItem) {
   showPreview.value = true
 }
 
+// 跳到回放页对应时刻：携带设备/日期/毫秒时间戳，
+// 回放页负责吸附到最近录像段并从该时刻建会话。
+function jumpToPlayback(e: EventItem) {
+  const t = new Date(e.time).getTime()
+  if (!Number.isFinite(t)) return
+  const d = new Date(t)
+  router.push({
+    path: '/playback',
+    query: {
+      device: e.deviceId || undefined,
+      date: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`,
+      t: String(t),
+    },
+  })
+}
+
 watch([deviceId, dateStr, typeFilter], () => load())
 
 onMounted(() => {
@@ -234,8 +250,17 @@ onMounted(() => {
           <div class="time mono">{{ fmtTime(e.time) }}</div>
         </div>
         <div class="dl-btns">
+          <button
+            type="button"
+            class="dl-btn play"
+            :aria-label="'跳转到回放：' + e.deviceName"
+            title="跳转到回放"
+            @click.stop="jumpToPlayback(e)"
+          >
+            <van-icon name="play-circle-o" />
+          </button>
           <a v-if="e.snapshot" :href="downloadEventSnapshotURL(e.id)" class="dl-btn" title="下载截图 JPG" @click.stop>
-            <van-icon name="down" size="14" />
+            <van-icon name="down" />
           </a>
           <a v-if="e.gif" :href="downloadEventGIFURL(e.id)" class="dl-btn dl-gif" title="下载动图 GIF" @click.stop>
             <span class="dl-gif-txt">GIF</span>
@@ -266,9 +291,25 @@ onMounted(() => {
     <van-popup v-model:show="showPreview" position="center" :style="{ maxWidth: '92vw', background: '#000', borderRadius: '12px', overflow: 'hidden' }">
       <img v-if="previewUrl" :src="previewUrl" class="preview-img" alt="事件大图" />
       <div class="preview-bar">
-        <span class="preview-cap">{{ previewCap }}</span>
+        <button
+          type="button"
+          class="preview-cap control-button"
+          title="跳转到回放"
+          aria-label="跳转到回放"
+          @click="previewEvent && jumpToPlayback(previewEvent)"
+        >{{ previewCap }}<van-icon name="play-circle-o" /></button>
+        <button
+          v-if="previewEvent"
+          type="button"
+          class="dl-btn play"
+          title="跳转到回放"
+          aria-label="跳转到回放"
+          @click="jumpToPlayback(previewEvent)"
+        >
+          <van-icon name="play-circle-o" />
+        </button>
         <a v-if="previewEvent?.snapshot" :href="downloadEventSnapshotURL(previewEvent.id)" class="dl-btn" title="下载截图">
-          <van-icon name="down" size="16" />
+          <van-icon name="down" />
         </a>
         <a v-if="previewEvent?.gif" :href="downloadEventGIFURL(previewEvent.id)" class="dl-btn dl-gif" title="下载动图 GIF">
           <span class="dl-gif-txt">GIF</span>
@@ -547,6 +588,13 @@ onMounted(() => {
   display: flex;
   gap: 6px;
 }
+.dl-btn .van-icon {
+  /* 图标字号交给缩放变量：内联 size 在关怀模式下不会放大 */
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+.dl-btn.play {
+  color: var(--nvr-accent);
+}
 .dl-btn {
   width: 24px;
   height: 24px;
@@ -582,9 +630,49 @@ onMounted(() => {
   :global(body.care .events-page .ev-card .media) { width: 100%; }
   :global(body.care .events-page .ev-card .dl-btn),
   :global(body.care .events-page .ev-card .del) { width: 44px; height: 44px; }
+  :global(body.care .events-page .ev-card .dl-btn .van-icon),
+  :global(body.care .events-page .ev-card .del .van-icon) { font-size: calc(22px * var(--nvr-font-scale, 1)); }
 }
 .dl-btn:active {
   color: var(--nvr-accent);
+}
+/* 事件页内的 van-button（加载更多/清除筛选）：接入字号缩放 */
+.events-page :deep(.van-button) {
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+  height: auto;
+  padding: calc(7px * var(--nvr-font-scale, 1)) calc(14px * var(--nvr-font-scale, 1));
+}
+:global(body.care .events-page .van-button) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+  padding: calc(10px * var(--nvr-font-scale, 1)) calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .events-page .type-chips .chip) {
+  padding: 9px 18px;
+}
+/* 预览弹层：说明行改为可点跳转，关怀模式放大 */
+.preview-cap {
+  cursor: pointer;
+  text-align: left;
+}
+.preview-cap .van-icon {
+  margin-left: 6px;
+  color: var(--nvr-accent);
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+:global(body.care .preview-cap) {
+  font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+:global(body.care .preview-bar .dl-btn) {
+  width: 44px;
+  height: 44px;
+}
+:global(body.care .preview-bar .dl-btn .van-icon) {
+  font-size: calc(20px * var(--nvr-font-scale, 1));
+}
+/* 事件卡按钮里的图标在关怀模式同步放大（此前只有按钮盒变大、图标不动） */
+:global(body.care .ev-card .dl-btn .van-icon),
+:global(body.care .ev-card .del .van-icon) {
+  font-size: calc(19px * var(--nvr-font-scale, 1));
 }
 .empty {
   text-align: center;
