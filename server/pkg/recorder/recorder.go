@@ -60,6 +60,8 @@ type Worker struct {
 	lastAuthErrAt time.Time
 	// stall 假死看门狗的每进程采样状态（键为角色名 record/live/tee）
 	stall map[string]*stallState
+	// segErrSeen 记录已处理的「分段写入失败」指纹，避免同一错误反复触发重启
+	segErrSeen string
 	// 日志降噪状态：同类告警键、上次输出时刻、被省略次数
 	errKey   string
 	errAt    time.Time
@@ -1024,6 +1026,36 @@ func stalledSince(st *stallState, nowRead uint64, now time.Time, window time.Dur
 	return now.Sub(st.lastAt) >= window
 }
 
+// segmentWriteFailure 判断 ffmpeg 输出里是否出现「分段写入失败」。
+//
+// 这是 tee 架构下最危险的一种故障：segment 只是 tee 的一个子输出，它写失败
+// （典型是目标日期目录不存在）时 **ffmpeg 进程不会退出**（实测退出码 0），
+// 直播子输出照常写，于是：
+//   - supervise 的 waitExit 不会返回 → 不会重启
+//   - 假死看门狗看的是「进程是否还在读数据」→ 直播在写 → 判定正常
+//
+// 结果录像静默中断，只能靠人为重启恢复（实测中断 94 分钟）。
+// 故必须直接识别该错误并主动重启进程（重启会重建日期目录）。
+func segmentWriteFailure(log string) bool {
+	return strings.Contains(log, "Failed to open segment") ||
+		strings.Contains(log, "error writing header")
+}
+
+// segmentFailureSince 返回本次输出中首个分段写入错误的去重标记。
+// 提取错误行作为「已处理」指纹，避免同一条错误被反复触发重启。
+func segmentFailureSince(log string) (string, bool) {
+	if !segmentWriteFailure(log) {
+		return "", false
+	}
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "Failed to open segment") ||
+			strings.Contains(line, "error writing header") {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
+}
+
 // watchProcs 巡检本 worker 的所有 ffmpeg 进程，把假死的强杀掉。
 // 杀掉后 supervise 循环会自然重启它（走既有的退避/长退避逻辑）。
 //
@@ -1049,6 +1081,22 @@ func (w *Worker) watchProcs() {
 			continue
 		}
 		seen[pid] = true
+
+		// 优先检查「分段写入失败」：这种故障下进程仍活着、仍在读流
+		// （直播子输出正常），假死看门狗永远发现不了，必须直接识别错误输出。
+		// 命中即强杀，让 supervise 重启进程并重建日期目录。
+		if fp, bad := segmentFailureSince(p.Log()); bad && fp != w.segErrSeen {
+			w.segErrSeen = fp
+			log.Printf("[%s] 录像分段写入失败，判定录像已中断，强制重启进程 %d：%s",
+				w.dev.Name, pid, fp)
+			for _, pp := range []*ffmpeg.Proc{w.teeProc, w.recordProc} {
+				if pp != nil {
+					pp.Kill()
+				}
+			}
+			continue
+		}
+
 		rc, ok := procReadBytes(pid)
 		if !ok {
 			// 拿不到 io 统计（容器限制/权限）→ 放弃看门狗，避免误杀
@@ -1611,6 +1659,11 @@ func (m *Manager) cleanupOldRecordings() {
 	// 长期运行会堆积大量空目录。放在最后做，此时可删的目录已全部删完。
 	m.pruneEmptyDirs(m.cfg.RecordDir, 0)
 
+	// 6b) 复查日期目录：ffmpeg 只在启动时预创建今天/明天/后天，
+	// 长跑跨天后不会重建；prune 又刚清过空目录。这里周期性补齐，
+	// 确保 00:00 跨天时目录一定存在（否则录像会静默中断）。
+	m.ensureRecordDayDirs(now)
+
 	// 7) 索引一致性：清掉指向已不存在文件的索引行。
 	// 升级/重启中断的分段会留下「有库行、无文件」的记录，回放按它取流会失败。
 	m.pruneMissingSegmentRows()
@@ -1790,8 +1843,54 @@ func scanForMoov(path string) bool {
 	return check(size - chunk)
 }
 
+// isFutureDateDir 判断目录名是否为「今天或未来」的 YYYYMMDD 日期目录。
+//
+// 为什么必须保护：ffmpeg 的 segment muxer **不会自建嵌套目录**（实测目标目录
+// 不存在时报 "Failed to open segment ... No such file or directory" 且零输出），
+// 而日期目录只在 ffmpeg **启动时**预创建（今天/明天/后天）。若把明天的空目录
+// 当垃圾清掉，跨过 00:00 后 ffmpeg 就写不进录像——又因为 tee 的 segment 是
+// 子输出，失败**不会**让进程退出（实测退出码 0），直播仍在写使假死看门狗也
+// 判为正常，于是录像静默中断，只能靠人为重启恢复（曾实测中断 94 分钟）。
+func isFutureDateDir(name string, now time.Time) bool {
+	if len(name) != 8 {
+		return false
+	}
+	d, err := time.ParseInLocation("20060102", name, now.Location())
+	if err != nil {
+		return false
+	}
+	today, err := time.ParseInLocation("20060102", now.Format("20060102"), now.Location())
+	if err != nil {
+		return false
+	}
+	return !d.Before(today)
+}
+
+// ensureRecordDayDirs 预创建「今天/明天/后天」的录像日期目录。
+// ffmpeg 只在启动时建一次，长跑跨天后不会重建，故由清理循环周期性兜底。
+func (m *Manager) ensureRecordDayDirs(now time.Time) {
+	if m.st == nil {
+		return
+	}
+	devs, err := m.st.ListDevices()
+	if err != nil {
+		log.Printf("ensure record day dirs: list devices: %v", err)
+		return
+	}
+	for _, d := range devs {
+		dir := filepath.Join(m.cfg.RecordDir, d.ID)
+		for _, off := range []int{0, 1, 2} {
+			day := now.AddDate(0, 0, off).Format("20060102")
+			if err := os.MkdirAll(filepath.Join(dir, day), 0o755); err != nil {
+				log.Printf("ensure record day dir %s: %v", day, err)
+			}
+		}
+	}
+}
+
 // pruneEmptyDirs 自底向上删除 root 下的空目录（保留 root 自身）。
 // depth 用于限制递归深度，避免异常目录结构导致深层遍历。
+// 今天及未来的日期目录一律跳过（见 isFutureDateDir）。
 func (m *Manager) pruneEmptyDirs(dir string, depth int) {
 	if depth > 6 {
 		return
@@ -1800,9 +1899,14 @@ func (m *Manager) pruneEmptyDirs(dir string, depth int) {
 	if err != nil {
 		return
 	}
+	now := time.Now()
 	removed := 0
 	for _, e := range ents {
 		if !e.IsDir() {
+			continue
+		}
+		// 保护今天/未来的日期目录：ffmpeg 无法自建目录，删掉会让录像静默中断
+		if isFutureDateDir(e.Name(), now) {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
