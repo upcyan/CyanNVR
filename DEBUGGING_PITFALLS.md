@@ -133,3 +133,32 @@
     `dateStr` 建页时取一次「今天」后不再变；凌晨重新激活时仍停在昨天，被误认为
     「自动回落昨天」。修复：新增 `datePicked` 标记，未主动选过日期时
     `onActivated` 内对齐到 `todayLocal()`；主动选过（翻页/日历）则尊重用户选择。
+53. **本机可以免 WSL 直接出 fpk**（此前结论「只能靠打包机」已过时）：
+    官方 fnpack 提供 Windows 版（fnpack-1.2.3-windows-amd64，
+    https://developer.fnnas.com/docs/cli/fnpack/），Go 可交叉编译
+    （CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build）。本机实测整条链路可跑通。
+    WSL 不是必需：本机 Microsoft-Windows-Subsystem-Linux 为 Disabled，启用要
+    UAC 提权 + 重启，且会话内无法完成。
+    工具链落位：C:\Users\cyan\cyannvr-build-tools\（fnpack.exe + go-sdk\go）。
+54. **Windows 版 fnpack 打出的包权限位全部退化**：包内文件恒为 666、目录恒为 777，
+    因为 Windows 没有 Unix 模式位。cmd/* 生命周期脚本因此失去可执行位，飞牛安装报
+    `fork/exec .../cmd/install_init: permission denied` 并回滚（即 10237 那类失败）。
+    Linux/macOS 上的 fnpack 保留源文件真实模式，所以此前在打包机上从未暴露。
+    修复：fpk/fix-fpk-modes.py 按内容自证重写模式位（目录 755 / `#!` 与 ELF 755 /
+    其余 644），并已接入 build-fpk.sh（按 uname 判定 MSYS/MinGW 平台后自动执行）。
+55. **fnpack 会重写 manifest，且 checksum = md5(app.tgz)**：包内 manifest 不是磁盘上
+    那份——fnpack 会追加一行 `checksum = <32 位十六进制>` 并把整份文件写成 CRLF。
+    实测该值等于压缩后 app.tgz 的 MD5（不是内层解压内容的摘要）。
+    **改包（含重写 app.tgz）后必须重算该行**，否则飞牛完整性校验失败；
+    fix-fpk-modes.py 已实现重算 + 落盘前自检。
+56. **Git Bash 里 `OS` 可能是空的**：`[ "${OS:-}" = "Windows_NT" ]` 判定平台会失效
+    （实测该变量未导出），导致 Windows 专属后处理被静默跳过——现象是「脚本改了但
+    行为没变」。改用 `uname -s` 匹配 MINGW*/MSYS*/CYGWIN* 判定。
+57. **CRLF 检出会污染飞牛侧脚本，且让 gofmt 出现满屏假阳性**：
+    - core.autocrlf=true 下 fpk/cmd/*、wizard/*、config/*、ai_detect.py 被检出为 CRLF，
+      shebang 变成 `/bin/bash\r`，飞牛上直接无法执行；
+    - `gofmt -l` 会对 CRLF 的 .go 文件全部报格式差异（实测 56 个文件全中，
+      同一份内容转成 LF 后 0 差异），容易被误判成「代码格式长期漂移」。
+    修复：新增仓库根 .gitattributes，对上述路径强制 `text eol=lf`；
+    注意属性生效需要「删除后重新检出」——`git checkout --` 与 `checkout-index -f`
+    都不会重写已存在的文件（实测），必须 rm 后再 checkout。

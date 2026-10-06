@@ -552,6 +552,28 @@ verify_package() {
     [ -z "$missing" ] || error "包内缺少关键文件:${missing}"
     info "包内关键文件自检通过（10 项）"
 }
+
+# ── Windows 出包后处理 ──
+# 官方 fnpack 有 Windows 版，但 Windows 没有 Unix 模式位：它打出的包内所有文件
+# 都是 666、目录 777，cmd/* 生命周期脚本因此失去可执行位，飞牛安装时报
+#   fork/exec .../cmd/install_init: permission denied
+# 并回滚（实测 fnpack 1.2.3-windows-amd64）。同一原因，manifest 也会被写成
+# CRLF，且改包后必须重算它写入的 checksum = md5(app.tgz)。
+# Linux/macOS 上的 fnpack 会保留真实模式位，无需本步；因此按平台条件执行。
+# 注意：Git Bash 里 OS 环境变量可能是空的（实测），不能只用 $OS 判定；
+# uname -s 在 MSYS/MinGW 下返回 MINGW64_NT-* / MSYS_NT-*，在 Linux 上返回 Linux。
+HOST_UNAME="$(uname -s 2>/dev/null || echo unknown)"
+if [ "${OS:-}" = "Windows_NT" ] || case "$HOST_UNAME" in MINGW*|MSYS*|CYGWIN*) true ;; *) false ;; esac; then
+    FIXER="$SCRIPT_DIR/fix-fpk-modes.py"
+    if [ -f "$FIXER" ] && command -v python3 >/dev/null 2>&1; then
+        info "Windows 出包：修正包内权限位 / 行尾 / checksum ..."
+        python3 "$FIXER" "$TMP_FPK" || error "包后处理失败（fix-fpk-modes.py）"
+        python3 "$FIXER" "$TMP_FPK" --check || error "包后处理自检未通过"
+    else
+        warn "Windows 出包但缺少 python3 或 fix-fpk-modes.py，跳过权限位修正"
+        warn "  （该包可能在飞牛上因 cmd/* 不可执行而安装失败）"
+    fi
+fi
 verify_package "$TMP_FPK"
 
 chmod 644 "$TMP_FPK"
