@@ -232,7 +232,7 @@ function onViewerPlayback(d: Device) {
 </template>
 
 <style scoped>
-.data-source { margin: 0; padding: 4px 16px 12px; color: var(--nvr-text-2); font-size: 12px; overflow-wrap: anywhere; }
+.data-source { margin: 0; padding: 4px 16px 12px; color: var(--nvr-text-2); font-size: calc(12px * var(--nvr-font-scale, 1)); overflow-wrap: anywhere; }
 .live2 {
   background: var(--nvr-bg);
 }

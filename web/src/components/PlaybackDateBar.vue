@@ -31,7 +31,16 @@ const emit = defineEmits<{
     <button type="button" class="control-button" aria-label="前一天" @click="emit('prev')">
       <van-icon name="arrow-left" size="20" />
     </button>
-    <span class="date mono">{{ displayDate }}</span>
+    <!-- 紧凑模式（移动端页签行）：日期本身就是日历入口，点击弹出月历 -->
+    <span
+      class="date mono"
+      :class="{ tappable: compact }"
+      :role="compact ? 'button' : undefined"
+      :tabindex="compact ? 0 : undefined"
+      :aria-label="compact ? '选择日期' : undefined"
+      @click="compact && emit('pick-calendar')"
+      @keydown.enter="compact && emit('pick-calendar')"
+    >{{ displayDate }}</span>
     <button type="button" class="control-button" aria-label="后一天" @click="emit('next')">
       <van-icon name="arrow" size="20" />
     </button>
@@ -59,6 +68,15 @@ const emit = defineEmits<{
 }
 .date-bar .date {
   white-space: nowrap;
+}
+/* 紧凑模式：日期即日历入口，给出可点击提示 */
+.date-bar .date.tappable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.date-bar .date.tappable:active {
+  color: var(--nvr-accent);
 }
 .cal-toggle {
   display: none;

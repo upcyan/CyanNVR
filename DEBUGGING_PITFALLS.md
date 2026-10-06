@@ -116,3 +116,20 @@
     下方内容会与其重叠——父容器需 padding-bottom 预留标签空间。
 49. **控制条新增按钮后窄屏必爆版**：flex-wrap:wrap 会让按钮竖摞盖满画面；应 nowrap +
     移动端紧凑尺寸（按钮 36-42px），再以横向滚动兜底极端情况。
+50. **`:global()` 的逗号分组会静默失效**：写
+    `:global(body.care) .pb-side, :global(html[data-font-size='xlarge']) .pb-side`
+    会被编译成 `body.care,html[...] .pb-side[data-v-xxx]` —— 作用域属性只挂到
+    最后一项、逗号语义被破坏，两条规则全都不命中（页面无任何变化，也不报错）。
+    正确写法是把整个选择器包进一个 `:global(...)`：`:global(body.care .pb-side)`。
+    同理 `:global(A) :deep(B)` 组合也会丢规则（实测未产出 CSS），需要纯全局选择器。
+    验证手段：抓 `http://localhost:5173/src/xxx.vue?vue&type=style&index=0&scoped=<hash>&lang.css`
+    看编译产物，或运行时遍历 `document.styleSheets` 比对规则是否存在。
+51. **关怀模式的字号基数是 1（历史 bug）**：`applyA11y()` 曾把 care 模式的
+    `--nvr-font-scale` 设为 1，而 care 只覆盖**部分**元素（Vant 组件 + 少数自绘类）。
+    结果是「开启关怀模式」比「关闭关怀 + 特大字体(1.4)」还小（实测回放页 15px vs 16.8px）。
+    修复：care 的基数直接取 xlarge 档（1.4），care 专属规则再在其上放大，
+    从而恒有「关怀 ≥ 特大字体」。新增字号规则时优先用 calc(Npx * var(--nvr-font-scale))。
+52. **keep-alive 页面跨零点不会换日期**：回放页用 `<keep-alive :max="4">`，
+    `dateStr` 建页时取一次「今天」后不再变；凌晨重新激活时仍停在昨天，被误认为
+    「自动回落昨天」。修复：新增 `datePicked` 标记，未主动选过日期时
+    `onActivated` 内对齐到 `todayLocal()`；主动选过（翻页/日历）则尊重用户选择。

@@ -561,7 +561,7 @@ onMounted(() => {
 }
 /* GIF 下载按钮用文字徽标与「下载截图」的箭头区分（原先两个按钮同图标难以分辨） */
 .dl-btn.dl-gif {
-  font-size: 8px;
+  font-size: calc(8px * var(--nvr-font-scale, 1));
   font-weight: 700;
   letter-spacing: .2px;
 }

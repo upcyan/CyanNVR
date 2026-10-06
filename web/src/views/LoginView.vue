@@ -34,12 +34,20 @@ const router = useRouter()
 // 登录页重新输密码，表现为「web 里免登录正常、fpk 里不生效」（浏览器地址直开
 // 落在 /login 时同样受影响）。现在登录页挂载时若本地持有 token 且后端可达，
 // 静默调 fetchMe 验证：有效或窗口内已续签 → 直达目标页；失败（吊销/窗口已过/
-// 改密）→ 留在登录页，行为与旧版一致。期间登录按钮转 loading，避免用户刚开始
-// 输入就被导航打断。
-const resuming = ref(false)
+// 改密）→ 留在登录页，行为与旧版一致。自动登录期间：表单预填「当前用户名 +
+// 六个点」并置为只读（避免用户刚开始输入就被导航打断），按钮显示「自动登录中」；
+// 凭据校验结束后 resuming 归 false，表单自动恢复可交互供手动登录。
+const PASSWORD_MASK = '••••••'
+const resuming = ref(!!auth.token && isBackend())
+const resumeUsername = computed(() => auth.user?.username || '')
+function onUsernameInput(v: string | number) {
+  if (!resuming.value) username.value = String(v)
+}
+function onPasswordInput(v: string | number) {
+  if (!resuming.value) password.value = String(v)
+}
 onMounted(async () => {
-  if (!auth.token || !isBackend()) return
-  resuming.value = true
+  if (!resuming.value) return
   try {
     const user = await fetchMe()
     auth.user = user
@@ -73,6 +81,8 @@ async function retryConnection() {
 }
 
 async function submit() {
+  // 自动登录进行中不接受手动提交（校验结束后表单自动恢复可交互）
+  if (resuming.value) return
   if (!username.value.trim() || !password.value) {
     showToast('请输入用户名和密码')
     return
@@ -237,20 +247,38 @@ function closeReset() {
     </div>
 
     <van-cell-group inset class="form">
-      <van-field v-model="username" name="username" autocomplete="username" autocapitalize="none" label="用户名" placeholder="请输入用户名" />
       <van-field
-        v-model="password"
+        :model-value="resuming ? resumeUsername : username"
+        :readonly="resuming"
+        name="username"
+        autocomplete="username"
+        autocapitalize="none"
+        label="用户名"
+        placeholder="请输入用户名"
+        @update:model-value="onUsernameInput"
+      />
+      <van-field
+        :model-value="resuming ? PASSWORD_MASK : password"
+        :readonly="resuming"
         type="password"
         name="password"
         autocomplete="current-password"
         label="密码"
         placeholder="请输入密码"
+        @update:model-value="onPasswordInput"
         @keyup.enter="submit"
       />
     </van-cell-group>
 
     <div class="btns">
-      <van-button type="primary" block round :loading="loading || resuming" @click="submit">登 录</van-button>
+      <van-button
+        type="primary"
+        block
+        round
+        :loading="loading || resuming"
+        :loading-text="resuming ? '自动登录中' : undefined"
+        @click="submit"
+      >登 录</van-button>
       <van-button plain block round style="margin-top: 10px" @click="$router.push('/server')">
         服务器设置
       </van-button>

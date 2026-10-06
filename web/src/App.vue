@@ -47,7 +47,11 @@ function applyA11y() {
   const careActive = s.careMode || !!auth.user?.careMode
   const fontScale = { normal: '1', large: '1.2', xlarge: '1.4' }
   // 只放大文字，保持布局视口、导航断点与弹窗定位一致。
-  document.documentElement.style.setProperty('--nvr-font-scale', careActive ? '1' : fontScale[s.fontSize] || '1')
+  // 关怀模式基数取「特大字体」同档（1.4），而不是此前的 1：care 的叠加规则
+  // 只覆盖部分元素，基数被钳成 1 会让未覆盖到的文字比「关闭关怀 + 特大字体」
+  // 还小（实测回放页关怀 15px vs 特大 16.8px）。care 专属规则在此基础上继续
+  // 放大，因此最终恒有「关怀 ≥ 特大字体」。
+  document.documentElement.style.setProperty('--nvr-font-scale', careActive ? fontScale.xlarge : fontScale[s.fontSize] || '1')
   document.documentElement.dataset.fontSize = careActive ? 'normal' : s.fontSize
   document.body.classList.toggle('care', careActive)
   document.body.classList.toggle('light', s.theme === 'light')
@@ -360,7 +364,7 @@ body.light .side-status .status-bar {
   box-shadow: 0 0 6px #ff4d4f;
 }
 .status-arrow {
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-3);
   margin-left: auto;
 }

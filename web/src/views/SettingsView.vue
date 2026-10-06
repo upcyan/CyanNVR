@@ -1784,12 +1784,12 @@ async function removeUser(u: ManagedUser) {
   outline-offset: -2px;
 }
 .set-block-title {
-  font-size: 14px;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
   font-weight: 600;
   color: var(--nvr-text-2);
 }
 .set-block-arrow {
-  font-size: 16px;
+  font-size: calc(16px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-3);
   transition: transform 0.2s ease;
 }
@@ -1922,7 +1922,7 @@ async function removeUser(u: ManagedUser) {
     border-radius: 0;
   }
   .settings-page.has-sidenav .set-block-header:active { background: transparent; }
-  .settings-page.has-sidenav .set-block-title { font-size: 15px; }
+  .settings-page.has-sidenav .set-block-title { font-size: calc(15px * var(--nvr-font-scale, 1)); }
   .settings-page.has-sidenav .set-block :deep(.van-cell-group),
   .settings-page.has-sidenav .set-block:has(.set-block-header) :deep(.van-cell-group) {
     border: 0;

@@ -259,6 +259,8 @@ const speeds = [1, 2, 4, 8]
   font-size: calc(12px * var(--nvr-font-scale, 1));
   font-weight: 600;
   color: rgba(255, 255, 255, 0.85);
+  /* 大字号窄屏下「30秒」会被拆成两行（实测 320px 关怀模式），禁止换行 */
+  white-space: nowrap;
 }
 /* 时间跳转弹层：悬于控制条上方 */
 .jump-pop {

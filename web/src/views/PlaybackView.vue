@@ -18,12 +18,17 @@ const store = useDeviceStore()
 const route = useRoute()
 const router = useRouter()
 
-const today = new Date()
 const p2 = (n: number) => String(n).padStart(2, '0')
-const todayStr = `${today.getFullYear()}-${p2(today.getMonth() + 1)}-${p2(today.getDate())}`
+/** 本地「今天」的日期串（每次重新求值，跨零点后不能沿用建页时的常量） */
+const todayLocal = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+}
 
 const deviceId = ref('')
-const dateStr = ref(todayStr)
+const dateStr = ref(todayLocal())
+/** 用户是否主动选过日期（翻页/日历）。未选过时，跨零点激活页面要对齐到新的一天 */
+let datePicked = false
 const monthDays = ref<DayRecord[]>([])
 const segments = ref<RecordingSegment[]>([])
 const dayEvents = ref<EventItem[]>([])
@@ -505,10 +510,12 @@ function downloadSegment(s: RecordingSegment) {
 }
 
 function onSelectDate(date: string) {
+  datePicked = true
   dateStr.value = date
 }
 
 function shiftDay(delta: number) {
+  datePicked = true
   const d = new Date(`${dateStr.value}T12:00:00`)
   d.setDate(d.getDate() + delta)
   dateStr.value = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
@@ -598,9 +605,14 @@ onDeactivated(() => {
 onActivated(() => {
   if (active) return
   active = true
+  // 跨零点：keep-alive 页面不会自己刷新日期，此前凌晨重新打开时仍停在昨天的
+  // 日期与昨天的段数上（会被误认为「自动回落昨天」）。用户没主动选过日期时
+  // 激活即对齐到当天；主动选过则尊重用户选择（可能就是要看昨天）。
+  const dayChanged = !datePicked && dateStr.value !== todayLocal()
+  if (dayChanged) dateStr.value = todayLocal()
   const q = route.query.device as string | undefined
   if (q && q !== deviceId.value && store.byId(q)) deviceId.value = q
-  else { loadMonth(); loadSegments() }
+  else if (!dayChanged) { loadMonth(); loadSegments() }
   startTimer()
 })
 
@@ -645,7 +657,7 @@ onBeforeUnmount(() => {
     <van-nav-bar title="录像管理">
       <template #right>
         <button type="button" class="device-picker control-button" aria-label="选择回放设备" @click="pickDevice">
-          {{ device?.name ?? '选择设备' }}
+          <span class="dp-name">{{ device?.name ?? '选择设备' }}</span>
           <van-icon name="arrow-down" size="12" />
         </button>
       </template>
@@ -654,6 +666,7 @@ onBeforeUnmount(() => {
     <div class="pb-tabs" role="tablist">
       <button type="button" class="pb-tab" :class="{ on: activeTab === 'playback' }" role="tab" :aria-selected="activeTab === 'playback'" @click="activeTab = 'playback'">回放</button>
       <button type="button" class="pb-tab" :class="{ on: activeTab === 'events' }" role="tab" :aria-selected="activeTab === 'events'" @click="activeTab = 'events'">事件</button>
+      <!-- 移动端日期与日历入口合并为同一控件：点击日期即弹出月历（原独立日历按钮间隔过大） -->
       <PlaybackDateBar
         class="pb-tab-date"
         :date="dateStr"
@@ -661,11 +674,8 @@ onBeforeUnmount(() => {
         :show-calendar-button="false"
         @prev="shiftDay(-1)"
         @next="shiftDay(1)"
+        @pick-calendar="calOpen = true"
       />
-      <!-- 移动端「选日期」入口：日历组件收进页签行尾（原在日期条上） -->
-      <button type="button" class="control-button cal-toggle pb-tab-cal" aria-label="选择日期" @click="calOpen = true">
-        <van-icon name="calendar-o" size="18" />
-      </button>
     </div>
 
     <div v-show="activeTab === 'events'" class="pb-events-panel">
@@ -712,7 +722,8 @@ onBeforeUnmount(() => {
           <div class="tl-head">
             <span class="mono">{{ dateStr }} 录像</span>
             <span class="play-status" :class="{ on: playing }">{{ playing ? '播放中' : '已暂停' }}</span>
-            <span>{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
+            <!-- 段数/时长/事件数在移动端与下方分段工具行重复，<1200px 隐藏（见 .tl-stats） -->
+            <span class="tl-stats">{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
           <TimelineBar
             :day-start="dayStart"
@@ -770,7 +781,7 @@ onBeforeUnmount(() => {
         <div class="seg-wrap">
           <div v-if="segments.length" class="seg-toolbar">
             <span class="seg-count">
-              当日 {{ segments.length }} 段 · {{ fmtDur(totalMinutes) }}
+              当日 {{ segments.length }} 段 · {{ fmtDur(totalMinutes) }} · {{ dayEvents.length }} 事件
             </span>
             <button type="button" class="seg-mode" :aria-pressed="groupMode" @click="groupMode = !groupMode">
               <van-icon :name="groupMode ? 'bars' : 'wap-nav'" size="14" />
@@ -853,6 +864,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+/* 设备名过长时省略：完整名称在「选择设备」弹层里可见 */
+.device-picker .dp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .player-wrap {
   position: relative;
@@ -916,6 +935,11 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 大字下统计行允许换行（单行省略会把新增的「事件数」裁掉） */
+:global(body.care) .seg-count,
+:global(html[data-font-size='xlarge']) .seg-count {
+  white-space: normal;
 }
 .seg-mode {
   color: inherit;
@@ -1231,10 +1255,33 @@ onBeforeUnmount(() => {
 .pb-tab-date {
   display: none;
 }
-/* 「选日期」按钮只在移动端出现：PC（≥1200px）右栏本身常显日历组件，
-   页签行再放一个日历按钮是重复入口。 */
-.pb-tab-cal {
-  display: none;
+@media (max-width: 1199px) {
+  /* 段数/时长/事件数改在下方分段工具行展示，时间轴上方信息行不再重复 */
+  .tl-stats {
+    display: none;
+  }
+  /* 大字（关怀模式 / 特大字体）下固定区可能吃掉几乎全部竖向空间：
+     实测 320×568 关怀模式下列表区仅剩 8px，时段列表上滑不到、看不到上午。
+     此时改为一整列外层滚动：列表按内容展开、不再内滚，保证每个小时段都能滚到。
+     注意：:global() 必须包住完整选择器，且不要写成逗号分组——
+     `:global(body.care) .pb-side, :global(html[...]) .pb-side` 会被编译成
+     `body.care,html[...] .pb-side[data-v-...]` 这种错误分组，两条规则全部失效。 */
+  :global(body.care .pb-side) {
+    flex: 0 0 auto;
+    min-height: 180px;
+    overflow: visible;
+  }
+  :global(body.care .pb-body) {
+    overflow-y: auto;
+  }
+  :global(html[data-font-size='xlarge'] .pb-side) {
+    flex: 0 0 auto;
+    min-height: 180px;
+    overflow: visible;
+  }
+  :global(html[data-font-size='xlarge'] .pb-body) {
+    overflow-y: auto;
+  }
 }
 @media (max-width: 1199px) {
   /* TimelineBar 的 00:00/24:00 时间标签是绝对定位、悬在 wrap 之外，
@@ -1266,13 +1313,6 @@ onBeforeUnmount(() => {
   }
   :global(body.care .pb-tab) {
     padding: 8px 14px;
-  }
-  .pb-tab-cal {
-    display: inline-flex;
-    margin-left: auto;
-    /* 不随行高拉伸：与日期组垂直居中对齐（关怀模式下曾顶对齐） */
-    align-self: center;
-    flex-shrink: 0;
   }
 }
 
@@ -1359,6 +1399,22 @@ onBeforeUnmount(() => {
    这里按信息层级整体上调：主文字 15–16px，辅助信息 14px。 */
 :global(body.care .playback-page .device-picker) {
   font-size: calc(16px * var(--nvr-font-scale, 1));
+}
+/* Vant 导航栏标题默认居中（max-width:60%），右侧设备名为绝对定位：
+   关怀模式大字号下两者必然重叠（实测 320px「录像管理」压住「摄像头」）。
+   窄屏下改为标题左对齐、设备名右对齐的标准 action bar 布局，并限制设备名宽度。 */
+@media (max-width: 600px) {
+  /* :global(...) 与 :deep(...) 组合会被编译丢规则（实测未产出任何 CSS），
+     这里用完整的全局选择器；.van-nav-bar__title 由 Vant 渲染、本就不带
+     scoped 属性，无需 :deep。 */
+  :global(body.care .playback-page .van-nav-bar__title) {
+    margin: 0 0 0 14px;
+    max-width: 46%;
+    text-align: left;
+  }
+  :global(body.care .playback-page .device-picker) {
+    max-width: 44vw;
+  }
 }
 :global(body.care .playback-page .pb-tab) {
   font-size: calc(16px * var(--nvr-font-scale, 1));
