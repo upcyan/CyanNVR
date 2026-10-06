@@ -200,7 +200,12 @@ body:not(.light) button:focus-visible {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 56px;
+  /* 底部不再补 56px：App.vue 的 van-tabbar 已启用 placeholder，
+     它在 .app-shell 里占用与 tabbar 等高的文档流空间（实测 58px，
+     .main 786 + placeholder 58 = 视口 844）。此前 .page 又加 56px，
+     形成双倍底部空白——用户反馈的「时间段组件与导航栏之间存在空白」。
+     各视图需要额外留白时自行设置（如 SettingsView 的 30px）。 */
+  padding-bottom: 0;
   display: flex;
   flex-direction: column;
 }
@@ -416,6 +421,30 @@ body.care .van-cell__value {
 }
 body.care .van-cell__label {
   font-size: calc(14px * var(--nvr-font-scale, 1));
+}
+
+/* 关怀模式下文字被放大后会换行，而 Vant 默认行高偏紧（实测 van-cell__label
+   字号 15px / 行高 18px = 1.2），两行之间几乎贴住，用户反馈「文字紧挨」。
+   统一给出 1.6 的行高：换行后可读性明显提升，且不影响单行布局。 */
+body.care .van-cell__title,
+body.care .van-cell__value,
+body.care .van-cell__label,
+body.care .van-cell-group__title,
+body.care .van-radio__label,
+body.care .van-field__label,
+body.care .van-field__control,
+body.care .van-button,
+body.care .opt-cell .van-cell__title,
+body.care .opt-cell .van-cell__value {
+  line-height: 1.6;
+}
+/* 段落型说明文字（设置页各区块的描述）同样按 1.6 行高。
+   这里用的是设置页实际存在的类名（set-desc/hint 等并不存在，勿臆造）。 */
+body.care .mode-desc,
+body.care .status-note,
+body.care .uid-note,
+body.care .bench-note {
+  line-height: 1.6;
 }
 body.care .van-cell-group__title {
   font-size: calc(16px * var(--nvr-font-scale, 1));
@@ -794,7 +823,10 @@ body.care .settings-page .van-cell {
 }
 body.care .settings-page .van-cell__title {
   font-size: calc(18px * var(--nvr-font-scale, 1));
-  line-height: 1.4;
+  /* 1.4 → 1.6：关怀模式放大后标题常换行（实测「更大字体与按钮、更高对比度，
+     方便长辈使用」占两行），1.4 的两行几乎贴住，用户反馈「文字紧挨」。
+     注意此处选择器比上方通用规则更具体，必须在这里同步改，否则被它覆盖。 */
+  line-height: 1.6;
 }
 body.care .settings-page .van-cell__label {
   font-size: calc(15px * var(--nvr-font-scale, 1));
@@ -949,29 +981,62 @@ body.care .settings-page .about-version {
 
 
 /* ── 全屏方向锁定失败的 CSS 旋转兜底（微信/iOS WebView 不支持 lock）──
-   横视频 + 竖屏：把全屏元素旋转 90°，宽高互换（用 vh/vw 适配视口），
-   内容 object-fit:contain 自适应，等效真横屏。 */
+   横视频 + 竖屏：把内容旋转 90°，宽高互换（用 vh/vw 适配视口），
+   内容 object-fit:contain 自适应，等效真横屏。
+
+   注意：transform **必须加在子元素上**，不能加在这两个类自身。
+   Chrome 的 :fullscreen UA 规则会覆盖用户样式里的 transform——实测同一元素
+   加类后 rotate(90deg) 正常（matrix(0,1,-1,0,...)），一进入全屏 computed
+   transform 立刻变回 none，画面仍是竖屏（这正是「全屏只有竖屏」的根因）。
+   因此这里旋转 `> *`（播放器内容层），外层只负责铺满全屏。 */
 .force-landscape {
   position: fixed !important;
-  top: 50%;
-  left: 50%;
-  width: 100vh !important;
-  height: 100vw !important;
-  max-height: none !important;
-  transform: translate(-50%, -50%) rotate(90deg);
-  transform-origin: center;
-  margin: 0 !important;
-  z-index: 9999;
-}
-.force-portrait {
-  position: fixed !important;
-  top: 50%;
-  left: 50%;
+  top: 0;
+  left: 0;
   width: 100vw !important;
   height: 100vh !important;
   max-height: none !important;
-  transform: translate(-50%, -50%) rotate(0deg);
-  transform-origin: center;
   margin: 0 !important;
   z-index: 9999;
+  background: #000;
+  overflow: hidden;
+}
+/* 只旋转内容包裹层 `.force-inner`（由 enterFullscreen 动态包一层），
+   而不是 `> *`：.player 下有 video/controls/jump-pop 等多个子元素，
+   逐个旋转会各自定位、互相错位。 */
+.force-landscape > .force-inner {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 100vh !important;
+  height: 100vw !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) rotate(90deg) !important;
+  transform-origin: center !important;
+}
+.force-portrait {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-height: none !important;
+  margin: 0 !important;
+  z-index: 9999;
+  background: #000;
+  overflow: hidden;
+}
+.force-portrait > .force-inner {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) rotate(0deg) !important;
+  transform-origin: center !important;
 }

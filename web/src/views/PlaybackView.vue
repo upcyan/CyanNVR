@@ -200,10 +200,28 @@ interface HalfGroup {
 const groupMode = ref(true) // 默认折叠；用户可关掉看平铺
 const openHours = ref<string[]>([])
 
+/**
+ * 分段在「当前查看日期」内的可见区间。
+ *
+ * 跨午夜的录像段（如 10-06 23:59:02 → 10-07 00:04:02）按「与当日有交集」
+ * 被后端纳入当天查询，但若直接用它的 start 分组/显示，就会在 10-07 页面里
+ * 冒出一条「23:00-23:59」——用户会认为「昨天的时段被错误引入今天」。
+ * 这里把区间夹到当日范围内：同一条分段在 10-07 页显示为 00:00:00-00:04:02，
+ * 在 10-06 页显示为 23:59:02-24:00:00，两侧都符合直觉。
+ * 注意：仅用于显示与分组，跳转仍用分段真实起点（文件本身就是从那里开始的）。
+ */
+function segDayRange(start: number, end: number): { a: number; b: number } {
+  const ds = dayStart.value
+  const de = ds + 86400000
+  return { a: Math.max(start, ds), b: Math.min(end, de) }
+}
+
 const halfGroups = computed<HalfGroup[]>(() => {
   const byHalf = new Map<string, Map<number, SegGroup>>()
   for (const seg of segments.value) {
-    const d = new Date(seg.start)
+    // 按「当日可见区间」的小时分组，跨午夜分段不会落到昨天的小时里
+    const { a } = segDayRange(seg.start, seg.end)
+    const d = new Date(a)
     const halfKey = d.getHours() < 12 ? 'am' : 'pm'
     const h = d.getHours()
     let hours = byHalf.get(halfKey)
@@ -216,7 +234,7 @@ const halfGroups = computed<HalfGroup[]>(() => {
       g = {
         key: `${halfKey}-${h}`,
         hourLabel: `${String(h).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:59`,
-        start: seg.start,
+        start: a,
         end: seg.end,
         segs: [],
         durationMin: 0,
@@ -224,9 +242,10 @@ const halfGroups = computed<HalfGroup[]>(() => {
       hours.set(h, g)
     }
     g.segs.push(seg)
-    g.start = Math.min(g.start, seg.start)
+    g.start = Math.min(g.start, a)
     g.end = Math.max(g.end, seg.end)
-    g.durationMin += (seg.end - seg.start) / 60000
+    // 时长只计当日可见部分，避免「1 段」却把跨天前的分钟也算进去
+    g.durationMin += (segDayRange(seg.start, seg.end).b - a) / 60000
   }
   const order = ['am', 'pm']
   const titles: Record<string, string> = { am: '上午', pm: '下午' }
@@ -719,6 +738,9 @@ onBeforeUnmount(() => {
         </div><!-- /.pb-pinned -->
 
         <div class="timeline-wrap">
+          <!-- 移动端隐藏整行：日期已在页签行、段数/时长在下方分段工具行，
+               播放状态在播放器控制条上，此处属重复信息（用户要求删除）。
+               桌面端保留（左栏较宽，信息行有价值）。 -->
           <div class="tl-head">
             <span class="mono">{{ dateStr }} 录像</span>
             <span class="play-status" :class="{ on: playing }">{{ playing ? '播放中' : '已暂停' }}</span>
@@ -808,7 +830,7 @@ onBeforeUnmount(() => {
                     class="seg-item"
                     :class="{ on: currentTs >= s.start && currentTs <= s.end }"
                   >
-                    <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</button>
+                    <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(segDayRange(s.start, s.end).a, segDayRange(s.start, s.end).b) }}</button>
                     <van-icon
                       v-if="isBackend() && !isDemoMode()"
                       name="down"
@@ -828,7 +850,7 @@ onBeforeUnmount(() => {
               class="seg-item"
               :class="{ on: currentTs >= s.start && currentTs <= s.end }"
             >
-              <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(s.start, s.end) }}</button>
+              <button class="seg-time mono control-button" @click="onSelectSegment(s)">{{ fmtRange(segDayRange(s.start, s.end).a, segDayRange(s.start, s.end).b) }}</button>
               <van-icon v-if="isBackend() && !isDemoMode()" name="down" class="seg-dl" @click.stop="downloadSegment(s)" />
             </span>
           </div>
@@ -1260,12 +1282,22 @@ onBeforeUnmount(() => {
   .tl-stats {
     display: none;
   }
+  /* 「日期 录像 + 播放中」整行在移动端全部删除（用户要求）：
+     日期在页签行、播放状态在控制条、段数在下方工具行，均属重复信息。
+     整行隐藏后时间轴直接紧贴播放器下方。 */
+  .timeline-wrap .tl-head {
+    display: none;
+  }
   /* 大字（关怀模式 / 特大字体）下固定区可能吃掉几乎全部竖向空间：
      实测 320×568 关怀模式下列表区仅剩 8px，时段列表上滑不到、看不到上午。
      此时改为一整列外层滚动：列表按内容展开、不再内滚，保证每个小时段都能滚到。
      注意：:global() 必须包住完整选择器，且不要写成逗号分组——
      `:global(body.care) .pb-side, :global(html[...]) .pb-side` 会被编译成
-     `body.care,html[...] .pb-side[data-v-...]` 这种错误分组，两条规则全部失效。 */
+     `body.care,html[...] .pb-side[data-v-...]` 这种错误分组，两条规则全部失效。
+
+     但「整列滚动」会让播放器随内容一起滚出视口——用户反馈「播放组件固定
+     失效」。因此在同一滚动容器里把固定区改为 sticky 钉在顶部：
+     列表照常按内容展开（可达性不丢），播放器依旧常驻可见（固定性不丢）。 */
   :global(body.care .pb-side) {
     flex: 0 0 auto;
     min-height: 180px;
@@ -1274,6 +1306,14 @@ onBeforeUnmount(() => {
   :global(body.care .pb-body) {
     overflow-y: auto;
   }
+  :global(body.care .pb-main) {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    /* 不透明背景：否则下方列表滚动时会从固定区底下透出来 */
+    background: var(--nvr-bg);
+    box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.55);
+  }
   :global(html[data-font-size='xlarge'] .pb-side) {
     flex: 0 0 auto;
     min-height: 180px;
@@ -1281,6 +1321,14 @@ onBeforeUnmount(() => {
   }
   :global(html[data-font-size='xlarge'] .pb-body) {
     overflow-y: auto;
+  }
+  :global(html[data-font-size='xlarge'] .pb-main) {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    /* 不透明背景：否则下方列表滚动时会从固定区底下透出来 */
+    background: var(--nvr-bg);
+    box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.55);
   }
 }
 @media (max-width: 1199px) {
@@ -1296,9 +1344,16 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     margin: 0 2px 0 4px;
+    /* flex:1 让日期条吃掉页签行的剩余宽度——否则它是 flex:0 1 auto（按内容宽），
+       clientWidth 实测仅 123px，连 320px 窄屏和 834px 宽屏都放不下「2026-10-07」，
+       年份永远显示不出来。配合组件内的实际文本测量即可做到：
+       空间够显示年份、不够压缩为月日。 */
+    flex: 1 1 auto;
+    justify-content: center;
     min-width: 0;
-    /* 组件默认 gap 22px：窄屏收窄，避免日期被挤成两行 */
-    gap: 6px;
+    /* 组件默认 gap 22px：窄屏收窄但保留可点按间距。
+       此前 6px 过挤（日期与左右箭头几乎贴住），10px 兼顾可点性又不挤掉年份。 */
+    gap: 10px;
   }
   .pb-tab-date :deep(.date) {
     font-size: calc(13px * var(--nvr-font-scale, 1));
