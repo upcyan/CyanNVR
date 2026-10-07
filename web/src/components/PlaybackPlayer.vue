@@ -57,12 +57,7 @@ const speeds = [1, 2, 4, 8]
 </script>
 
 <template>
-  <!-- 结构说明：.player 是对外容器（全屏目标）；.force-inner 是内容层。
-       全屏方向锁定失败时由 CSS 旋转 .force-inner 而非 .player——Chrome 的
-       :fullscreen UA 规则会覆盖全屏元素自身的 transform，加在外层无效。
-       包裹层写在模板里（而非运行时移动 DOM），保证 DOM 归属 Vue、patch 安全。 -->
   <div ref="wrapRef" class="player">
-   <div class="force-inner">
     <video
       ref="videoEl"
       class="video"
@@ -138,7 +133,6 @@ const speeds = [1, 2, 4, 8]
         <van-icon name="expand-o" size="22" />
       </button>
     </div>
-   </div>
   </div>
 </template>
 
@@ -149,13 +143,6 @@ const speeds = [1, 2, 4, 8]
   background: #000;
   border-radius: 10px;
   overflow: hidden;
-}
-/* 内容层：默认撑满 .player，行为与加入包裹层之前完全一致
-   （video 100% 高、controls/empty/jump-pop 相对本层绝对定位）。 */
-.force-inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
 }
 .video {
   width: 100%;

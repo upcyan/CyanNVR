@@ -1074,63 +1074,7 @@ body.care .settings-page .about-version {
 }
 
 
-/* ── 全屏方向锁定失败的 CSS 旋转兜底（微信/iOS WebView 不支持 lock）──
-   横视频 + 竖屏：把内容旋转 90°，宽高互换（用 vh/vw 适配视口），
-   内容 object-fit:contain 自适应，等效真横屏。
-
-   注意：transform **必须加在子元素上**，不能加在这两个类自身。
-   Chrome 的 :fullscreen UA 规则会覆盖用户样式里的 transform——实测同一元素
-   加类后 rotate(90deg) 正常（matrix(0,1,-1,0,...)），一进入全屏 computed
-   transform 立刻变回 none，画面仍是竖屏（这正是「全屏只有竖屏」的根因）。
-   因此这里旋转 `> *`（播放器内容层），外层只负责铺满全屏。 */
-.force-landscape {
-  position: fixed !important;
-  top: 0;
-  left: 0;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-height: none !important;
-  margin: 0 !important;
-  z-index: 9999;
-  background: #000;
-  overflow: hidden;
-}
-/* 只旋转内容包裹层 `.force-inner`（由 enterFullscreen 动态包一层），
-   而不是 `> *`：.player 下有 video/controls/jump-pop 等多个子元素，
-   逐个旋转会各自定位、互相错位。 */
-.force-landscape > .force-inner {
-  position: absolute !important;
-  top: 50% !important;
-  left: 50% !important;
-  width: 100vh !important;
-  height: 100vw !important;
-  max-width: none !important;
-  max-height: none !important;
-  margin: 0 !important;
-  transform: translate(-50%, -50%) rotate(90deg) !important;
-  transform-origin: center !important;
-}
-.force-portrait {
-  position: fixed !important;
-  top: 0;
-  left: 0;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-height: none !important;
-  margin: 0 !important;
-  z-index: 9999;
-  background: #000;
-  overflow: hidden;
-}
-.force-portrait > .force-inner {
-  position: absolute !important;
-  top: 50% !important;
-  left: 50% !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: none !important;
-  max-height: none !important;
-  margin: 0 !important;
-  transform: translate(-50%, -50%) rotate(0deg) !important;
-  transform-origin: center !important;
-}
+/* 全屏方向采用「真锁或保持原方向」策略（见 utils/screen.ts），
+   不再使用 CSS 旋转兜底——旋转画面会与系统返回手势、状态栏方向割裂，
+   形成「画面横了、交互还是竖屏」的伪横屏。真机锁不上的环境（iOS/桌面）
+   保持竖屏全屏，由用户手动旋转设备由系统自适应。 */
