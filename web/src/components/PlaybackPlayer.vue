@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { showToast } from 'vant'
 
 const props = defineProps<{
   displayTime: number
@@ -53,6 +54,35 @@ function getWrap() {
 }
 defineExpose({ getVideoEl, getWrap })
 
+// 截图当前回放帧：video 为同源 HLS，可直接 drawImage 到 canvas 后导出 jpg。
+// 命名含设备与时间戳，便于区分多台设备/多次截图。
+function snapshot() {
+  const v = videoEl.value
+  if (!v || !v.videoWidth) {
+    showToast('无法截图：画面尚未就绪')
+    return
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = v.videoWidth
+  canvas.height = v.videoHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.drawImage(v, 0, 0)
+  canvas.toBlob((blob) => {
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const now = new Date()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    const ts = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`
+    a.href = url
+    a.download = `playback_${props.deviceName || 'camera'}_${ts}.jpg`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('截图已保存')
+  }, 'image/jpeg', 0.95)
+}
+
 const speeds = [1, 2, 4, 8]
 </script>
 
@@ -94,6 +124,10 @@ const speeds = [1, 2, 4, 8]
     <div v-if="hasStream" class="controls">
       <button type="button" class="btn" :aria-label="playing ? '暂停回放' : '播放回放'" @click="emit('toggle')">
         <van-icon :name="playing ? 'pause-circle-o' : 'play-circle-o'" size="26" />
+      </button>
+      <!-- 截图按钮：相机图标，位于后退30秒之前，截取当前回放帧 -->
+      <button type="button" class="btn" :disabled="!hasStream" aria-label="截图" @click="snapshot">
+        <van-icon name="photograph" size="20" />
       </button>
       <button type="button" class="btn skip" :disabled="!hasStream" aria-label="后退30秒" @click="emit('seek-rel', -30000)">
         <van-icon name="arrow-double-left" size="18" />

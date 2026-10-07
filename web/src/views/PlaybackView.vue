@@ -996,20 +996,22 @@ onBeforeUnmount(() => {
             <span class="tl-stats">{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
           <div class="tl-row">
-            <!-- 导出按钮（左）＋时间轴（中）＋标记按钮（右）：图标在上、文案在下。 -->
-            <button
-              v-if="isBackend() && !isDemoMode()"
-              type="button"
-              class="export-btn control-button tl-side-btn"
-              :class="{ live: runningExports > 0 }"
-              aria-label="导出录像"
-              @click="openExportDialog"
-            >
-              <van-badge :content="runningExports" :show-zero="false" max="9+">
-                <van-icon name="down" />
-              </van-badge>
+            <!-- 导出按钮（左）＋时间轴（中）＋标记按钮（右）。
+                 文案在按钮下方，与时间轴下方 .labels 的 00:00/24:00 同高同大小。 -->
+            <div v-if="isBackend() && !isDemoMode()" class="tl-side">
+              <button
+                type="button"
+                class="export-btn control-button tl-side-btn"
+                :class="{ live: runningExports > 0 }"
+                aria-label="导出录像"
+                @click="openExportDialog"
+              >
+                <van-badge :content="runningExports" :show-zero="false" max="9+">
+                  <van-icon name="down" />
+                </van-badge>
+              </button>
               <span class="tl-btn-label">导出</span>
-            </button>
+            </div>
             <div class="tl-main">
               <TimelineBar
                 :day-start="dayStart"
@@ -1021,18 +1023,19 @@ onBeforeUnmount(() => {
                 @seekend="onSeekEnd"
               />
             </div>
-            <button
-              v-if="isBackend() && !isDemoMode()"
-              type="button"
-              class="mark-btn control-button tl-side-btn"
-              :class="{ on: markBtnOn }"
-              :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
-              :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
-              @click="toggleMark"
-            >
-              <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
+            <div v-if="isBackend() && !isDemoMode()" class="tl-side">
+              <button
+                type="button"
+                class="mark-btn control-button tl-side-btn"
+                :class="{ on: markBtnOn }"
+                :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
+                :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
+                @click="toggleMark"
+              >
+                <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
+              </button>
               <span class="tl-btn-label">标记</span>
-            </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1282,7 +1285,7 @@ onBeforeUnmount(() => {
    按钮组在左、时间轴占满剩余宽度，视觉基线统一。 */
 .tl-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 0 14px;
 }
@@ -1290,19 +1293,28 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
 }
-/* 时间轴两侧按钮：图标在上、文案在下，竖排；宽度与时间轴（36px）协调，
-   触控目标放大约 44px 高，图标与文案不拥挤。 */
-.tl-side-btn {
+/* 时间轴两侧按钮组：按钮只含图标，文案在按钮下方；
+   文案与时间轴下方 .labels（00:00/24:00，11px，关怀 14px）同高同大小。
+   按钮高度 = 时间轴 track 高度（36px），顶部 padding 6px 与 .timeline 的
+   padding-top 对齐，gap 4px 与 .labels 的 margin-top 对齐，从而文案行
+   与时间轴下方 00:00/24:00 处在同一水平线上。 */
+.tl-side {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+}
+.tl-side-btn {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 2px;
   width: 40px;
   min-width: 40px;
-  height: 44px;
-  padding: 2px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
   border-radius: var(--nvr-radius-md);
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel-2);
@@ -1313,8 +1325,12 @@ onBeforeUnmount(() => {
 .tl-btn-label {
   font-size: calc(11px * var(--nvr-font-scale, 1));
   line-height: 1.2;
-  color: inherit;
+  color: var(--nvr-text-2);
   white-space: nowrap;
+}
+/* 关怀模式：文案与时间轴 labels 同放大到 14px */
+:global(body.care .tl-btn-label) {
+  font-size: calc(14px * var(--nvr-font-scale, 1));
 }
 .tl-side-btn.export-btn.live {
   color: var(--nvr-accent);
@@ -1839,8 +1855,10 @@ onBeforeUnmount(() => {
   .pb-tab-date {
     display: flex;
     align-items: center;
-    margin: 0 2px 0 4px;
-    /* 按内容宽度排列，不吃掉剩余宽度：若 flex:1，窄屏下日期条会被
+    margin: 0 2px 0 auto;
+    /* 日期组件右对齐：margin-left:auto 把它推到页签行最右侧，
+       「回放/事件」页签留在左侧，日期条独占右侧区域。
+       按内容宽度排列，不吃掉剩余宽度：若 flex:1，窄屏下日期条会被
        页签挤到第二行后独占整行，组件内的 measure() 会看到 290px 的
        独占宽度而误判「够放年份」。按内容宽排列后，年份压缩决策基于
        与页签共享一行时的真实剩余空间。 */
