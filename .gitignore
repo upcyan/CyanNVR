@@ -2,7 +2,7 @@ bin/
 obj/
 *.exe
 *.log
-data/
+/data/
 server/data/
 web/dist/
 web/node_modules/
