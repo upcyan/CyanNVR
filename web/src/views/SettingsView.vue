@@ -1153,12 +1153,14 @@ async function removeUser(u: ManagedUser) {
             <!-- 原先只有滑块、无数值显示，用户无法得知当前阈值；
                  现补充实时数值，并在松手时持久化 -->
             <div class="slider-box">
-              <van-slider
-                v-model="s.ai.threshold"
-                :min="0.1"
-                :max="1"
-                :step="0.05"
-                style="width: 110px"
+              <input
+                v-model.number="s.ai.threshold"
+                class="threshold-range"
+                type="range"
+                aria-label="AI 识别触发阈值"
+                min="0.1"
+                max="1"
+                step="0.05"
                 @change="store.set({ ai: { ...s.ai, threshold: s.ai.threshold } })"
               />
               <span class="days">{{ (s.ai.threshold ?? 0.5).toFixed(2) }}</span>
@@ -1547,9 +1549,20 @@ async function removeUser(u: ManagedUser) {
   gap: 8px;
   min-width: 0;
 }
-.slider-box :deep(.van-slider) {
-  flex-shrink: 1;
-  min-width: 48px;
+.threshold-range {
+  width: 110px;
+  flex: 1 1 110px;
+  min-width: 80px;
+  min-height: 36px;
+  margin: 0;
+  accent-color: var(--nvr-accent);
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+:global(body.care .threshold-range) {
+  min-height: 44px;
 }
 .days {
   font-size: calc(12px * var(--nvr-font-scale, 1));

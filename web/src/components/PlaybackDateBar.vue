@@ -71,16 +71,22 @@ function measure() {
 }
 
 let ro: ResizeObserver | null = null
+let fontObserver: MutationObserver | null = null
 onMounted(() => {
   measure()
   if (typeof ResizeObserver !== 'undefined') {
     ro = new ResizeObserver(() => measure())
     if (barRef.value) ro.observe(barRef.value)
   }
+  // 切换关怀模式时字体会变，但容器宽度可能不变，ResizeObserver 不一定触发。
+  fontObserver = new MutationObserver(() => nextTick(measure))
+  fontObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-font-size'] })
+  fontObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
   window.addEventListener('resize', measure)
 })
 onBeforeUnmount(() => {
   ro?.disconnect()
+  fontObserver?.disconnect()
   window.removeEventListener('resize', measure)
 })
 // 日期变化（跨天切换）后重新测量

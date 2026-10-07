@@ -809,6 +809,17 @@ body.care .vbtn {
   font-size: calc(14px * var(--nvr-font-scale, 1));
 }
 
+/* 仅拖动控件及其数值禁止选中，说明文字和输入框仍可复制/编辑。 */
+.van-slider,
+.slider-box,
+.control-button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.van-slider {
+  touch-action: none;
+}
+
 /* ---- 设置页 ---- */
 /* 底部导航已有 placeholder，只保留内容留白。 */
 body.care .page { padding-bottom: 24px; }

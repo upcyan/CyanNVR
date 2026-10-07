@@ -57,7 +57,7 @@ const DAY = 86400000
 const pct = (ts: number) =>
   Math.min(100, Math.max(0, ((ts - props.dayStart) / DAY) * 100))
 
-let dragging = false
+let activePointer: number | null = null
 
 function ratioFromX(clientX: number): number {
   const el = trackRef.value
@@ -75,25 +75,30 @@ function handleMove(e: PointerEvent) {
 }
 
 function onDown(e: PointerEvent) {
-  dragging = true
-  ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+  if (!e.isPrimary || e.button !== 0 || activePointer !== null) return
+  // 阻止鼠标拖动启动文字选择，但保留键盘焦点和方向键操作。
+  e.preventDefault()
+  activePointer = e.pointerId
+  const track = e.currentTarget as HTMLElement
+  track.focus({ preventScroll: true })
+  track.setPointerCapture?.(e.pointerId)
   handleMove(e)
 }
 function onMove(e: PointerEvent) {
-  if (dragging) handleMove(e)
+  if (activePointer === e.pointerId) handleMove(e)
 }
-// 松手时提交最终位置：pointermove 不一定落在抬手的那一点，
-// 只靠 move 会出现「拖到末端却停在中间」的偏差。
 function onUp(e: PointerEvent) {
-  if (!dragging) return
-  dragging = false
+  if (activePointer !== e.pointerId) return
+  activePointer = null
+  const track = e.currentTarget as HTMLElement
+  if (track.hasPointerCapture?.(e.pointerId)) track.releasePointerCapture(e.pointerId)
   const ts = tsFromX(e.clientX)
   emit('seek', ts)
   emit('seekend', ts)
 }
-function onCancel() {
-  if (!dragging) return
-  dragging = false
+function onCancel(e: PointerEvent) {
+  if (activePointer !== e.pointerId) return
+  activePointer = null
   emit('seekend', props.value)
 }
 
@@ -136,6 +141,7 @@ function onKeydown(e: KeyboardEvent) {
       @pointermove="onMove"
       @pointerup="onUp"
       @pointercancel="onCancel"
+      @lostpointercapture="onCancel"
     >
       <div class="seg"
         v-for="s in segments"
@@ -182,6 +188,8 @@ function onKeydown(e: KeyboardEvent) {
 <style scoped>
 .timeline {
   padding: 6px 14px 10px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .track {
   position: relative;

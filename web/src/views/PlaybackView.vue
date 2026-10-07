@@ -1868,6 +1868,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1199px) {
   .player-wrap {
     padding: 8px 12px;
+    min-height: 0;
     background: var(--nvr-bg);
   }
   /* 播放器高度：竖屏接近 16:9；横屏（如 844×390）下 56.25vw=475px 会占满整屏，
@@ -1925,6 +1926,92 @@ onBeforeUnmount(() => {
   }
   .pb-mobile-date {
     display: none;
+  }
+}
+
+/* 移动端统一使用两段式：固定播放区 + 独立列表滚动。
+   sticky + 外层滚动虽能固定播放器，却会让列表从固定区下面穿过，
+   小屏关怀模式还会留下几乎不可操作的列表窗口。限制画面高度而非缩小文字。 */
+@media (max-width: 1199px) {
+  .playback-page,
+  :global(body.care .playback-page) {
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  .pb-body,
+  :global(body.care .playback-page .pb-body),
+  :global(html[data-font-size='xlarge'] .playback-page .pb-body) {
+    overflow: hidden;
+  }
+  .pb-main,
+  :global(body.care .playback-page .pb-main),
+  :global(html[data-font-size='xlarge'] .playback-page .pb-main) {
+    position: relative;
+    flex: 0 0 auto;
+    box-shadow: none;
+  }
+  .pb-side,
+  :global(body.care .playback-page .pb-side),
+  :global(html[data-font-size='xlarge'] .playback-page .pb-side) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  .player-wrap :deep(.player) {
+    height: clamp(72px, 56.25vw, calc(100dvh - 340px));
+  }
+  .pb-tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .pb-tab-date :deep(.control-button) {
+    flex-shrink: 0;
+  }
+  .pb-main .timeline-wrap {
+    padding-bottom: 8px;
+  }
+  :global(body.care .playback-page .pb-tabs) {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  :global(body.care .playback-page .pb-tab-date) {
+    min-width: 150px;
+  }
+}
+
+@media (max-width: 1199px) {
+  :global(body.care .playback-page .player-wrap .player),
+  :global(html[data-font-size='xlarge'] .playback-page .player-wrap .player) {
+    height: clamp(72px, 56.25vw, calc(100dvh - 460px));
+  }
+}
+/* 矮横屏左右分区，避免顶部固定区吃掉全部列表空间。 */
+@media (min-width: 600px) and (max-width: 1199px) and (max-height: 520px) {
+  .pb-body {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .pb-main,
+  :global(body.care .playback-page .pb-main),
+  :global(html[data-font-size='xlarge'] .playback-page .pb-main) {
+    width: 55%;
+    min-width: 0;
+    flex: 0 0 55%;
+  }
+  .pb-side,
+  :global(body.care .playback-page .pb-side),
+  :global(html[data-font-size='xlarge'] .playback-page .pb-side) {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+  .player-wrap :deep(.player),
+  :global(body.care .playback-page .player-wrap .player),
+  :global(html[data-font-size='xlarge'] .playback-page .player-wrap .player) {
+    height: clamp(72px, calc(100dvh - 320px), 140px);
+  }
+  .seg-time {
+    font-size: calc(12px * var(--nvr-font-scale, 1));
   }
 }
 

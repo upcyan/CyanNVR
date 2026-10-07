@@ -72,7 +72,7 @@ function applyA11y() {
   // 还小（实测回放页关怀 15px vs 特大 16.8px）。care 专属规则在此基础上继续
   // 放大，因此最终恒有「关怀 ≥ 特大字体」。
   document.documentElement.style.setProperty('--nvr-font-scale', careActive ? fontScale.xlarge : fontScale[s.fontSize] || '1')
-  document.documentElement.dataset.fontSize = careActive ? 'normal' : s.fontSize
+  document.documentElement.dataset.fontSize = careActive ? 'xlarge' : s.fontSize
   document.body.classList.toggle('care', careActive)
   document.body.classList.toggle('light', uiTheme.value === 'light')
   document.body.classList.toggle('dark', uiTheme.value === 'dark')
