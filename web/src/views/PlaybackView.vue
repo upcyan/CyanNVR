@@ -996,32 +996,20 @@ onBeforeUnmount(() => {
             <span class="tl-stats">{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
           <div class="tl-row">
-            <!-- 下载与导出按钮统一放在时间轴左侧，高度与时间轴（36px）一致。
-                 此前导出按钮独立悬在日期条上方、标记按钮在时间轴右侧，三处
-                 高度与对齐方式都不统一；现合并为左侧按钮组，与时间轴同高对齐。 -->
-            <div v-if="isBackend() && !isDemoMode()" class="tl-actions">
-              <button
-                type="button"
-                class="export-btn control-button"
-                :class="{ live: runningExports > 0 }"
-                aria-label="导出录像"
-                @click="openExportDialog"
-              >
-                <van-badge :content="runningExports" :show-zero="false" max="9+">
-                  <van-icon name="down" />
-                </van-badge>
-              </button>
-              <button
-                type="button"
-                class="mark-btn control-button"
-                :class="{ on: markBtnOn }"
-                :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
-                :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
-                @click="toggleMark"
-              >
-                <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
-              </button>
-            </div>
+            <!-- 导出按钮（左）＋时间轴（中）＋标记按钮（右）：图标在上、文案在下。 -->
+            <button
+              v-if="isBackend() && !isDemoMode()"
+              type="button"
+              class="export-btn control-button tl-side-btn"
+              :class="{ live: runningExports > 0 }"
+              aria-label="导出录像"
+              @click="openExportDialog"
+            >
+              <van-badge :content="runningExports" :show-zero="false" max="9+">
+                <van-icon name="down" />
+              </van-badge>
+              <span class="tl-btn-label">导出</span>
+            </button>
             <div class="tl-main">
               <TimelineBar
                 :day-start="dayStart"
@@ -1033,6 +1021,18 @@ onBeforeUnmount(() => {
                 @seekend="onSeekEnd"
               />
             </div>
+            <button
+              v-if="isBackend() && !isDemoMode()"
+              type="button"
+              class="mark-btn control-button tl-side-btn"
+              :class="{ on: markBtnOn }"
+              :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
+              :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
+              @click="toggleMark"
+            >
+              <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
+              <span class="tl-btn-label">标记</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1290,36 +1290,38 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
 }
-.tl-actions {
+/* 时间轴两侧按钮：图标在上、文案在下，竖排；宽度与时间轴（36px）协调，
+   触控目标放大约 44px 高，图标与文案不拥挤。 */
+.tl-side-btn {
   flex: 0 0 auto;
   display: flex;
-  align-items: stretch;
-  gap: 6px;
-  height: 36px;
-}
-.tl-actions .export-btn,
-.tl-actions .mark-btn {
-  width: 36px;
-  height: 36px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 40px;
+  min-width: 40px;
+  height: 44px;
+  padding: 2px;
   border-radius: var(--nvr-radius-md);
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel-2);
   color: var(--nvr-text-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-size: calc(16px * var(--nvr-font-scale, 1));
+  line-height: 1;
 }
-.tl-actions .export-btn {
-  min-width: 36px;
-  padding: 0;
+.tl-btn-label {
+  font-size: calc(11px * var(--nvr-font-scale, 1));
+  line-height: 1.2;
+  color: inherit;
+  white-space: nowrap;
 }
-.tl-actions .export-btn.live {
+.tl-side-btn.export-btn.live {
   color: var(--nvr-accent);
   border-color: rgba(46, 168, 255, 0.55);
   animation: export-pulse 1.6s ease-in-out infinite;
 }
-.tl-actions .mark-btn.on {
+.tl-side-btn.mark-btn.on {
   color: #ffd447;
   border-color: rgba(255, 212, 71, 0.6);
   background: rgba(255, 212, 71, 0.12);
