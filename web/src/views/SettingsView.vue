@@ -1655,21 +1655,47 @@ async function removeUser(u: ManagedUser) {
 }
 @media (max-width: 480px) {
   .settings-page :deep(.van-cell:has(.slider-box)),
+  .settings-page :deep(.van-cell:has(.days-combo)),
   .settings-page :deep(.van-cell:has(.font-opts)),
+  .settings-page :deep(.van-cell:has(.theme-opts)),
   .settings-page :deep(.van-cell:has(.progress)) {
     flex-wrap: wrap;
     gap: 12px;
   }
   .settings-page :deep(.van-cell:has(.slider-box) .van-cell__value),
+  .settings-page :deep(.van-cell:has(.days-combo) .van-cell__value),
   .settings-page :deep(.van-cell:has(.font-opts) .van-cell__value),
+  .settings-page :deep(.van-cell:has(.theme-opts) .van-cell__value),
   .settings-page :deep(.van-cell:has(.progress) .van-cell__value) {
     flex: 1 0 100%;
     text-align: left;
   }
   .slider-box,
+  .days-combo,
   .progress,
-  .font-opts {
+  .font-opts,
+  .theme-opts {
     justify-content: flex-start;
+    flex-wrap: nowrap;
+  }
+  /* 循环覆盖输入框在窄屏独占一行，输入框右对齐到行尾，不再溢出/被标题挤压 */
+  .days-combo {
+    width: 100%;
+  }
+  .days-combo .days-input,
+  .slider-box .days-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+  }
+  /* 主题三选项在窄屏独占一行后平均分配，不再换行（此前「深色」掉到第二行） */
+  .theme-opts {
+    width: 100%;
+  }
+  .theme-opts .theme-opt {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 4px;
   }
 }
 .user-action {

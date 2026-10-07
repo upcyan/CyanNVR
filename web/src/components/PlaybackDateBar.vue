@@ -60,14 +60,33 @@ function measure() {
   }
   const dateEl = el.querySelector('.date') as HTMLElement | null
   if (!dateEl) return
+  // 计算日期条在父容器（页签行）里实际能分到的可用宽度。
+  // 不能直接用 el.clientWidth：flex 布局下日期条宽度随内容（是否含年份）
+  // 变化，而内容又取决于本判断，形成循环——换行后日期条独占整行，宽度
+  // 反而变大，导致误判「够放年份」。这里用父容器的剩余空间：父容器宽
+  // 减去兄弟元素（页签）与间距后的剩余，才是日期条真实可用宽。
+  const parent = el.parentElement
+  let avail = el.clientWidth
+  if (parent) {
+    const pcs = getComputedStyle(parent)
+    const pgap = parseFloat(pcs.columnGap || pcs.gap) || 0
+    const ppl = parseFloat(pcs.paddingLeft) || 0
+    const ppr = parseFloat(pcs.paddingRight) || 0
+    let siblings = 0
+    for (const c of Array.from(parent.children)) {
+      if (c === el) continue
+      siblings += (c as HTMLElement).getBoundingClientRect().width + pgap
+    }
+    avail = parent.clientWidth - ppl - ppr - siblings
+  }
   const cs = getComputedStyle(el)
-  const gap = parseFloat(cs.gap) || 0
+  const gap = parseFloat(cs.columnGap || cs.gap) || 0
   let used = 0
   const btns = el.querySelectorAll('.control-button')
   btns.forEach((b) => (used += (b as HTMLElement).getBoundingClientRect().width))
-  const avail = el.clientWidth - used - gap * Math.max(btns.length, 1)
+  const inner = avail - used - gap * Math.max(btns.length, 1)
   // 留 4px 余量，避免刚好卡在边界反复抖动
-  showYear.value = avail >= measureText(props.date, dateEl) + 4
+  showYear.value = inner >= measureText(props.date, dateEl) + 4
 }
 
 let ro: ResizeObserver | null = null

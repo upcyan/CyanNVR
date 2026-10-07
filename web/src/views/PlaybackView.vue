@@ -1855,18 +1855,15 @@ onBeforeUnmount(() => {
   .pb-tab-date {
     display: flex;
     align-items: center;
-    margin: 0 2px 0 auto;
-    /* 日期组件右对齐：margin-left:auto 把它推到页签行最右侧，
-       「回放/事件」页签留在左侧，日期条独占右侧区域。
-       按内容宽度排列，不吃掉剩余宽度：若 flex:1，窄屏下日期条会被
-       页签挤到第二行后独占整行，组件内的 measure() 会看到 290px 的
-       独占宽度而误判「够放年份」。按内容宽排列后，年份压缩决策基于
-       与页签共享一行时的真实剩余空间。 */
-    flex: 0 1 auto;
-    justify-content: center;
+    margin: 0 2px 0 0;
+    /* 日期组件右对齐：flex:1 撑开剩余宽度 + justify-content:flex-end 靠右。
+       用 flex-basis:0（而非 auto）——auto 会让基础尺寸=内容宽（关怀模式
+       约 183px 且内部按钮 flex-shrink:0 不可压缩），在临界宽度下溢出一像素
+       就换行；basis:0 让日期条按剩余空间分配，可收缩到实际剩余宽度。 */
+    flex: 1 1 0;
+    justify-content: flex-end;
     min-width: 0;
-    /* 组件默认 gap 22px：窄屏收窄但保留可点按间距。
-       此前 6px 过挤（日期与左右箭头几乎贴住），10px 兼顾可点性又不挤掉年份。 */
+    /* 组件默认 gap 22px：窄屏收窄但保留可点按间距。 */
     gap: 10px;
   }
   .pb-tab-date :deep(.date) {
