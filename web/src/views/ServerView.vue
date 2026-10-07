@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import QRCode from 'qrcode'
 import { probe, resolveBase, server, setServerAddrs } from '../api/server'
+import { isNvrApp } from '../utils/env'
 import {
   refreshConnection,
   fetchAppSettings,
@@ -108,7 +109,11 @@ const qrDataUrl = ref('')
 let qrTimer: ReturnType<typeof setTimeout> | undefined
 
 function pairingUrl(): string {
-  const raw = form.lanUrl.trim()
+  // 优先用户填写的局域网地址；未填写时自动回退到当前访问地址
+  // （location.host = 服务器 IP:端口，即同源访问时的真实地址），
+  // 这样在服务器本机/内网直接打开网页时也能自动生成配对二维码，
+  // 无需再手动填一遍地址。
+  const raw = (form.lanUrl.trim() || (typeof location !== 'undefined' ? location.host : '')).trim()
   if (!raw) return ''
   const s = /^https?:\/\//.test(raw) ? raw : `http://${raw}`
   try {
@@ -173,7 +178,7 @@ function goBack() {
 
 <template>
   <div class="page server-page">
-    <van-nav-bar title="服务器设置" left-arrow @click-left="goBack" />
+    <van-nav-bar v-if="!isNvrApp()" title="服务器设置" left-arrow @click-left="goBack" />
 
     <van-cell-group title="连接地址">
       <van-field v-model="form.lanUrl" label="局域网地址" placeholder="如：192.168.1.100:8080" />
@@ -206,7 +211,7 @@ function goBack() {
           <p class="qr-text">用 CyanNVR App「扫码添加」即可自动填入服务器地址</p>
           <p class="qr-url">{{ pairingUrl() }}</p>
         </template>
-        <p v-else class="qr-text qr-empty">填写局域网地址后，这里会生成配对二维码</p>
+        <p v-else class="qr-text qr-empty">当前页面地址无法识别为有效服务器地址，请填写局域网地址</p>
       </div>
     </van-cell-group>
 

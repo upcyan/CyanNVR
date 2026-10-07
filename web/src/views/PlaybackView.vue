@@ -13,6 +13,7 @@ import TimelineBar from '../components/TimelineBar.vue'
 import PlaybackPlayer from '../components/PlaybackPlayer.vue'
 import PlaybackDateBar from '../components/PlaybackDateBar.vue'
 import { enterFullscreen, exitFullscreen } from '../utils/screen'
+import { isNvrApp } from '../utils/env'
 
 const store = useDeviceStore()
 const route = useRoute()
@@ -919,7 +920,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page playback-page">
-    <van-nav-bar title="录像管理">
+    <!-- App 内嵌环境：原生 TopAppBar 已显示服务器名，此处不再重复「录像管理」
+         标题；但保留右侧「选择设备」入口（否则 App 端无法切换设备）。
+         普通浏览器仍显示完整标题。 -->
+    <van-nav-bar :title="isNvrApp() ? '' : '录像管理'">
       <template #right>
         <button type="button" class="device-picker control-button" aria-label="选择回放设备" @click="pickDevice">
           <span class="dp-name">{{ device?.name ?? '选择设备' }}</span>

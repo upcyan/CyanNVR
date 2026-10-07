@@ -6,6 +6,7 @@ import type { Device, DiscoveredDevice } from '../types'
 import { useDeviceStore } from '../stores/devices'
 import { isBackend, isDemoMode, liveStreamUrl, refreshConnection } from '../api'
 import { server } from '../api/server'
+import { isNvrApp } from '../utils/env'
 const sourceLabel = computed(() => server.base || window.location.origin)
 async function retryDevices() {
   if (!isBackend()) await refreshConnection()
@@ -146,8 +147,8 @@ function onViewerPlayback(d: Device) {
 
 <template>
   <div class="page live2">
-    <header class="hd">
-      <div class="hd-title">
+    <header class="hd" :class="{ 'app-bare': isNvrApp() }">
+      <div class="hd-title" v-if="!isNvrApp()">
         <h1>监控中心</h1>
         <span class="hd-sub">在线 {{ onlineDevices.length }} / {{ store.devices.length }}</span>
       </div>
@@ -272,6 +273,12 @@ function onViewerPlayback(d: Device) {
 .hd-actions {
   display: flex;
   gap: 6px;
+}
+/* App 内嵌环境：标题（监控中心 + 在线数）已由原生 TopAppBar 表达，
+   隐藏后按钮右对齐，避免出现「原生标题 + 页面标题」双重标题。 */
+.hd.app-bare {
+  justify-content: flex-end;
+  padding-top: 12px;
 }
 .icon-btn {
   width: 44px;

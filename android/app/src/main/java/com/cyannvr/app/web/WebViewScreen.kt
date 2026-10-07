@@ -194,12 +194,17 @@ fun NvrWebViewScreen(
             }
         }
 
-        // 黑色背景与 Web 深色主题一致；WebView 保持全屏延伸（沉浸式），
-        // 手势条高度由 inset 监听注入 CSS 变量，Web 导航栏自行抬高
+        // 黑色背景与 Web 深色主题一致。
+        // navigationBarsPadding 让 WebView 区域在 Compose 层就避开系统导航栏
+        // （三大金刚键/手势条），不再依赖 WebView 内部 inset 监听的 JS 注入
+        // （此前靠 onApplyWindowInsets 注入 --nvr-safe-bottom，但 Compose 的
+        // AndroidView 会先消费 insets，监听器收不到导致注入恒为 0，tabbar 被
+        // 三大金刚键遮挡）。改为 Compose 层直接 padding，可靠且无时序竞态。
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .background(Color.Black)
         ) {
             if (progress in 1..99) {

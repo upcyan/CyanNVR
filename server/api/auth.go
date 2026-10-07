@@ -377,8 +377,12 @@ func (s *Server) requireOperator(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if u.Role == models.RoleViewer {
-		c.JSON(http.StatusForbidden, gin.H{"error": "只读账号无权操作"})
+	// 操作类权限只授予 operator 与 admin。
+	// 此前只拦 viewer，导致「普通用户(user)」也能创建设备/导出/删事件等操作，
+	// 与前端 canEdit（viewer 与 user 均不可编辑）不一致，属于越权授权。
+	// 收紧为：viewer 与 user 都无权执行操作类端点。
+	if u.Role != models.RoleAdmin && u.Role != models.RoleOperator {
+		c.JSON(http.StatusForbidden, gin.H{"error": "当前账号无操作权限"})
 		c.Abort()
 		return
 	}

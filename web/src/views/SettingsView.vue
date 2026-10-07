@@ -6,6 +6,7 @@ import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
 import { http } from '../api/client'
+import { isNvrApp } from '../utils/env'
 import {
   createUser,
   deleteUser,
@@ -66,18 +67,31 @@ function onSettingsMqChange(e: MediaQueryListEvent | MediaQueryList) {
 // 分组键与模板里 set-block 的 key 一一对应；可见性条件必须与模板保持一致，
 // 否则导航会出现「点了没反应」的死项（如非管理员的登录安全/用户管理）。
 const navGroups = computed<Array<{ key: string; label: string; icon: string }>>(() => {
+  // 权限分级：
+  //   - display（显示与无障碍）是个人化设置，所有登录用户可见。
+  //   - notify/server/storage/record/ai 是全局管理配置，仅 operator/admin
+  //     可见（canEdit 已排除 viewer 与 user）。
+  //   - security/users 仅 admin。
+  // 只读账号（viewer）此前能看到并浏览这些管理区块（虽不能保存），
+  // 属于「设置权限过大」，此处收紧为只看个人化项。
   const items = [
     { key: 'display', label: '显示与无障碍', icon: 'eye-o' },
-    { key: 'notify', label: '通知', icon: 'bell' },
-    { key: 'server', label: '服务器', icon: 'desktop-o' },
   ]
+  if (auth.canEdit) {
+    items.push(
+      { key: 'notify', label: '通知', icon: 'bell' },
+      { key: 'server', label: '服务器', icon: 'desktop-o' },
+    )
+  }
   if (auth.isAdmin) items.push({ key: 'security', label: '登录安全', icon: 'shield-o' })
   if (isBackend() && auth.isAdmin) items.push({ key: 'users', label: '用户管理', icon: 'friends-o' })
-  items.push(
-    { key: 'storage', label: '存储管理', icon: 'cluster-o' },
-    { key: 'record', label: '录像策略', icon: 'video-o' },
-    { key: 'ai', label: 'AI 画面识别', icon: 'photo-o' },
-  )
+  if (auth.canEdit) {
+    items.push(
+      { key: 'storage', label: '存储管理', icon: 'cluster-o' },
+      { key: 'record', label: '录像策略', icon: 'video-o' },
+      { key: 'ai', label: 'AI 画面识别', icon: 'photo-o' },
+    )
+  }
   return items
 })
 function persistCollapsed() {
@@ -760,7 +774,7 @@ async function removeUser(u: ManagedUser) {
 
 <template>
   <div ref="pageRef" class="page settings-page" :class="{ 'has-sidenav': isDesktopSettings }" @scroll.passive="onSettingsScroll">
-    <van-nav-bar title="设置" left-arrow @click-left="goBack" />
+    <van-nav-bar v-if="!isNvrApp()" title="设置" left-arrow @click-left="goBack" />
 
     <!-- 桌面端分区导航：窄屏不渲染（完全走原有单列布局） -->
     <nav v-if="isDesktopSettings" class="settings-nav" aria-label="设置分区导航">
@@ -838,7 +852,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div id="sec-notify" class="set-block">
+    <div id="sec-notify" class="set-block" v-if="auth.canEdit">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('notify')" @keydown.enter.prevent="toggleGroup('notify')" @keydown.space.prevent="toggleGroup('notify')" @click="toggleGroup('notify')">
         <span class="set-block-title">通知</span>
         <van-icon :name="isCollapsed('notify') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -857,7 +871,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div id="sec-server" class="set-block">
+    <div id="sec-server" class="set-block" v-if="auth.canEdit">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('server')" @keydown.enter.prevent="toggleGroup('server')" @keydown.space.prevent="toggleGroup('server')" @click="toggleGroup('server')">
         <span class="set-block-title">服务器</span>
         <van-icon :name="isCollapsed('server') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -940,7 +954,7 @@ async function removeUser(u: ManagedUser) {
 
       </section>
       <section class="settings-column" aria-label="存储、录像与识别">
-    <div id="sec-storage" class="set-block">
+    <div id="sec-storage" class="set-block" v-if="auth.canEdit">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('storage')" @keydown.enter.prevent="toggleGroup('storage')" @keydown.space.prevent="toggleGroup('storage')" @click="toggleGroup('storage')">
         <span class="set-block-title">存储管理</span>
         <van-icon :name="isCollapsed('storage') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -1014,7 +1028,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div id="sec-record" class="set-block">
+    <div id="sec-record" class="set-block" v-if="auth.canEdit">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('record')" @keydown.enter.prevent="toggleGroup('record')" @keydown.space.prevent="toggleGroup('record')" @click="toggleGroup('record')">
         <span class="set-block-title">录像策略</span>
         <van-icon :name="isCollapsed('record') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />
@@ -1041,7 +1055,7 @@ async function removeUser(u: ManagedUser) {
     </van-cell-group>
     </div>
 
-    <div id="sec-ai" class="set-block">
+    <div id="sec-ai" class="set-block" v-if="auth.canEdit">
       <div class="set-block-header" role="button" tabindex="0" :aria-expanded="!isCollapsed('ai')" @keydown.enter.prevent="toggleGroup('ai')" @keydown.space.prevent="toggleGroup('ai')" @click="toggleGroup('ai')">
         <span class="set-block-title">AI 画面识别</span>
         <van-icon :name="isCollapsed('ai') ? 'arrow-down' : 'arrow-up'" class="set-block-arrow" />

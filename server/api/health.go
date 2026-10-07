@@ -32,6 +32,14 @@ func (s *Server) getSettings(c *gin.Context) {
 	if u == nil || u.Role != models.RoleAdmin {
 		out.AI.APIKey = maskKey(out.AI.APIKey)
 	}
+	// 只读账号（viewer）与普通用户（user）不应拿到全局管理配置：
+	// 存储/录像/AI/通知/HTTPS 等都是管理员级配置，其中 AI.BaseURL、
+	// DetectURL、域名、邮箱等字段对非管理角色属于越权泄露。
+	// 前端个人化设置（主题/字号/关怀模式）存于 localStorage，不依赖此处，
+	// 返回空配置不影响 viewer/user 正常使用界面。
+	if u != nil && u.Role != models.RoleAdmin && u.Role != models.RoleOperator {
+		out = AppSettings{}
+	}
 	c.Header("ETag", settingsETag(out))
 	c.JSON(http.StatusOK, gin.H{"settings": out})
 }
