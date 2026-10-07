@@ -941,19 +941,8 @@ onBeforeUnmount(() => {
         @next="shiftDay(1)"
         @pick-calendar="calOpen = true"
       />
-      <!-- 独立导出入口：自定义起止时间后台拼接；徽标 = 进行中的导出任务数 -->
-      <button
-        v-if="isBackend() && !isDemoMode()"
-        type="button"
-        class="export-btn control-button"
-        :class="{ live: runningExports > 0 }"
-        aria-label="导出录像"
-        @click="openExportDialog"
-      >
-        <van-badge :content="runningExports" :show-zero="false" max="9+">
-          <van-icon name="down" />
-        </van-badge>
-      </button>
+      <!-- 导出入口已移入时间轴左侧按钮组（.tl-actions），与标记按钮、
+           时间轴统一为 36px 同高对齐，不再独立悬在日期条上方。 -->
     </div>
 
     <div v-show="activeTab === 'events'" class="pb-events-panel">
@@ -1007,6 +996,32 @@ onBeforeUnmount(() => {
             <span class="tl-stats">{{ segments.length }} 段 · 共 {{ totalMinutes }} 分钟 · {{ dayEvents.length }} 事件</span>
           </div>
           <div class="tl-row">
+            <!-- 下载与导出按钮统一放在时间轴左侧，高度与时间轴（36px）一致。
+                 此前导出按钮独立悬在日期条上方、标记按钮在时间轴右侧，三处
+                 高度与对齐方式都不统一；现合并为左侧按钮组，与时间轴同高对齐。 -->
+            <div v-if="isBackend() && !isDemoMode()" class="tl-actions">
+              <button
+                type="button"
+                class="export-btn control-button"
+                :class="{ live: runningExports > 0 }"
+                aria-label="导出录像"
+                @click="openExportDialog"
+              >
+                <van-badge :content="runningExports" :show-zero="false" max="9+">
+                  <van-icon name="down" />
+                </van-badge>
+              </button>
+              <button
+                type="button"
+                class="mark-btn control-button"
+                :class="{ on: markBtnOn }"
+                :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
+                :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
+                @click="toggleMark"
+              >
+                <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
+              </button>
+            </div>
             <div class="tl-main">
               <TimelineBar
                 :day-start="dayStart"
@@ -1018,17 +1033,6 @@ onBeforeUnmount(() => {
                 @seekend="onSeekEnd"
               />
             </div>
-            <button
-              v-if="isBackend() && !isDemoMode()"
-              type="button"
-              class="mark-btn control-button"
-              :class="{ on: markBtnOn }"
-              :title="markBtnOn ? '取消标记当前时间点' : '标记当前时间点（导出时可快速选用）'"
-              :aria-label="markBtnOn ? '取消标记当前时间点' : '标记当前时间点'"
-              @click="toggleMark"
-            >
-              <van-icon :name="markBtnOn ? 'bookmark' : 'bookmark-o'" />
-            </button>
           </div>
         </div>
       </div>
@@ -1274,7 +1278,8 @@ onBeforeUnmount(() => {
   color: var(--nvr-text);
   font-weight: 600;
 }
-/* 时间轴 + 标记按钮：按钮固定在时间轴右侧，时间轴让位 */
+/* 时间轴 + 左侧操作按钮组：按钮与时间轴（.track 高 36px）同高对齐。
+   按钮组在左、时间轴占满剩余宽度，视觉基线统一。 */
 .tl-row {
   display: flex;
   align-items: center;
@@ -1285,11 +1290,18 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
 }
-.mark-btn {
+.tl-actions {
   flex: 0 0 auto;
-  width: calc(34px * var(--nvr-font-scale, 1));
-  height: calc(34px * var(--nvr-font-scale, 1));
-  border-radius: var(--nvr-radius-full);
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 36px;
+}
+.tl-actions .export-btn,
+.tl-actions .mark-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--nvr-radius-md);
   border: 1px solid var(--nvr-border);
   background: var(--nvr-panel-2);
   color: var(--nvr-text-2);
@@ -1298,31 +1310,19 @@ onBeforeUnmount(() => {
   justify-content: center;
   font-size: calc(16px * var(--nvr-font-scale, 1));
 }
-.mark-btn.on {
-  color: #ffd447;
-  border-color: rgba(255, 212, 71, 0.6);
-  background: rgba(255, 212, 71, 0.12);
+.tl-actions .export-btn {
+  min-width: 36px;
+  padding: 0;
 }
-/* 独立导出按钮（日期条右侧）：有进行中任务时徽标计数 + 呼吸提示 */
-.export-btn {
-  margin-left: auto;
-  flex: 0 0 auto;
-  min-width: calc(34px * var(--nvr-font-scale, 1));
-  height: calc(32px * var(--nvr-font-scale, 1));
-  padding: 0 calc(10px * var(--nvr-font-scale, 1));
-  border-radius: var(--nvr-radius-full);
-  border: 1px solid var(--nvr-border);
-  background: var(--nvr-panel);
-  color: var(--nvr-text-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(16px * var(--nvr-font-scale, 1));
-}
-.export-btn.live {
+.tl-actions .export-btn.live {
   color: var(--nvr-accent);
   border-color: rgba(46, 168, 255, 0.55);
   animation: export-pulse 1.6s ease-in-out infinite;
+}
+.tl-actions .mark-btn.on {
+  color: #ffd447;
+  border-color: rgba(255, 212, 71, 0.6);
+  background: rgba(255, 212, 71, 0.12);
 }
 @keyframes export-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(46, 168, 255, 0.35); }
@@ -1838,11 +1838,11 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     margin: 0 2px 0 4px;
-    /* flex:1 让日期条吃掉页签行的剩余宽度——否则它是 flex:0 1 auto（按内容宽），
-       clientWidth 实测仅 123px，连 320px 窄屏和 834px 宽屏都放不下「2026-10-07」，
-       年份永远显示不出来。配合组件内的实际文本测量即可做到：
-       空间够显示年份、不够压缩为月日。 */
-    flex: 1 1 auto;
+    /* 按内容宽度排列，不吃掉剩余宽度：若 flex:1，窄屏下日期条会被
+       页签挤到第二行后独占整行，组件内的 measure() 会看到 290px 的
+       独占宽度而误判「够放年份」。按内容宽排列后，年份压缩决策基于
+       与页签共享一行时的真实剩余空间。 */
+    flex: 0 1 auto;
     justify-content: center;
     min-width: 0;
     /* 组件默认 gap 22px：窄屏收窄但保留可点按间距。
@@ -1975,9 +1975,9 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
     row-gap: 4px;
   }
-  :global(body.care .playback-page .pb-tab-date) {
-    min-width: 150px;
-  }
+  /* 不设 min-width：日期条按内容宽度排列，与页签共享一行。
+     此前 min-width:150px 会强制日期条在 320px 视口下换行到第二行
+     （页签 70×2 + padding/gap 已用 172px，剩余 148px < 150px）。 */
 }
 
 @media (max-width: 1199px) {
@@ -2024,8 +2024,24 @@ onBeforeUnmount(() => {
   .pb-tab {
     padding: 7px 12px;
   }
+  /* 关怀模式下页签文字已放大，padding 收窄才能在 320px 内放下「页签×2
+     + 日期条」一整行（实测 care padding 22px 时总宽 331px 换行，
+     收窄后 295px 可放下）。可读性由放大的文字保证，不因收窄 padding 下降。 */
+  :global(body.care .pb-tab) {
+    padding: 8px 12px;
+  }
   .pb-tab-date :deep(.control-button) {
     min-width: 28px;
+  }
+  /* 日期条箭头收窄到 32px（触控目标仍达标），避免吃掉日期显示空间。
+     实测 320px 关怀模式下 36px 时总宽 323px 仍换行，32px 后可放下。 */
+  :global(body.care .pb-tab-date .control-button) {
+    min-width: 32px;
+    width: 32px;
+    min-height: 44px;
+  }
+  :global(body.care .pb-tab-date) {
+    gap: 4px;
   }
 }
 

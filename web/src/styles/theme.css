@@ -527,9 +527,69 @@ body.care .van-tabbar-item__text {
   font-size: calc(14px * var(--nvr-font-scale, 1));
   margin-top: 2px;
 }
-body.care .van-icon {
-  font-size: calc(24px * var(--nvr-font-scale, 1));
+
+/* ── 关怀模式图标尺寸令牌（设计系统）────────────────────────────────
+   问题根源：van-icon 的 size 属性会生成内联 font-size 样式，内联样式优先级
+   恒高于任何 CSS 类选择器，于是此前「body.care .van-icon { font-size: 24px }」
+   对带 size 属性的图标完全无效——这正是「有的图标放大、有的还是原大小」的
+   直接原因（实测 live 8 个、playback 24 个图标未放大）。
+
+   设计决策：图标不按「一刀切全局 24px」放大（那会把下拉箭头、方向 hint 等
+   装饰性图标也撑到 24px，在紧凑布局里溢出、与放大后的文字不协调），而是按
+   语义分三层，与文字、触控目标的放大节奏一致：
+
+     操作图标（按钮内的可点击图标：播放/暂停/全屏/跳转/下载/关闭/日期切换/日历导航）
+       → --nvr-icon-action: 放大，触控与可读性随大字号同步提升。
+     状态图标（录像点/警告/编辑/删除/柱状图等表达含义的图标）
+       → --nvr-icon-status: 适度放大，与相邻文字（约 20px）协调而不喧宾夺主。
+     指示图标（折叠箭头、进入 hint、方向指示等纯装饰）
+       → 保持紧凑，仅随全局字号缩放系数轻微放大，不再强行撑大。
+
+   实现说明：必须用 !important 才能覆盖 van-icon 由 size 属性生成的内联
+   font-size（这是覆盖内联样式的唯一途径）。选择器按容器语义定位，避免
+   误伤装饰性图标；因此这里保留独立的通用 .van-icon 放大兜底（无 size 属性
+   的图标，如设置页区块箭头），其值即「状态图标」档。
+   ─────────────────────────────────────────────────────────────── */
+:root {
+  --nvr-icon-action: 26px;  /* 关怀模式操作图标目标尺寸（普通模式用模板原值） */
+  --nvr-icon-status: 20px;  /* 状态/含义图标目标尺寸 */
 }
+
+/* 无 size 属性图标的兜底（此前全局 24px 规则的承载对象，如设置页区块箭头）：
+   保持与文字协调的状态档，不再一刀切放大到 24px。 */
+body.care .van-icon {
+  font-size: calc(var(--nvr-icon-status) * var(--nvr-font-scale, 1));
+}
+
+/* 操作图标：按钮/可点控件内的图标。覆盖内联 size 属性。 */
+body.care .control-button .van-icon,
+body.care .icon-btn .van-icon,
+body.care .btn .van-icon,
+body.care .cal-nav .van-icon,
+body.care .cal-toggle .van-icon,
+body.care .seg-dl .van-icon,
+body.care .seg-mode .van-icon,
+body.care .more .van-icon,
+body.care .enter .van-icon {
+  font-size: calc(var(--nvr-icon-action) * var(--nvr-font-scale, 1)) !important;
+}
+
+/* 可点的展开/收起指示（hour-head、set-block-arrow、combo-arrow）：
+   不是纯装饰——它们是按钮的一部分，需随触控目标同步放大，
+   但比主操作图标略收敛，避免撑破紧凑行高。 */
+body.care .hour-head .van-icon,
+body.care .set-block-arrow.van-icon,
+body.care .combo-arrow .van-icon {
+  font-size: calc(20px * var(--nvr-font-scale, 1)) !important;
+}
+
+/* 状态图标：带语义的状态/含义图标（不限于按钮容器）。覆盖内联 size。 */
+body.care .cam-icon .van-icon,
+body.care .user-action .van-icon,
+body.care .evt-badge .van-icon {
+  font-size: calc(var(--nvr-icon-status) * var(--nvr-font-scale, 1)) !important;
+}
+
 body.care .van-dialog {
   border-radius: var(--nvr-radius-md);
 }
@@ -606,6 +666,26 @@ body.care .icon-btn {
   width: 48px;
   height: 48px;
 }
+/* 图标按钮容器随操作图标尺寸协调放大：44px 容器 + 26px 图标（与操作档一致）。
+   此规则与 icon-btn 并列——control-button 在多处充当纯图标按钮
+   （LiveView 多画面开关、AddDevice 关闭、LiveViewer 关闭/全屏等）。 */
+body.care .control-button {
+  min-width: 48px;
+  min-height: 48px;
+}
+/* 注意：播放器控制条的 .btn 此前刻意不放大容器（担心破坏紧凑布局），
+   但实测宽度已饱和而高度方向不受横向约束——关怀模式的触控目标应统一，
+   不能为了「紧凑」牺牲适老可达性。统一放大到与其它按钮一致的 48px 高。 */
+body.care .btn {
+  min-height: 48px;
+}
+/* 页签与分段模式切换按钮同为可交互控件，触控目标统一。 */
+body.care .pb-tab {
+  min-height: 48px;
+}
+body.care .seg-mode {
+  min-height: 48px;
+}
 body.care .chip {
   padding: 11px 18px;
   font-size: calc(15px * var(--nvr-font-scale, 1));
@@ -654,6 +734,9 @@ body.care .cam-card .enter {
   flex-shrink: 0;
 }
 body.care {
+  /* stepper 的加减按钮宽高实际由 --van-stepper-input-height 驱动（默认 28px，
+     与 button-size 无关，后者只影响 round 主题图标）——关怀模式放大到 44px。 */
+  --van-stepper-input-height: 44px;
   --van-stepper-button-size: 44px;
   --van-stepper-input-width: 48px;
   --van-nav-bar-height: 56px;
