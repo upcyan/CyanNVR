@@ -449,6 +449,16 @@ interface AIInfoPayload {
   backend_chain?: string[]
   backend_fallback?: string
   backend_bench?: string
+  capability?: {
+    tier: string
+    mean_ms: number
+    peak_ms: number
+    effective_ms: number
+    max_streams: number
+    suggest_interval_sec: number
+    backend: string
+    reason: string
+  }
   active?: string
   installed?: AIModelInfo[]
   catalog?: AICatalogItem[]
@@ -514,6 +524,27 @@ const benchRows = computed(() => {
       return { provider: t[0], detail: t.slice(1).join(' ') }
     })
     .filter((r) => r.provider)
+})
+
+// ---- AI 算力档位 ----
+// 由 worker 实测单帧推理延迟推导（不是按 NAS 型号写死映射表）：
+// 同型号不同显卡/驱动/散热实测能差数倍，按算力分档才准。
+const TIER_LABEL: Record<string, string> = {
+  high: '强',
+  medium: '中',
+  low: '弱',
+  minimal: '最低',
+}
+const cap = computed(() => aiInfo.value.capability || null)
+const capTierLabel = computed(() => {
+  const t = cap.value?.tier
+  return t ? TIER_LABEL[t] || t : ''
+})
+/** 档位说明：给用户看清楚「为什么是这个档」以及「能带几路」。 */
+const capHint = computed(() => {
+  const c = cap.value
+  if (!c?.tier) return '正在实测本机 AI 算力…'
+  return `实测单帧 ${c.mean_ms}ms（峰值 ${c.peak_ms}ms）· 建议最多 ${c.max_streams} 路，间隔 ${c.suggest_interval_sec}s`
 })
 
 const backendHint = computed(() => {
@@ -1161,6 +1192,19 @@ async function removeUser(u: ManagedUser) {
               @cancel="showProviderPicker = false"
             />
           </van-popup>
+          <!-- 算力档位：由实测单帧延迟推导，决定分析频率与可带路数 -->
+          <div class="cap-card">
+            <div class="cap-head">
+              <span class="cap-label">本机 AI 算力</span>
+              <span v-if="capTierLabel" class="cap-tier" :class="'tier-' + (cap?.tier || '')">{{ capTierLabel }}</span>
+              <span v-else class="cap-tier tier-unknown">检测中</span>
+            </div>
+            <div class="cap-hint">{{ capHint }}</div>
+            <div v-if="cap?.tier" class="cap-note">
+              分析频率已按本机算力自动调整：算力越强分析越勤，路数超过上限时自动降频，
+              避免任务在推理端排队拖慢所有通道。
+            </div>
+          </div>
           <!-- 实测档：启动基准的完整结果，按名次（均值）排列 -->
           <div v-if="benchRows.length" class="bench-card">
             <div class="bench-title">实测结果（启动时自动执行 · 按均值排名）</div>
@@ -1587,6 +1631,49 @@ async function removeUser(u: ManagedUser) {
   color: var(--nvr-text-2);
 }
 /* 推理后端实测结果卡片 */
+/* AI 算力档位卡片 */
+.cap-card {
+  margin: 8px 16px 4px;
+  padding: 10px 12px;
+  border-radius: var(--nvr-radius-sm);
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+}
+.cap-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cap-label {
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+  color: var(--nvr-text-1);
+  font-weight: 600;
+}
+.cap-tier {
+  padding: 1px 8px;
+  border-radius: var(--nvr-radius-full);
+  font-size: calc(11px * var(--nvr-font-scale, 1));
+  font-weight: 600;
+  color: #fff;
+  background: var(--nvr-text-3);
+}
+.cap-tier.tier-high { background: #16a34a; }
+.cap-tier.tier-medium { background: #0891b2; }
+.cap-tier.tier-low { background: #d97706; }
+.cap-tier.tier-minimal { background: #dc2626; }
+.cap-tier.tier-unknown { background: var(--nvr-text-3); }
+.cap-hint {
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  color: var(--nvr-text-2);
+  line-height: 1.5;
+}
+.cap-note {
+  margin-top: 6px;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
+  color: var(--nvr-text-3);
+  line-height: 1.5;
+}
 .bench-card {
   margin: 8px 16px 4px;
   padding: 10px 12px;

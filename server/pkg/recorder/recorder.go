@@ -102,6 +102,31 @@ func (m *Manager) Start() {
 			m.StartWorker(&d)
 		}
 	}
+	m.syncActiveAI()
+}
+
+// syncActiveAI 统计启用 AI 的设备数并告知 Analyzer。
+//
+// 算力是共享资源：N 路同时分析时，每路的有效间隔需按档位上限分摊，
+// 否则任务在推理端排队，单帧延迟叠加会让所有路一起变卡。
+func (m *Manager) syncActiveAI() {
+	if m.ai == nil {
+		return
+	}
+	m.mu.Lock()
+	n := 0
+	for _, w := range m.workers {
+		dev := w.dev
+		if dev.AIEnabled != nil {
+			if *dev.AIEnabled {
+				n++
+			}
+		} else if m.cfg.AIEnabled {
+			n++
+		}
+	}
+	m.mu.Unlock()
+	m.ai.SetActiveDevices(n)
 }
 
 func (m *Manager) Stop() {
@@ -140,6 +165,7 @@ func (m *Manager) StartWorker(d *models.Device) {
 	if m.ai != nil {
 		m.ai.Register(d.ID)
 	}
+	m.syncActiveAI()
 	go w.supervise()
 }
 
@@ -151,6 +177,7 @@ func (m *Manager) StopWorker(id string) {
 	if ok {
 		w.Stop()
 	}
+	m.syncActiveAI()
 }
 
 func (m *Manager) Restart(d *models.Device) {

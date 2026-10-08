@@ -34,6 +34,26 @@ type Analyzer struct {
 	mu      sync.RWMutex
 	dirs    map[string]*DeviceState
 	onEvent func(eventType, deviceID, deviceName, eventID, label, desc, time string)
+
+	// 算力档位：由 AI worker 的实测推理延迟推导（见 ai_detect.py 的 capability）。
+	// 启动后异步拉取一次，用于按实际算力调整分析间隔与并发路数，
+	// 而不是按硬件型号写死映射表（同型号不同显卡/散热/驱动实测能差数倍）。
+	capMu       sync.RWMutex
+	capability  Capability
+	capFetched  bool
+	activeCount int // 当前启用 AI 的设备数，用于按档位分摊算力
+}
+
+// Capability 是 AI worker 实测得出的算力画像。
+type Capability struct {
+	Tier           string  `json:"tier"`            // high | medium | low | minimal
+	MeanMs         float64 `json:"mean_ms"`         // 单帧推理均值
+	PeakMs         float64 `json:"peak_ms"`         // 单帧峰值
+	EffectiveMs    float64 `json:"effective_ms"`    // 定档依据（均值 + 峰值*0.3）
+	MaxStreams     int     `json:"max_streams"`     // 建议最多同时分析路数
+	SuggestSec     float64 `json:"suggest_interval_sec"` // 建议分析间隔
+	Backend        string  `json:"backend"`
+	Reason         string  `json:"reason"`
 }
 
 type DeviceState struct {
@@ -46,13 +66,16 @@ type DeviceState struct {
 func (ds *DeviceState) LastEventTime() time.Time { return ds.lastEvent }
 
 func New(cfg *config.Config, st *store.Store, onEvent func(string, string, string, string, string, string, string)) *Analyzer {
-	return &Analyzer{
+	a := &Analyzer{
 		cfg:     cfg,
 		st:      st,
 		http:    NewDetectClient(cfg.AIDetectURL),
 		dirs:    map[string]*DeviceState{},
 		onEvent: onEvent,
 	}
+	// 启动算力探测：拿到实测档位后，分析间隔自动适配本机算力。
+	a.StartCapabilityProbe()
+	return a
 }
 
 // isUnixDetect 判断检测地址是否使用 Unix Domain Socket。
@@ -174,6 +197,109 @@ func (a *Analyzer) PushImage(deviceID string, data []byte, t int64) {
 	}
 }
 
+// Capability 返回当前算力画像（未探测到时为零值）。
+func (a *Analyzer) Capability() Capability {
+	a.capMu.RLock()
+	defer a.capMu.RUnlock()
+	return a.capability
+}
+
+// StartCapabilityProbe 异步拉取 AI worker 的实测算力档位，并按需定期刷新。
+//
+// worker 载入模型时会跑微型基准（auto-bench 复用择优记分卡，手选后端则补跑），
+// 这里把结果取回来，用于自动决定分析间隔——算力强的机器分析得更勤，
+// 弱机器自动降频，避免「开了 AI 就卡」。
+func (a *Analyzer) StartCapabilityProbe() {
+	go func() {
+		// 首次：等 worker 完成模型加载与基准（CUDA 冷启动可能十几秒）
+		for i := 0; i < 30; i++ {
+			if a.fetchCapability() {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		// 之后每 30 分钟刷新一次（模型热切换、驱动状态变化都会影响）
+		t := time.NewTicker(30 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			a.fetchCapability()
+		}
+	}()
+}
+
+// fetchCapability 从 worker 的 /health 读取 capability 字段。
+func (a *Analyzer) fetchCapability() bool {
+	if a.cfg.AIDetectURL == "" {
+		return false
+	}
+	client := NewDetectClient(a.cfg.AIDetectURL)
+	client.Timeout = 10 * time.Second
+	resp, err := client.Get(DetectEndpoint(a.cfg.AIDetectURL) + "health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Capability Capability `json:"capability"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&body); err != nil {
+		return false
+	}
+	if body.Capability.Tier == "" {
+		return false
+	}
+	a.capMu.Lock()
+	changed := a.capability.Tier != body.Capability.Tier
+	a.capability = body.Capability
+	a.capFetched = true
+	a.capMu.Unlock()
+	if changed {
+		log.Printf("AI 算力档位：%s（%s）→ 最多 %d 路，间隔 %.1fs",
+			body.Capability.Tier, body.Capability.Reason,
+			body.Capability.MaxStreams, body.Capability.SuggestSec)
+	}
+	return true
+}
+
+// effectiveInterval 返回实际使用的分析间隔。
+//
+// 规则：按实测算力档位定基线，再按「当前启用 AI 的路数」分摊——
+// 4 路共用一块 GPU 时，每路的有效间隔应比单路时长，否则并发排队，
+// 单帧延迟叠加会让所有路都变卡（绿联的 worker 池也是这个思路：
+// capacity 与 workers 对齐，不接受排队）。
+//
+// 用户显式配置的 SnapshotIntervalSec 作为下限：不会比用户设的更频繁。
+func (a *Analyzer) effectiveInterval() time.Duration {
+	base := time.Duration(a.cfg.SnapshotIntervalSec) * time.Second
+
+	a.capMu.RLock()
+	cap := a.capability
+	streams := a.activeCount
+	a.capMu.RUnlock()
+
+	if cap.SuggestSec <= 0 || cap.MaxStreams <= 0 {
+		return base // 尚未探测到算力：沿用用户配置
+	}
+
+	per := cap.SuggestSec
+	// 路数超出档位建议上限时线性降频：算力不够就少分析几次，而不是排队堆积
+	if streams > cap.MaxStreams {
+		per *= float64(streams) / float64(cap.MaxStreams)
+	}
+	d := time.Duration(per * float64(time.Second))
+	if d < base {
+		return base // 不比用户配置更频繁
+	}
+	return d
+}
+
+// SetActiveDevices 记录当前启用 AI 的设备数（由上层在设备增删/开关时调用）。
+func (a *Analyzer) SetActiveDevices(n int) {
+	a.capMu.Lock()
+	a.activeCount = n
+	a.capMu.Unlock()
+}
+
 // MaybeAnalyze triggers analysis for a device if interval elapsed.
 func (a *Analyzer) MaybeAnalyze(device *models.Device) {
 	// Device-level toggle wins; when unset, fall back to the global setting.
@@ -192,7 +318,7 @@ func (a *Analyzer) MaybeAnalyze(device *models.Device) {
 		return
 	}
 	now := time.Now()
-	if now.Sub(s.lastCheck) < time.Duration(a.cfg.SnapshotIntervalSec)*time.Second {
+	if now.Sub(s.lastCheck) < a.effectiveInterval() {
 		return
 	}
 	s.lastCheck = now

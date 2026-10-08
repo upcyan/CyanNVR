@@ -98,6 +98,7 @@ _backend = "none"          # 实际生效的推理后端，如 cpu / cuda
 _backend_chain = []        # 尝试过的 EP 链，便于排查
 _backend_error = ""        # 若发生回退，记录原因
 _backend_bench = ""        # auto-bench 模式的实测结果串（如 "cuda 12ms · cpu 187ms"）
+_capability = {}           # 算力画像：由实测推理延迟推导的并发/频率档位
 
 # 归一化后端名 -> onnxruntime execution provider 名
 PROVIDER_EP = {
@@ -582,7 +583,100 @@ def _bench_pick(path):
     winner_label, winner = ranked[0][0], ranked[0][1]
     ordered = [winner["ep"]] + [m["ep"] for l, m in ranked if m["ep"] != winner["ep"]]
     print(f"实测择优（合格按均值排序）：{bench_str} -> 使用 {winner_label}", flush=True)
+    # 把记分卡与胜出者留给 _load_model 推导算力档位（见 _compute_capability）
+    globals()["_bench_measured"] = measured
+    globals()["_bench_winner"] = winner_label
     return winner["sess"], bench_str, " | ".join(reasons), ordered
+
+
+# ---------- 算力分档 ----------
+#
+# 按实测推理延迟推导能力档位，而不是按硬件型号写死映射表。
+#
+# 为什么不学绿联「按 20+ 机型分档」：
+#   · 机型 ≠ 算力。同一型号不同 BIOS/驱动/散热/是否插显卡，实测能差数倍。
+#   · 机型表对新硬件立刻失效，每出新 NAS 就要改代码。
+#   · 本机分辨率、模型大小（n/s/m）同样影响单帧耗时，机型表覆盖不到。
+#
+# 实测延迟（单帧推理毫秒）是唯一能同时反映「CPU 型号 + GPU 有无 + 模型大小」
+# 的客观量，用它直接推并发与频率：算力越强 → 可分析路数越多、间隔越短。
+#
+# 档位按单帧均值划分（阈值取自实测经验）：
+#   ms <= 25   → high    多路高帧率：可承载约 8 路 @ 1.2s 间隔
+#   ms <= 60   → medium  常规：约 4 路 @ 2s
+#   ms <= 150  → low     轻量：约 2 路 @ 3s
+#   ms >  150  → minimal 仅够 1 路低频巡检（纯 CPU 老机器）
+
+# 档位按单帧均值划分。阈值来自容量推算，而非拍脑袋：
+#   档位允许 N 路、间隔 T 秒 → 推理负载 = N/T 次每秒；本机容量 = 1000/mean_ms。
+#   取「负载不超过容量的 1/3」作为安全余量（留出突发与图像解码/preprocess 开销）：
+#     high    8 路 @1.2s = 6.7 次/s → 容量需 ≥20/s → mean ≤ 50ms
+#     medium  4 路 @2.0s = 2.0 次/s → 容量需 ≥6/s  → mean ≤ 170ms
+#     low     2 路 @3.0s = 0.67 次/s → 容量需 ≥2/s → mean ≤ 500ms
+#     minimal 1 路 @5.0s，其余全部归此档
+# 参考实测量级：P4 上 CUDA + cuDNN 单帧约 11ms（→ high），纯 CPU 约 187ms（→ low）。
+# (上限毫秒, 档名, 最大分析路数, 建议间隔秒)
+CAPABILITY_TIERS = [
+    (50.0, "high", 8, 1.2),
+    (170.0, "medium", 4, 2.0),
+    (500.0, "low", 2, 3.0),
+    (float("inf"), "minimal", 1, 5.0),
+]
+
+
+def _capability_from_ms(mean_ms, peak_ms=0.0, backend=""):
+    """由单帧推理耗时推导能力档位。
+
+    定档依据 = 均值 + 抖动惩罚，其中抖动只取「超出均值的部分」且上限为均值的 30%：
+    只跑 7 次基准时，一次调度抖动/热降频就会把 max 拉得很高，
+    直接用 peak 参与定档会让健康机器被误判降档。
+    这样既对持续抖动（真不稳）有反应，又不会被单次毛刺带偏。
+    """
+    if not mean_ms or mean_ms <= 0:
+        return {}
+    jitter = max(0.0, peak_ms - mean_ms)
+    effective = mean_ms + min(jitter, mean_ms) * 0.3
+    for limit, tier, max_streams, interval in CAPABILITY_TIERS:
+        if effective <= limit:
+            return {
+                "tier": tier,
+                "mean_ms": round(mean_ms, 2),
+                "peak_ms": round(peak_ms, 2),
+                "effective_ms": round(effective, 2),
+                "max_streams": max_streams,
+                "suggest_interval_sec": interval,
+                "backend": backend,
+                "reason": f"实测单帧 {mean_ms:.0f}ms（峰值 {peak_ms:.0f}ms）",
+            }
+    return {}
+
+
+def _compute_capability(measured, winner_label):
+    """从 auto-bench 的实测记分卡推导能力档位。
+
+    measured: {label: scorecard}；winner_label: 择优胜出的后端名。
+    非 auto-bench 模式没有记分卡，此时退化为「只报后端、不定档」。
+    """
+    card = measured.get(winner_label)
+    if not card:
+        return {}
+    return _capability_from_ms(card.get("mean", 0), card.get("peak", 0), winner_label)
+
+
+def _capability_single():
+    """非 auto-bench 路径：对当前会话跑一次微型基准，同样得出档位。
+
+    即使不启用 auto-bench 择优（用户手选 cpu/cuda），也应给出算力档位——
+    否则手动选后端的用户拿不到并发建议。
+    """
+    if _sess is None:
+        return {}
+    try:
+        card = _bench_session(_sess, _input_size, warmup=2, iters=5)
+        return _capability_from_ms(card["mean"], card["peak"], _backend)
+    except Exception as e:  # noqa: BLE001
+        print(f"capability probe failed: {str(e)[:160]}", flush=True)
+        return {}
 
 
 def _load_model(path):
@@ -643,6 +737,20 @@ def _load_model(path):
     _backend_chain = chain
     _backend_error = " | ".join(reasons)
     _backend_bench = bench_str
+
+    # 算力档位：auto-bench 直接复用择优时的记分卡；手动选后端则补跑一次微型基准。
+    cap = {}
+    if AI_PROVIDER == "auto-bench":
+        cap = _compute_capability(globals().get("_bench_measured") or {},
+                                  globals().get("_bench_winner") or "")
+    if not cap:
+        cap = _capability_single()
+    globals()["_capability"] = cap
+    if cap:
+        print(f"算力档位：{cap['tier']}（{cap['reason']}）"
+              f"→ 建议最多 {cap['max_streams']} 路、间隔 {cap['suggest_interval_sec']}s",
+              flush=True)
+
     print(f"loaded model {path} family={fam} input={inp.shape} out={out} "
           f"backend={_backend} size={size}", flush=True)
 
@@ -831,7 +939,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._reply(200, {"ok": True, "engine": _engine,
                               "model": _model_path, "model_loaded": _sess is not None,
-                              "backend": _backend})
+                              "backend": _backend, "capability": _capability})
         elif self.path == "/models":
             installed = _installed_models()
             self._reply(200, {
@@ -840,6 +948,7 @@ class Handler(BaseHTTPRequestHandler):
                 "backend_chain": _backend_chain,
                 "backend_fallback": _backend_error,
                 "backend_bench": _backend_bench,
+                "capability": _capability,
                 "installed": installed,
                 # 兼容旧字段：早期前端按 models 取路径列表，保留以免破坏调用方。
                 "models": [m["path"] for m in installed],
@@ -848,6 +957,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._reply(200, {"ok": True, "engine": _engine, "model": _model_path,
                               "backend": _backend, "backend_bench": _backend_bench,
+                              "capability": _capability,
                               "provider_setting": AI_PROVIDER,
                               "threads": AI_THREADS, "input_size": _input_size,
                               "labels": sorted(set(LABEL_ZH))})
