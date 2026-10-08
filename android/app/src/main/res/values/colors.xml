@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深青渐变底的左上端色，自适应图标背景层（前景满幅覆盖后仅露缝时可见） -->
+    <color name="ic_launcher_background">#0F5A6E</color>
+</resources>
