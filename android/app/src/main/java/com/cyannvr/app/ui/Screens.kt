@@ -74,11 +74,16 @@ import com.cyannvr.app.net.LanScanner
 import com.cyannvr.app.net.NsdFinder
 import com.cyannvr.app.net.NvrClient
 import com.cyannvr.app.net.NvrException
+import com.cyannvr.app.net.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 
 // ---------------------------------------------------------------------------
 // 服务器列表（首页）
@@ -106,7 +111,9 @@ fun ServerListScreen(
     var menuFor by remember { mutableStateOf<NvrServer?>(null) }
     var toDelete by remember { mutableStateOf<NvrServer?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
+    var updateOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // 逐个探测服务器在线状态（绿点/灰点）
     LaunchedEffect(servers, refreshTick) {
@@ -126,6 +133,9 @@ fun ServerListScreen(
             actions = {
                 IconButton(onClick = { refreshTick++ }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "刷新状态")
+                }
+                TextButton(onClick = { updateOpen = true }) {
+                    Text("检查更新", style = MaterialTheme.typography.labelMedium)
                 }
                 IconButton(onClick = onHelp) {
                     Icon(Icons.Filled.Info, contentDescription = "连接说明")
@@ -243,6 +253,12 @@ fun ServerListScreen(
             text = { Text("删除") },
             leadingIcon = { Icon(Icons.Filled.Delete, null) },
             onClick = { toDelete = menuFor; menuFor = null },
+        )
+    }
+
+    if (updateOpen) {
+        UpdateDialog(
+            onDismiss = { updateOpen = false },
         )
     }
 
@@ -702,6 +718,130 @@ fun HelpDialog(onDismiss: () -> Unit) {
                     "④ 登录：账号密码与服务端网页版一致；令牌 24 小时有效，之后会提示重新登录。\n\n" +
                     "提示：mDNS 发现要求服务端与手机在同一二层网络，docker 部署时需加 --network=host。",
             )
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 检查更新 / 自更新
+// ---------------------------------------------------------------------------
+
+@Composable
+fun UpdateDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var checking by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var info by remember { mutableStateOf<UpdateManager.UpdateInfo?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var downloadedFile by remember { mutableStateOf<File?>(null) }
+
+    // 打开即检查
+    LaunchedEffect(Unit) {
+        checking = true
+        val result = withContext(Dispatchers.IO) { UpdateManager.check(context) }
+        info = result
+        checking = false
+    }
+
+    fun installApk(file: File) {
+        val apkUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+            .onFailure { error = "无法调起系统安装器：${it.message}" }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("检查更新") },
+        text = {
+            Column {
+                when {
+                    checking -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text("正在检查…")
+                        }
+                    }
+                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
+                    info != null -> {
+                        val u = info!!
+                        if (!u.hasUpdate) {
+                            Text("当前已是最新版本 v${u.current}")
+                        } else {
+                            Text("发现新版本 v${u.latest}（当前 v${u.current}）")
+                            Spacer(Modifier.height(8.dp))
+                            if (u.apkUrl == null) {
+                                Text("release 中没有 APK 资产，请到 GitHub 下载", color = MaterialTheme.colorScheme.error)
+                            } else if (downloading) {
+                                val p = progress
+                                if (p != null && p.second > 0) {
+                                    val pct = (p.first * 100 / p.second).toInt()
+                                    Text("下载中… $pct%")
+                                    Spacer(Modifier.height(8.dp))
+                                    LinearProgressIndicator(
+                                        progress = { p.first.toFloat() / p.second },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                } else {
+                                    Text("下载中…")
+                                }
+                            } else if (downloadedFile != null) {
+                                Text("更新包已下载，可安装")
+                            }
+                            if (u.notes.isNotBlank()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    u.notes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 8,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val u = info
+            if (u != null && u.hasUpdate && u.apkUrl != null && !downloading && !checking) {
+                if (downloadedFile != null) {
+                    TextButton(onClick = { installApk(downloadedFile!!) }) { Text("安装") }
+                } else {
+                    TextButton(onClick = {
+                        scope.launch {
+                            downloading = true
+                            error = null
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    UpdateManager.download(context, u) { done, total ->
+                                        progress = done to total
+                                    }
+                                }
+                                downloadedFile = result.file
+                            } catch (e: Exception) {
+                                error = "下载失败：${e.message}"
+                            } finally {
+                                downloading = false
+                            }
+                        }
+                    }) { Text("下载更新") }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
         },
     )
 }

@@ -276,6 +276,29 @@ async function loadAboutVersion() {
   }
 }
 
+// ---- 检查更新：发现新版本跳转 GitHub release 页面，用户自行下载安装 ----
+const checkingUpdate = ref(false)
+const updateState = ref<null | { hasUpdate: boolean; latest: string; url?: string; error?: string }>(null)
+
+async function checkForUpdate() {
+  checkingUpdate.value = true
+  updateState.value = null
+  try {
+    const { data } = await http.get('/api/update/check')
+    updateState.value = data.update
+  } catch {
+    updateState.value = { hasUpdate: false, latest: '', error: '检查更新失败，请稍后再试' }
+  } finally {
+    checkingUpdate.value = false
+  }
+}
+
+function openRelease() {
+  if (updateState.value?.url) {
+    window.open(updateState.value.url, '_blank', 'noopener')
+  }
+}
+
 onMounted(() => {
   // 设置加载完成后才能做「自动补默认模型」这类写操作：
   // 写操作会整份 PUT，必须建立在服务端真实值之上，否则会用前端默认值
@@ -1207,6 +1230,17 @@ async function removeUser(u: ManagedUser) {
     </div>
     <div v-if="appVersion" class="about-version">
       CyanNVR v{{ appVersion }} · 界面 {{ buildId }}
+      <button type="button" class="check-update-btn" :disabled="checkingUpdate" @click="checkForUpdate">
+        {{ checkingUpdate ? '检查中…' : '检查更新' }}
+      </button>
+      <div v-if="updateState" class="update-panel">
+        <p v-if="updateState.error" class="update-err">{{ updateState.error }}</p>
+        <template v-else-if="updateState.hasUpdate">
+          <p class="update-new">发现新版本 v{{ updateState.latest }}</p>
+          <button type="button" class="update-open-btn" @click="openRelease">前往 GitHub 下载</button>
+        </template>
+        <p v-else class="update-ok">已是最新版本</p>
+      </div>
     </div>
 
     <div class="save-area">
@@ -1411,6 +1445,49 @@ async function removeUser(u: ManagedUser) {
   /* 11px 低于本页最小可读字号，抬到 12px 与其余说明文字齐平 */
   font-size: calc(12px * var(--nvr-font-scale, 1));
   color: var(--nvr-text-2);
+}
+.check-update-btn {
+  margin-left: 10px;
+  padding: 2px 12px;
+  border: 1px solid var(--nvr-border);
+  border-radius: var(--nvr-radius-full);
+  background: var(--nvr-panel-2);
+  color: var(--nvr-accent);
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  cursor: pointer;
+}
+.check-update-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.update-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--nvr-radius-sm);
+  background: var(--nvr-panel-2);
+  border: 1px solid var(--nvr-border);
+}
+.update-new {
+  margin: 0 0 8px;
+  color: var(--nvr-accent);
+  font-weight: 600;
+}
+.update-ok {
+  margin: 0;
+  color: var(--nvr-green);
+}
+.update-err {
+  margin: 0;
+  color: var(--nvr-red);
+}
+.update-open-btn {
+  padding: 6px 16px;
+  border: 1px solid var(--nvr-accent);
+  border-radius: var(--nvr-radius-full);
+  background: rgba(46, 168, 255, 0.12);
+  color: var(--nvr-accent);
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  cursor: pointer;
 }
 .settings-page :deep(.van-cell__title),
 .settings-page :deep(.van-cell__value) {

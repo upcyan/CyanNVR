@@ -279,6 +279,9 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/ai/status", s.aiWorkerStatus)
 	protected.POST("/ai/download", s.requireOperator, s.downloadAIModel)
 
+	// 更新检查：登录用户即可查询 GitHub release（无副作用，不涉及安装）
+	protected.GET("/update/check", s.checkUpdate)
+
 	stream := r.Group("/api/stream")
 	stream.Use(s.streamAuth())
 	stream.GET("/live/:id/*file", s.liveStream)
