@@ -64,6 +64,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.security.crypto)
+    // 显式钉住 16KB 对齐版本（compose-ui 传递拉入的旧版 .so 未对齐，16KB 页设备弹兼容警告）
+    implementation("androidx.graphics:graphics-path:1.0.1")
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
