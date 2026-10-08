@@ -4,6 +4,27 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// 版本号从 server/version.go 的 CoreVersion 读取（单一真相源）。
+// 此前 Android 版本号写死，与 fpk 版本经常不同步（如 fpk 1.10.15 / apk 1.10.13），
+// 导致 App 内「检查更新」的版本比对失真。这里在配置阶段直接解析该文件。
+val coreVersion: String = run {
+    val f = rootProject.file("../server/version.go")
+    if (f.exists()) {
+        Regex("""const CoreVersion = "([^"]+)"""")
+            .find(f.readText())
+            ?.groupValues?.get(1)
+            ?: "0.0.0"
+    } else {
+        "0.0.0"
+    }
+}
+// versionCode 用 x*10000 + y*100 + z，保证随 x.y.z 单调递增
+val coreVersionCode: Int = coreVersion.split(".").let { p ->
+    (p.getOrNull(0)?.toIntOrNull() ?: 0) * 10000 +
+        (p.getOrNull(1)?.toIntOrNull() ?: 0) * 100 +
+        (p.getOrNull(2)?.toIntOrNull() ?: 0)
+}
+
 android {
     namespace = "com.cyannvr.app"
     compileSdk = 35
@@ -26,8 +47,8 @@ android {
         applicationId = "com.cyannvr.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1013
-        versionName = "1.10.13"
+        versionCode = coreVersionCode
+        versionName = coreVersion
     }
 
     buildTypes {
