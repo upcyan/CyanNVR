@@ -94,6 +94,7 @@ fun NvrWebViewScreen(
     var loadError by remember { mutableStateOf<Pair<String, String>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    var hideServerBar by remember { mutableStateOf(false) }
 
     fun exitFullscreen() {
         WebViewHolder.customView = null
@@ -124,13 +125,15 @@ fun NvrWebViewScreen(
         TopAppBar(
             title = {
                 Column {
-                    Text(server.name, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        if (conn.viaLan) "局域网 · ${base.removePrefix("http://").removePrefix("https://")}"
-                        else "公网 · ${base.removePrefix("http://").removePrefix("https://")}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (!hideServerBar) {
+                        Text(server.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (conn.viaLan) "局域网 · ${base.removePrefix("http://").removePrefix("https://")}"
+                            else "公网 · ${base.removePrefix("http://").removePrefix("https://")}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             },
             actions = {
@@ -141,6 +144,10 @@ fun NvrWebViewScreen(
                     Icon(Icons.Filled.MoreVert, contentDescription = "菜单")
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (hideServerBar) "显示服务器信息" else "隐藏服务器信息") },
+                        onClick = { menuOpen = false; hideServerBar = !hideServerBar },
+                    )
                     DropdownMenuItem(
                         text = { Text("切换服务器") },
                         onClick = { menuOpen = false; onSwitchServer() },
@@ -231,6 +238,22 @@ fun NvrWebViewScreen(
                         settings.textZoom = 100
                         settings.userAgentString = settings.userAgentString + " CyanNVRApp/1.0"
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+
+                        // JS bridge：Web 端全屏/退出时通知原生设置屏幕方向。
+                        // WebView 不支持 screen.orientation.lock()（返回 rejected），
+                        // 必须由原生 requestedOrientation 实现真正的横屏。
+                        addJavascriptInterface(object : Any() {
+                            @android.webkit.JavascriptInterface
+                            fun setOrientation(landscape: Boolean) {
+                                val a = activity ?: return
+                                a.runOnUiThread {
+                                    a.requestedOrientation = if (landscape)
+                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    else
+                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                }
+                            }
+                        }, "CyanNVRApp")
 
                         // 把系统手势条高度注入页面 CSS 变量（WebView 不支持 env(safe-area-inset-*)）
                         ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->

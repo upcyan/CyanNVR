@@ -574,6 +574,12 @@ body.care .enter .van-icon {
   font-size: calc(var(--nvr-icon-action) * var(--nvr-font-scale, 1)) !important;
 }
 
+/* 播放器 ±30 秒按钮：双箭头是「方向提示」而非主操作，关怀模式不随主操作
+   图标放大到 26px——否则在窄屏把倍速按钮挤出控制条。保持 18px 原尺寸。 */
+body.care .btn.skip .van-icon {
+  font-size: 18px !important;
+}
+
 /* 可点的展开/收起指示（hour-head、set-block-arrow、combo-arrow）：
    不是纯装饰——它们是按钮的一部分，需随触控目标同步放大，
    但比主操作图标略收敛，避免撑破紧凑行高。 */

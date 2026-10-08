@@ -343,26 +343,130 @@ fun AddServerSheet(
     onSaved: () -> Unit,
 ) {
     val initialUrl = editing?.lanUrl ?: prefillUrl?.let { NvrClient.normalizeBaseUrl(it) } ?: ""
-    var name by remember { mutableStateOf(editing?.name ?: "CyanNVR") }
+    val initialName = editing?.name ?: "CyanNVR"
+    val initialPub = editing?.pubUrl ?: ""
+    val initialUsername = editing?.username ?: "admin"
+
+    var name by remember { mutableStateOf(initialName) }
     var lan by remember { mutableStateOf(initialUrl) }
-    var pub by remember { mutableStateOf(editing?.pubUrl ?: "") }
-    var username by remember { mutableStateOf(editing?.username ?: "admin") }
+    var pub by remember { mutableStateOf(initialPub) }
+    var username by remember { mutableStateOf(initialUsername) }
     var password by remember { mutableStateOf("") }
     var rememberPwd by remember { mutableStateOf(true) }
     var trustCert by remember { mutableStateOf(editing?.trustAnyCert ?: false) }
     var testState by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var testing by remember { mutableStateOf(false) }
     var hasPasswordSaved by remember { mutableStateOf(editing != null && ServerStore.secretOf(editing.id).password != null) }
+    var confirmExit by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 是否有未保存的输入：任一字段偏离初始值即视为有内容
+    val dirty = name != initialName || lan != initialUrl || pub != initialPub ||
+        username != initialUsername || password.isNotBlank()
+
+    fun doSave() {
+        val base = NvrClient.normalizeBaseUrl(lan) ?: return
+        val server = (editing ?: NvrServer(
+            id = UUID.randomUUID().toString(),
+            name = name.ifBlank { "CyanNVR" },
+            lanUrl = base,
+        )).copy(
+            name = name.ifBlank { "CyanNVR" },
+            lanUrl = base,
+            pubUrl = NvrClient.normalizeBaseUrl(pub),
+            username = username.ifBlank { "admin" },
+            trustAnyCert = trustCert,
+        )
+        ServerStore.save(server)
+        if (password.isNotBlank()) {
+            ServerStore.savePassword(server.id, if (rememberPwd) password else null)
+        } else if (!hasPasswordSaved) {
+            ServerStore.savePassword(server.id, null)
+        }
+        onSaved()
+    }
+
+    fun doTest() {
+        val base = NvrClient.normalizeBaseUrl(lan) ?: return
+        testing = true
+        testState = null
+        ConnectionManager.scope.launch {
+            val client = NvrClient.clientFor(trustCert)
+            val lanInfo = NvrClient.probe(client, base)
+            val msg = if (lanInfo != null) {
+                "连接成功：${lanInfo.name}（${lanInfo.latencyMs}ms）"
+            } else {
+                "无法连接 $base：请确认服务端已启动、IP 端口正确、手机在同一网络"
+            }
+            val pubBase = NvrClient.normalizeBaseUrl(pub)
+            val pubMsg = when {
+                pubBase == null -> ""
+                NvrClient.probe(client, pubBase) != null -> "；公网地址可达"
+                else -> "；公网地址不可达"
+            }
+            withContext(Dispatchers.Main) {
+                testing = false
+                testState = (lanInfo != null) to (msg + pubMsg)
+            }
+        }
+    }
+
+    // 请求关闭：有未保存输入时先确认，否则直接关闭
+    fun requestDismiss() {
+        if (dirty) confirmExit = true else onDismiss()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { requestDismiss() },
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            // 下滑到底时：有未保存输入则返回 false 阻止隐藏，改为弹确认框；
+            // 无输入才允许真的隐藏（返回 true）。
+            confirmValueChange = { value ->
+                if (value == androidx.compose.material3.SheetValue.Hidden && dirty) {
+                    confirmExit = true
+                    false
+                } else {
+                    true
+                }
+            },
+        ),
+    ) {
         Column(
             modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                if (editing == null) "添加服务器" else "编辑服务器",
-                style = MaterialTheme.typography.titleLarge,
-            )
+            // 标题行：标题在左，测试连接 + 保存按钮在右
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (editing == null) "添加服务器" else "编辑服务器",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { doTest() },
+                        enabled = NvrClient.normalizeBaseUrl(lan) != null && !testing,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        if (testing) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("测试", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    Button(
+                        onClick = { doSave() },
+                        enabled = NvrClient.normalizeBaseUrl(lan) != null,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    ) {
+                        Text("保存", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = lan,
                 onValueChange = { lan = it; testState = null },
@@ -438,67 +542,24 @@ fun AddServerSheet(
                     Text(msg, style = MaterialTheme.typography.bodySmall)
                 }
             }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val base = NvrClient.normalizeBaseUrl(lan) ?: return@OutlinedButton
-                        testing = true
-                        testState = null
-                        ConnectionManager.scope.launch {
-                            val client = NvrClient.clientFor(trustCert)
-                            val lanInfo = NvrClient.probe(client, base)
-                            val msg = if (lanInfo != null) {
-                                "连接成功：${lanInfo.name}（${lanInfo.latencyMs}ms）"
-                            } else {
-                                "无法连接 $base：请确认服务端已启动、IP 端口正确、手机在同一网络"
-                            }
-                            val pubBase = NvrClient.normalizeBaseUrl(pub)
-                            val pubMsg = when {
-                                pubBase == null -> ""
-                                NvrClient.probe(client, pubBase) != null -> "；公网地址可达"
-                                else -> "；公网地址不可达"
-                            }
-                            withContext(Dispatchers.Main) {
-                                testing = false
-                                testState = (lanInfo != null) to (msg + pubMsg)
-                            }
-                        }
-                    },
-                    enabled = NvrClient.normalizeBaseUrl(lan) != null && !testing,
-                ) {
-                    if (testing) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("测试连接")
-                }
-                Button(
-                    onClick = {
-                        val base = NvrClient.normalizeBaseUrl(lan) ?: return@Button
-                        val server = (editing ?: NvrServer(
-                            id = UUID.randomUUID().toString(),
-                            name = name.ifBlank { "CyanNVR" },
-                            lanUrl = base,
-                        )).copy(
-                            name = name.ifBlank { "CyanNVR" },
-                            lanUrl = base,
-                            pubUrl = NvrClient.normalizeBaseUrl(pub),
-                            username = username.ifBlank { "admin" },
-                            trustAnyCert = trustCert,
-                        )
-                        ServerStore.save(server)
-                        if (password.isNotBlank()) {
-                            ServerStore.savePassword(server.id, if (rememberPwd) password else null)
-                        } else if (!hasPasswordSaved) {
-                            ServerStore.savePassword(server.id, null)
-                        }
-                        onSaved()
-                    },
-                    enabled = NvrClient.normalizeBaseUrl(lan) != null,
-                ) { Text("保存") }
-            }
         }
+    }
+
+    // 退出确认对话框
+    if (confirmExit) {
+        AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text("放弃修改？") },
+            text = { Text("当前输入尚未保存，确认退出？") },
+            confirmButton = {
+                TextButton(onClick = { confirmExit = false; onDismiss() }) {
+                    Text("退出", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmExit = false }) { Text("继续编辑") }
+            },
+        )
     }
 }
 

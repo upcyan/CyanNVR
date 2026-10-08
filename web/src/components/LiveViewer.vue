@@ -151,7 +151,7 @@ if (typeof document !== 'undefined') {
           <span>回放</span>
         </button>
         <button class="vbtn" @click="toggleFullscreen">
-          <van-icon :name="isFullscreen ? 'shrink-o' : 'expand-o'" size="20" />
+          <van-icon :name="isFullscreen ? 'shrink' : 'expand-o'" size="20" />
           <span>{{ isFullscreen ? '退出全屏' : '全屏' }}</span>
         </button>
       </div>

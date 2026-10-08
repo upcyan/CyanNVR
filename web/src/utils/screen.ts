@@ -11,69 +11,80 @@ export function isMobileDevice(): boolean {
   }
 }
 
+/** CyanNVR App 内嵌 WebView 暴露的原生桥（见 android WebViewScreen.kt） */
+function appBridge(): { setOrientation?: (landscape: boolean) => void } | null {
+  return (window as any).CyanNVRApp ?? null
+}
+
 /**
  * 进入全屏并按视频宽高比自动锁定方向。
  *
- * 设计原则（重要）：
- *   · 真横屏优先：Android Chrome / 支持 Screen Orientation API 的 WebView 上
- *     调用 screen.orientation.lock('landscape')，系统会**真正旋转屏幕**，
- *     返回手势、状态栏、系统 UI 的方向都随之正确——这才是「真横屏」。
- *   · 不用「CSS 旋转兜底」：如果 lock 不可用（iOS Safari 不支持、桌面
- *     显示器不能旋转、某些 WebView 未实现），绝不能把画面用 transform 转
- *     90° 伪装成横屏——那会让画面横着、返回交互仍是竖屏，形成「伪横屏」，
- *     系统手势与视觉方向割裂，比保持竖屏更糟。此时保持竖屏全屏，iOS 上
- *     用户可手动旋转设备由系统自动适配，桌面则无旋转需求。
+ * 三种环境，三种真横屏路径：
+ *   1. Android App（内嵌 WebView）：调用原生桥 CyanNVRApp.setOrientation，
+ *      由原生 requestedOrientation 真正旋转屏幕。WebView 不支持
+ *      screen.orientation.lock()，必须走原生。
+ *   2. Android Chrome 等支持 Screen Orientation API 的浏览器：lock()。
+ *   3. iOS Safari / 桌面：不支持 lock，保持原方向（iOS 用户手动旋转由系统适配）。
  *
- * 因此这里只做「尝试真锁」，锁不动就保持竖屏全屏，绝不欺骗方向。
+ * 绝不用 CSS transform 旋转做「伪横屏」——画面横了、返回手势还是竖屏，
+ * 方向割裂比保持竖屏更糟。
  */
 export async function enterFullscreen(el: HTMLElement, video?: HTMLVideoElement | null): Promise<void> {
-  // 先进入全屏：Screen Orientation API 要求元素处于全屏状态 lock 才生效。
   const req = el.requestFullscreen ?? (el as any).webkitRequestFullscreen
   if (req) await req.call(el).catch(() => {})
   if (!isMobileDevice()) return
 
-  // 确保全屏已激活再 lock：Chromium 下 requestFullscreen() await 返回时
-  // fullscreenElement 通常已就绪，但 Android WebView 上 fullscreen 激活可能
-  // 晚于 Promise resolve，此时直接 lock 会拿到 AbortError 而被静默放弃。
-  // 若尚未激活，等一次 fullscreenchange（最多 500ms）。
+  // 确保全屏已激活（WebView 上 fullscreen 激活可能晚于 Promise resolve）
   if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
     await new Promise<void>((resolve) => {
-      const done = () => {
-        cleanup()
-        resolve()
-      }
-      const cleanup = () => {
+      const timer = setTimeout(done, 500)
+      function done() {
+        clearTimeout(timer)
         document.removeEventListener('fullscreenchange', done)
         document.removeEventListener('webkitfullscreenchange', done)
-        clearTimeout(timer)
+        resolve()
       }
-      const timer = setTimeout(done, 500)
       document.addEventListener('fullscreenchange', done)
       document.addEventListener('webkitfullscreenchange', done)
     })
   }
 
-  // 按视频流宽高比自动判断目标方向：横构图（宽>=高，常见 16:9 摄像头）要横屏，
-  // 竖构图（如倒装/门铃 9:16）要竖屏；取不到视频尺寸时默认横屏。
-  let orientation: 'landscape' | 'portrait' = 'landscape'
+  // 按视频宽高比决定目标方向：横构图（16:9）要横屏，竖构图（9:16）要竖屏
+  let wantLandscape = true
   if (video && video.videoWidth > 0 && video.videoHeight > 0) {
-    orientation = video.videoWidth >= video.videoHeight ? 'landscape' : 'portrait'
+    wantLandscape = video.videoWidth >= video.videoHeight
   }
 
-  // 尝试原生方向锁定。lock 只在支持它的环境生效（Android Chrome/WebView）。
-  // iOS、桌面、未实现 lock 的 WebView 会抛错或静默无效——无论哪种情况，
-  // 都不做伪横屏兜底，直接保持竖屏全屏。
+  // 1) App 原生桥优先
+  const bridge = appBridge()
+  if (bridge?.setOrientation) {
+    try {
+      bridge.setOrientation(wantLandscape)
+      return
+    } catch {
+      /* 桥异常则回退到下方 lock */
+    }
+  }
+
+  // 2) 浏览器 Screen Orientation API
   try {
-    await (screen.orientation as any)?.lock?.(orientation)
+    await (screen.orientation as any)?.lock?.(wantLandscape ? 'landscape' : 'portrait')
   } catch {
-    /* lock 不可用：保持竖屏全屏，不伪装横屏（见函数头注释） */
+    /* 不支持：保持原方向，不伪装横屏 */
   }
-
-  // 无需再轮询或做 CSS 旋转兜底。真锁生效则系统已横屏；不生效则竖屏全屏，
-  // 两者都是方向自洽的「真」状态，不存在画面与交互割裂的中间态。
 }
 
 export async function exitFullscreen(): Promise<void> {
+  // App 原生桥：恢复方向（UNSPECIFIED = 跟随系统传感器）
+  const bridge = appBridge()
+  if (bridge?.setOrientation) {
+    try {
+      bridge.setOrientation(false)
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (isMobileDevice()) {
     try {
       ;(screen.orientation as any)?.unlock?.()
