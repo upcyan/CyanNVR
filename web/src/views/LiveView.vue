@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { Device, DiscoveredDevice } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { isBackend, isDemoMode, liveStreamUrl, refreshConnection } from '../api'
+import { useAuthStore } from '../stores/auth'
+import { fetchRecordPause, isBackend, isDemoMode, liveStreamUrl, refreshConnection, setRecordPause } from '../api'
 import { server } from '../api/server'
 import { isNvrApp } from '../utils/env'
 const sourceLabel = computed(() => server.base || window.location.origin)
@@ -19,6 +20,58 @@ import AddDevice from '../components/AddDevice.vue'
 
 const store = useDeviceStore()
 const router = useRouter()
+const auth = useAuthStore()
+
+// ── 全局暂停录制（仅管理员可见）──
+//
+// 暂停 = 停止监控：直播与录像一起停，设备随即显示离线。
+// 因此点击前必须确认——这是高影响操作，误触会让用户以为摄像头坏了。
+const paused = ref(false)
+const pauseBusy = ref(false)
+const canPause = computed(() => auth.isAdmin && isBackend() && !isDemoMode())
+
+async function loadPauseState() {
+  if (!canPause.value) return
+  try {
+    const st = await fetchRecordPause()
+    paused.value = st.paused
+  } catch {
+    /* 读不到不影响其它功能 */
+  }
+}
+
+async function togglePause() {
+  if (pauseBusy.value) return
+  const next = !paused.value
+  if (next) {
+    try {
+      await showConfirmDialog({
+        title: '暂停录制',
+        message: '将停止所有摄像机的直播与录像，设备会显示为离线。\n确认暂停？',
+        confirmButtonText: '暂停录制',
+        confirmButtonColor: '#ee0a24',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return // 用户取消
+    }
+  }
+  pauseBusy.value = true
+  try {
+    const st = await setRecordPause(next)
+    paused.value = st.paused
+    showToast(st.paused ? '已暂停录制' : '已恢复录制')
+    // 重新拉设备列表让 online 状态立即刷新（暂停后应显示离线）
+    await store.refresh()
+  } catch {
+    showToast(next ? '暂停失败，请重试' : '恢复失败，请重试')
+    await loadPauseState()
+  } finally {
+    pauseBusy.value = false
+  }
+}
+
+onMounted(loadPauseState)
 
 const showAdd = ref(false)
 const discovering = ref(false)
@@ -153,10 +206,30 @@ function onViewerPlayback(d: Device) {
         <span class="hd-sub">在线 {{ onlineDevices.length }} / {{ store.devices.length }}</span>
       </div>
       <div class="hd-actions">
+        <button
+          v-if="canPause"
+          class="icon-btn pause-btn"
+          :class="{ paused }"
+          :title="paused ? '恢复录制（重新开启直播与录像）' : '暂停录制（停止直播与录像）'"
+          :aria-label="paused ? '恢复录制' : '暂停录制'"
+          :aria-pressed="paused"
+          :disabled="pauseBusy"
+          @click="togglePause"
+        >
+          <van-icon :name="paused ? 'play-circle-o' : 'pause-circle-o'" size="22" />
+        </button>
         <button class="icon-btn" title="添加摄像机" @click="showAdd = true"><van-icon name="plus" size="22" /></button>
         <button class="icon-btn" title="多画面预览" @click="showMulti = true"><van-icon name="apps-o" size="20" /></button>
       </div>
     </header>
+
+    <!-- 暂停状态横幅：状态是全局的，必须一直可见，
+         否则用户看到全部离线会以为设备故障 -->
+    <div v-if="paused" class="pause-banner" role="status">
+      <van-icon name="pause-circle-o" size="16" />
+      <span>录制已暂停，直播与录像均已停止</span>
+      <button type="button" class="pause-banner-btn" @click="togglePause">恢复录制</button>
+    </div>
 
     <p class="data-source" role="status">{{ isDemoMode() ? '演示数据（非已添加设备）' : `当前服务器：${sourceLabel}` }}</p>
     <div class="cards">
@@ -295,6 +368,46 @@ function onViewerPlayback(d: Device) {
 .icon-btn:active {
   background: var(--nvr-accent-soft);
   border-color: var(--nvr-accent);
+}
+/* 暂停录制按钮：暂停态用警示色，与普通图标按钮区分开 */
+.icon-btn.pause-btn.paused {
+  color: var(--nvr-red, #ff4d4f);
+  border-color: var(--nvr-red, #ff4d4f);
+  background: color-mix(in srgb, var(--nvr-red, #ff4d4f) 14%, transparent);
+}
+.icon-btn.pause-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 暂停横幅：全局状态需持续可见，否则用户看到全部离线会以为设备坏了 */
+.pause-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border-radius: var(--nvr-radius-sm);
+  background: color-mix(in srgb, var(--nvr-red, #ff4d4f) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nvr-red, #ff4d4f) 45%, transparent);
+  color: var(--nvr-text);
+  font-size: calc(13px * var(--nvr-font-scale, 1));
+}
+.pause-banner span {
+  flex: 1;
+  min-width: 0;
+}
+.pause-banner-btn {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid var(--nvr-red, #ff4d4f);
+  border-radius: var(--nvr-radius-full);
+  background: transparent;
+  color: var(--nvr-red, #ff4d4f);
+  font-size: calc(12px * var(--nvr-font-scale, 1));
+  cursor: pointer;
+}
+.pause-banner-btn:active {
+  background: color-mix(in srgb, var(--nvr-red, #ff4d4f) 22%, transparent);
 }
 .cards {
   flex: 1;

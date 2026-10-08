@@ -66,6 +66,11 @@ type AppSettings struct {
 	// TrustWindowHours 免登录信任窗口（小时）：token 过期后仍可静默续期的
 	// 时长。0=关闭。用户级 trust_window_hours 覆盖此全局默认。
 	TrustWindowHours int `json:"trustWindowHours"`
+	// RecordPaused 全局暂停录制（管理员在首页操作）。
+	// 暂停时停掉所有录制/直播进程，设备显示为离线；恢复后按原策略继续。
+	// 持久化到 settings.json：暂停监控属于隐私/维护操作，
+	// 进程重启后静默恢复录制会违背用户意图。
+	RecordPaused bool `json:"recordPaused"`
 }
 
 func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls, am *auth.Manager, hub *SSEHub) *Server {
@@ -76,6 +81,12 @@ func New(cfg *config.Config, st *store.Store, rec *recorder.Manager, h *hls.Hls,
 		s.settingsMu.Lock()
 		defer s.settingsMu.Unlock()
 		return s.settings.RecordMode, s.settings.ScheduleStart, s.settings.ScheduleEnd
+	}
+	// 恢复上次的暂停状态。必须在 rec.Start() 之前调用（main.go 里 api.New
+	// 先于 rec.Start），这样暂停期间 Start() 不会把流拉起来。
+	if s.settings.RecordPaused {
+		log.Printf("上次退出时处于「录制已暂停」，继续保持暂停（不启动任何流）")
+		s.rec.SetPaused(true)
 	}
 	return s
 }
@@ -277,6 +288,10 @@ func (s *Server) Router() http.Handler {
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)
 	protected.PATCH("/settings", s.requireAdmin, s.putSettings)
+	// 全局暂停/恢复录制：首页按钮用。状态查询所有登录用户可读，
+	// 切换仅管理员（会停掉全部直播与录像，属高影响操作）。
+	protected.GET("/record/pause", s.recordPauseStatus)
+	protected.POST("/record/pause", s.requireAdmin, s.setRecordPause)
 	protected.GET("/tls/status", s.tlsStatus)
 	protected.POST("/tls/manual-cert", s.requireAdmin, s.uploadManualCert)
 	protected.POST("/tls/reload", s.requireAdmin, s.reloadTLS)

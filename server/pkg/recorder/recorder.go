@@ -33,6 +33,11 @@ type Manager struct {
 	stopAll chan struct{}
 	once    sync.Once
 
+	// paused 全局暂停录制（管理员在首页操作）。
+	// 暂停时停掉所有 worker（ffmpeg 退出 → 直播断流 → 设备显示离线），
+	// 且 StartWorker 拒绝启动；恢复时按原策略重新拉起。
+	paused bool
+
 	ShouldRecordFn func() (mode, scheduleStart, scheduleEnd string)
 }
 
@@ -138,12 +143,136 @@ func (m *Manager) Stop() {
 	}
 }
 
+// IsPaused 返回是否处于全局暂停状态。
+func (m *Manager) IsPaused() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.paused
+}
+
+// SetPaused 全局暂停/恢复录制。
+//
+// 暂停：停掉所有 worker（ffmpeg 退出 → HLS 断流 → 设备标记离线），
+// 前端首页卡片因此显示离线；AI 分析同步停止（无帧可分析）。
+// 恢复：按各设备原策略重新拉起（复用 shouldRecordNow 的连续/计划/移动判定）。
+//
+// 与「磁盘低水位暂停」的区别：那个只停录像管线、保留直播；
+// 这里的语义是「用户主动停止监控」，直播也必须停（否则摄像头仍在被访问，
+// 隐私诉求不成立），因此直接停 worker 而不是只 kill 录像进程。
+func (m *Manager) SetPaused(paused bool) {
+	m.mu.Lock()
+	if m.paused == paused {
+		m.mu.Unlock()
+		return
+	}
+	m.paused = paused
+	workers := make([]*Worker, 0, len(m.workers))
+	ids := make([]string, 0, len(m.workers))
+	for id, w := range m.workers {
+		workers = append(workers, w)
+		ids = append(ids, id)
+	}
+	if paused {
+		// 从 workers 表移除，避免 StartWorker 认为「已在运行」而跳过
+		m.workers = map[string]*Worker{}
+	}
+	m.mu.Unlock()
+
+	if paused {
+		for _, w := range workers {
+			w.Stop()
+		}
+		// 清理直播产物：ffmpeg 停止后 index.m3u8/分片仍留在磁盘上，
+		// HTTP 仍能读到那最后一小段，客户端会拉到陈旧画面而不是「离线」。
+		// 录像文件不动（那是已录内容，用户随时可回放）。
+		for _, w := range workers {
+			clearLiveDir(w.liveDir)
+		}
+		// 把所有设备标记离线：不能只处理 workers 里的设备——
+		// 启动时（api.New 在 rec.Start 之前调用本方法）workers 还是空的，
+		// 而 DB 里上次退出时可能留着 online=1，前端会显示「在线但无画面」。
+		if devs, err := m.st.ListDevices(); err == nil {
+			for i := range devs {
+				_ = m.st.SetDeviceOnline(devs[i].ID, false)
+			}
+		}
+		// 事件流通知前端（按已停掉的 worker 发，避免为离线设备刷屏）
+		for _, id := range ids {
+			if w := m.workerByID(workers, id); w != nil {
+				m.broadcastEvent("offline", id, w.dev.Name, "", "录制已暂停",
+					w.dev.Name+" 录制已暂停", time.Now().Format(time.RFC3339))
+			}
+		}
+		if m.ai != nil {
+			m.ai.SetActiveDevices(0)
+		}
+		log.Printf("录制已暂停：已停止 %d 路（直播与录像均停止）", len(workers))
+		return
+	}
+
+	// 恢复：按设备原策略重新拉起
+	devs, err := m.st.ListDevices()
+	if err != nil {
+		log.Printf("恢复录制时读取设备失败: %v", err)
+		return
+	}
+	n := 0
+	for i := range devs {
+		d := devs[i]
+		if !d.Online && !d.RecordEnabled {
+			// 未启用录像且此前已离线的设备不必拉起
+			continue
+		}
+		m.StartWorker(&d)
+		n++
+	}
+	m.syncActiveAI()
+	log.Printf("录制已恢复：尝试拉起 %d 路", n)
+}
+
+// workerByID 从切片里按 id 找 worker（SetPaused 的暂停分支用）。
+func (m *Manager) workerByID(list []*Worker, id string) *Worker {
+	for _, w := range list {
+		if w.dev.ID == id {
+			return w
+		}
+	}
+	return nil
+}
+
+// clearLiveDir 删除直播目录下的 HLS 产物（m3u8 与分片）。
+//
+// 暂停录制时必须清理：ffmpeg 停止后这些文件仍在磁盘上，
+// HTTP 端仍能把最后几秒发给客户端，用户看到的是「卡住的旧画面」
+// 而不是「离线」。只清直播产物，不动录像文件。
+func clearLiveDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".m3u8") || strings.HasSuffix(name, ".ts") {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
 func (m *Manager) StartWorker(d *models.Device) {
 	if !ffmpeg.Exists(m.cfg.Ffmpeg) {
 		log.Printf("ffmpeg not found (%s), cannot start recorder", m.cfg.Ffmpeg)
 		return
 	}
 	m.mu.Lock()
+	// 全局暂停期间拒绝启动：暂停后若有其它路径（设备更新、重连巡检）
+	// 调用 StartWorker，会把流重新拉起来，暂停就失效了。
+	if m.paused {
+		m.mu.Unlock()
+		return
+	}
 	if _, ok := m.workers[d.ID]; ok {
 		m.mu.Unlock()
 		return

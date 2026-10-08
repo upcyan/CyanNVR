@@ -441,6 +441,34 @@ export async function deleteMark(
   return http.delete(`/api/marks/${id}`, { params: { deviceId } }).then((r) => r.data)
 }
 
+// ---- 全局暂停/恢复录制（管理员首页操作）----
+
+export interface RecordPauseState {
+  paused: boolean
+  /** 本次调用是否真的改变了状态（幂等请求返回 false） */
+  changed?: boolean
+}
+
+/** 查询当前暂停状态（所有登录用户可读，用于渲染按钮） */
+export async function fetchRecordPause(): Promise<RecordPauseState> {
+  if (isDemoMode()) return { paused: false }
+  requireBackend()
+  const { data } = await http.get('/api/record/pause')
+  return { paused: !!data.paused }
+}
+
+/**
+ * 暂停或恢复录制（仅管理员）。
+ *
+ * 暂停会停掉全部直播与录像，设备随即显示离线——这是「停止监控」的
+ * 完整语义，因此调用方需要先与用户确认。
+ */
+export async function setRecordPause(paused: boolean): Promise<RecordPauseState> {
+  requireBackend()
+  const { data } = await http.post('/api/record/pause', { paused })
+  return { paused: !!data.paused, changed: !!data.changed }
+}
+
 export function downloadEventSnapshotURL(eventId: string): string {
   const token = localStorage.getItem('nvr_token') || ''
   return `${server.base}/api/events/${eventId}/snapshot/download?token=${token}`
