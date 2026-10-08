@@ -143,4 +143,45 @@ object UpdateManager {
         }
         return 0
     }
+
+    /**
+     * 检查 → 下载 → 调起安装器（后台线程）。
+     * 供 Web 端 bridge 调用：WebView 里点「安装更新」走这里。
+     */
+    fun installLatest(activity: android.app.Activity) {
+        Thread {
+            try {
+                val info = check(activity)
+                if (!info.hasUpdate || info.apkUrl == null) {
+                    activity.runOnUiThread {
+                        android.widget.Toast.makeText(activity, "已是最新版本", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@Thread
+                }
+                activity.runOnUiThread {
+                    android.widget.Toast.makeText(activity, "正在下载 v${info.latest}…", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                val result = download(activity, info)
+                activity.runOnUiThread { installApk(activity, result.file) }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    android.widget.Toast.makeText(activity, "更新失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    /** 调起系统安装器安装已下载的 APK。 */
+    fun installApk(context: android.content.Context, file: java.io.File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
 }

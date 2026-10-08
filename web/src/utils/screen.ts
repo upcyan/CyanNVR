@@ -75,7 +75,8 @@ export async function enterFullscreen(el: HTMLElement, video?: HTMLVideoElement 
 }
 
 export async function exitFullscreen(): Promise<void> {
-  // App 原生桥：恢复方向（UNSPECIFIED = 跟随系统传感器）
+  // App 原生桥：恢复竖屏。不用 UNSPECIFIED——那会跟随传感器，
+  // 横屏拿在手里时退出全屏仍保持横屏，用户看到的就是「退不出来」。
   const bridge = appBridge()
   if (bridge?.setOrientation) {
     try {
@@ -94,4 +95,29 @@ export async function exitFullscreen(): Promise<void> {
   }
   const exit = document.exitFullscreen ?? (document as any).webkitExitFullscreen
   if (exit) await exit.call(document).catch(() => {})
+}
+
+/**
+ * 兜底：只要退出全屏就恢复竖屏。
+ *
+ * 必须有：用户可能不经 exitFullscreen() 退出全屏（Android 返回键、系统手势、
+ * Esc）。此时若不恢复方向，App 会一直卡在横屏。由 fullscreenchange 统一兜底，
+ * 比在每个调用点处理更可靠。
+ */
+function onFullscreenChange() {
+  const stillFullscreen = document.fullscreenElement || (document as any).webkitFullscreenElement
+  if (stillFullscreen) return
+  const bridge = appBridge()
+  if (bridge?.setOrientation) {
+    try {
+      bridge.setOrientation(false)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange)
 }

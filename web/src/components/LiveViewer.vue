@@ -34,6 +34,7 @@ async function openStream() {
   await nextTick()
   if (videoEl.value && props.device) {
     playable = createPlayable({
+      live: true,
       url: props.streamUrl,
       seed: hash(props.device.id),
       label: props.device.name,

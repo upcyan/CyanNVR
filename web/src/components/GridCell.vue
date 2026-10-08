@@ -25,6 +25,7 @@ function attach() {
   if (playable || !videoEl.value || !props.device.online) return
   videoReady.value = false
   playable = createPlayable({
+    live: true,
     url: props.streamUrl,
     seed: hash(props.device.id),
     label: props.device.name,

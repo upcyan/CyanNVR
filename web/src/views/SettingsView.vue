@@ -276,14 +276,42 @@ async function loadAboutVersion() {
   }
 }
 
-// ---- 检查更新：发现新版本跳转 GitHub release 页面，用户自行下载安装 ----
+// ---- 检查更新 ----
+// 两种环境：
+//   · App 内嵌 WebView：检查 App 自身版本（走原生桥 CyanNVRApp.checkAppUpdate）。
+//     App 版本与服务器版本是两条线——此前误用服务器版本比对，导致
+//     「App 明明有新版却一直显示最新」。
+//   · 浏览器 / fnOS 桌面：检查服务器版本（后端查 GitHub release），
+//     发现新版跳转 release 页面自行下载。
 const checkingUpdate = ref(false)
-const updateState = ref<null | { hasUpdate: boolean; latest: string; url?: string; error?: string }>(null)
+const updateState = ref<null | {
+  hasUpdate: boolean
+  latest: string
+  current?: string
+  url?: string
+  inApp?: boolean
+  error?: string
+}>(null)
+
+function appBridge(): any {
+  return (window as any).CyanNVRApp ?? null
+}
 
 async function checkForUpdate() {
   checkingUpdate.value = true
   updateState.value = null
   try {
+    const bridge = appBridge()
+    if (bridge?.checkAppUpdate) {
+      const info = JSON.parse(bridge.checkAppUpdate())
+      updateState.value = {
+        hasUpdate: !!info.hasUpdate,
+        latest: info.latest || '',
+        current: info.current || '',
+        inApp: true,
+      }
+      return
+    }
     const { data } = await http.get('/api/update/check')
     updateState.value = data.update
   } catch {
@@ -297,6 +325,12 @@ function openRelease() {
   if (updateState.value?.url) {
     window.open(updateState.value.url, '_blank', 'noopener')
   }
+}
+
+/** App 环境：走原生下载 + 系统安装器 */
+function installAppUpdate() {
+  const bridge = appBridge()
+  if (bridge?.installAppUpdate) bridge.installAppUpdate()
 }
 
 onMounted(() => {
@@ -1236,10 +1270,11 @@ async function removeUser(u: ManagedUser) {
       <div v-if="updateState" class="update-panel">
         <p v-if="updateState.error" class="update-err">{{ updateState.error }}</p>
         <template v-else-if="updateState.hasUpdate">
-          <p class="update-new">发现新版本 v{{ updateState.latest }}</p>
-          <button type="button" class="update-open-btn" @click="openRelease">前往 GitHub 下载</button>
+          <p class="update-new">发现新版本 v{{ updateState.latest }}<template v-if="updateState.inApp && updateState.current">（当前 v{{ updateState.current }}）</template></p>
+          <button v-if="updateState.inApp" type="button" class="update-open-btn" @click="installAppUpdate">下载并安装</button>
+          <button v-else type="button" class="update-open-btn" @click="openRelease">前往 GitHub 下载</button>
         </template>
-        <p v-else class="update-ok">已是最新版本</p>
+        <p v-else class="update-ok">已是最新版本<template v-if="updateState.inApp && updateState.current">（v{{ updateState.current }}）</template></p>
       </div>
     </div>
 

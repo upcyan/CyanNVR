@@ -178,14 +178,20 @@ object ConnectionManager {
     }
 
     private var recheckPending = false
+    private var lastRevalidateAt = 0L
 
     private fun scheduleRecheck(reason: String?) {
         if (state !is ConnState.Connected) return
         if (recheckPending) return
+        // 节流：Android 上 WiFi 与移动网络会交替触发 onAvailable/onLost，
+        // 不节流会高频 probe，观感如同界面反复重载。
+        val now = System.currentTimeMillis()
+        if (now - lastRevalidateAt < 15_000) return
         recheckPending = true
         scope.launch {
             delay(1000)
             recheckPending = false
+            lastRevalidateAt = System.currentTimeMillis()
             revalidate(reason)
         }
     }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { showToast } from 'vant'
 
 const props = defineProps<{
@@ -18,6 +18,21 @@ const emit = defineEmits<{
   (e: 'seek-rel', deltaMs: number): void
   (e: 'jump', timeText: string): void
 }>()
+
+// 全屏状态：全屏时在左上角显示「返回」按钮，退出全屏。
+// 自定义 div 全屏（Element Fullscreen）没有系统返回入口，必须自绘。
+const isFullscreen = ref(false)
+function onFsChange() {
+  isFullscreen.value = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
+}
+onMounted(() => {
+  document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('webkitfullscreenchange', onFsChange)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('webkitfullscreenchange', onFsChange)
+})
 
 // 跳转时间：自绘 HH:MM:SS 输入（自动补冒号），从时间轴下方的独立工具行
 // 收编进播放器控制条（时钟图标弹出），与倍速区同处一片操作区。
@@ -88,6 +103,11 @@ const speeds = [1, 2, 4, 8]
 
 <template>
   <div ref="wrapRef" class="player">
+    <!-- 全屏时的左上角返回按钮：自定义 div 全屏没有系统返回入口，需自绘 -->
+    <button v-if="isFullscreen" type="button" class="fs-back" aria-label="退出全屏" @click="emit('fullscreen')">
+      <van-icon name="arrow-left" size="18" />
+      <span>返回</span>
+    </button>
     <video
       ref="videoEl"
       class="video"
@@ -177,6 +197,28 @@ const speeds = [1, 2, 4, 8]
   background: #000;
   border-radius: 10px;
   overflow: hidden;
+}
+/* 全屏返回按钮：左上角，图标 + 「返回」文字。
+   自定义 div 全屏没有系统返回入口，必须自绘。 */
+.fs-back {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--nvr-radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: calc(14px * var(--nvr-font-scale, 1));
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+.fs-back:active {
+  background: rgba(0, 0, 0, 0.75);
 }
 .video {
   width: 100%;

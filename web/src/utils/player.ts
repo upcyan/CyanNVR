@@ -169,7 +169,7 @@ export class HlsStream implements Playable {
 
   private errorTypes: typeof HlsType.ErrorTypes | null = null
 
-  constructor(private url: string, private baseTs = 0) {}
+  constructor(private url: string, private baseTs = 0, private live = false) {}
 
   async attach(el: HTMLVideoElement) {
     this.destroy()
@@ -182,12 +182,27 @@ export class HlsStream implements Playable {
     if (Hls.isSupported()) {
       this.hls = new Hls({
         enableWorker: true,
-        // 高倍速（最高 8x）下缓冲消耗极快：默认 30s 在 8x 时仅够 3.75s，
-        // 会反复追上转码前沿造成停顿（观感即「跳帧」）。加大前向缓冲给
-        // 高倍速留出足够跑道；本地转码分片读磁盘，代价只是内存占用。
-        maxBufferLength: 90,
-        maxMaxBufferLength: 600,
-        liveDurationInfinity: true,
+        ...(this.live
+          ? {
+              // 直播：贴近实时。服务端窗口约 16 秒（8 片 × 2s），
+              // 缓冲需求必须小于窗口，否则 hls.js 会不断追赶不存在的分片，
+              // 造成播放列表/分片高频重复拉取与画面周期性重载。
+              maxBufferLength: 12,
+              maxMaxBufferLength: 20,
+              liveSyncDurationCount: 3,
+              liveMaxLatencyDurationCount: 6,
+              // 播放列表刷新跟随目标时长，避免过于频繁地轮询
+              manifestLoadingMaxRetry: 4,
+              levelLoadingMaxRetry: 4,
+              fragLoadingMaxRetry: 4,
+            }
+          : {
+              // 回放：最高 8x 倍速下缓冲消耗极快（默认 30s 仅够 3.75s），
+              // 加大前向缓冲给高倍速留跑道；本地分片读磁盘，代价只是内存。
+              maxBufferLength: 90,
+              maxMaxBufferLength: 600,
+              liveDurationInfinity: true,
+            }),
       })
 
       this.errorTypes = Hls.ErrorTypes
@@ -323,10 +338,20 @@ export interface PlayableOptions {
   baseTs?: number
   seed?: number
   label?: string
+  /**
+   * 直播流（真实摄像头实时画面）。
+   *
+   * 直播与回放对 HLS 缓冲的需求相反：
+   *   · 回放：要支持最高 8x 倍速，需大前向缓冲（maxBufferLength 90s）。
+   *   · 直播：视频实时产生、服务端窗口仅约 16 秒（hls_list_size=8 × 2s），
+   *     要求 90 秒缓冲会让 hls.js 不断追赶不存在的分片，表现为播放列表与
+   *     分片被高频重复拉取、画面周期性重载。直播应用贴近实时的参数。
+   */
+  live?: boolean
 }
 
 export function createPlayable(opts: PlayableOptions): Playable {
-  if (opts.url) return new HlsStream(opts.url, opts.baseTs ?? 0)
+  if (opts.url) return new HlsStream(opts.url, opts.baseTs ?? 0, opts.live ?? false)
   return new SimulatedStream(opts.seed ?? 0, opts.label ?? '', opts.baseTs)
 }
 

@@ -38,6 +38,7 @@ function attach() {
     if (!videoReady.value) loadTimeout.value = true
   }, 12000)
   playable = createPlayable({
+    live: true,
     url: props.streamUrl,
     seed: hash(props.device.id),
     label: props.device.name,
@@ -62,12 +63,32 @@ function detach() {
   if (videoEl.value) videoEl.value.srcObject = null
 }
 
+// 离屏延迟销毁：滚动时卡片短暂移出视口不立刻断流再重连（那会让画面
+// 反复黑屏重载），延迟 20 秒确认确实长期不可见才释放。返回视口则取消。
+let detachTimer = 0
+function scheduleDetach() {
+  window.clearTimeout(detachTimer)
+  detachTimer = window.setTimeout(() => {
+    if (!visible.value) detach()
+  }, 20000)
+}
+function cancelDetach() {
+  window.clearTimeout(detachTimer)
+  detachTimer = 0
+}
+
 onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
+      const wasVisible = visible.value
       visible.value = entries[0]?.isIntersecting ?? false
-      if (visible.value) attach()
-      else detach()
+      if (visible.value) {
+        cancelDetach()
+        // 已有流则复用，不重建（避免滚动回来时黑屏重载）
+        if (!playable) attach()
+      } else if (wasVisible) {
+        scheduleDetach()
+      }
     },
     { threshold: 0.25 },
   )
@@ -76,7 +97,9 @@ onMounted(() => {
 
 watch(
   () => [props.device.online, props.streamUrl] as const,
-  (on) => {
+  (on, old) => {
+    // 仅在线状态或流地址真变化时才重建
+    if (old && on[0] === old[0] && on[1] === old[1]) return
     detach()
     if (on[0]) attach()
   },
@@ -84,6 +107,7 @@ watch(
 
 onBeforeUnmount(() => {
   observer?.disconnect()
+  window.clearTimeout(detachTimer)
   detach()
 })
 </script>

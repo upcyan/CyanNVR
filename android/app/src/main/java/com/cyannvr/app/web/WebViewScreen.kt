@@ -65,6 +65,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.cyannvr.app.net.ConnectionManager
 import com.cyannvr.app.net.NvrClient
+import com.cyannvr.app.net.UpdateManager
 import org.json.JSONObject
 
 /** WebView 单例句柄：供返回键/全屏逻辑在 Compose 之外访问 */
@@ -94,7 +95,6 @@ fun NvrWebViewScreen(
     var loadError by remember { mutableStateOf<Pair<String, String>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
-    var hideServerBar by remember { mutableStateOf(false) }
 
     fun exitFullscreen() {
         WebViewHolder.customView = null
@@ -123,19 +123,10 @@ fun NvrWebViewScreen(
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = {
-                Column {
-                    if (!hideServerBar) {
-                        Text(server.name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            if (conn.viaLan) "局域网 · ${base.removePrefix("http://").removePrefix("https://")}"
-                            else "公网 · ${base.removePrefix("http://").removePrefix("https://")}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            },
+            // App 端不显示服务器信息（名称 + 局域网/公网地址）：
+            // Web 端页面内已有标题，这里再显示一遍属于重复信息，且占顶部空间。
+            // 需要看当前连接时，菜单里有「复制服务器地址」。
+            title = {},
             actions = {
                 IconButton(onClick = { loadError = null; WebViewHolder.webView?.reload() }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "刷新")
@@ -144,10 +135,6 @@ fun NvrWebViewScreen(
                     Icon(Icons.Filled.MoreVert, contentDescription = "菜单")
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(if (hideServerBar) "显示服务器信息" else "隐藏服务器信息") },
-                        onClick = { menuOpen = false; hideServerBar = !hideServerBar },
-                    )
                     DropdownMenuItem(
                         text = { Text("切换服务器") },
                         onClick = { menuOpen = false; onSwitchServer() },
@@ -247,11 +234,43 @@ fun NvrWebViewScreen(
                             fun setOrientation(landscape: Boolean) {
                                 val a = activity ?: return
                                 a.runOnUiThread {
+                                    // 退出全屏恢复「竖屏」而非 UNSPECIFIED：
+                                    // UNSPECIFIED 跟随传感器，横屏拿在手里时不会转回竖屏，
+                                    // 用户看到的就是「退出全屏没用」。
                                     a.requestedOrientation = if (landscape)
                                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                     else
-                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                                 }
+                            }
+
+                            /** App 自身版本号（供 Web 端「检查更新」区分 App 版本 / 服务器版本） */
+                            @android.webkit.JavascriptInterface
+                            fun appVersion(): String = UpdateManager.currentVersion(ctx)
+
+                            /**
+                             * 检查 App 更新。返回 JSON：
+                             * {hasUpdate, latest, current, apkUrl, apkName, notes, error}
+                             * Web 端在 App 环境调用它，避免误用服务器版本比对。
+                             */
+                            @android.webkit.JavascriptInterface
+                            fun checkAppUpdate(): String {
+                                val info = UpdateManager.check(ctx)
+                                return org.json.JSONObject().apply {
+                                    put("hasUpdate", info.hasUpdate)
+                                    put("latest", info.latest)
+                                    put("current", info.current)
+                                    put("apkUrl", info.apkUrl ?: "")
+                                    put("apkName", info.apkName ?: "")
+                                    put("notes", info.notes)
+                                }.toString()
+                            }
+
+                            /** 在 App 内下载并安装更新（复用 UpdateManager + 系统安装器） */
+                            @android.webkit.JavascriptInterface
+                            fun installAppUpdate() {
+                                val a = activity ?: return
+                                UpdateManager.installLatest(a)
                             }
                         }, "CyanNVRApp")
 
