@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import type { DayRecord, Device, EventItem, RecordingSegment } from '../types'
 import { useDeviceStore } from '../stores/devices'
-import { apiBase, createExport, createPlayback, deleteExport, downloadRecordingURL, exportFileURL, fetchDaySegments, fetchEvents, fetchExports, fetchMonthRecords, isBackend, isDemoMode, stopPlayback, type ExportTask } from '../api'
+import { apiBase, createExport, createMark, createPlayback, deleteExport, deleteMark, downloadRecordingURL, exportFileURL, fetchDaySegments, fetchEvents, fetchExports, fetchMarks, fetchMonthRecords, fetchRecordingsRange, isBackend, isDemoMode, stopPlayback, type ExportTask, type Mark } from '../api'
 import { hashStr } from '../mocks/generator'
 import { createPlayable, type Playable } from '../utils/player'
 import CalendarHeat from '../components/CalendarHeat.vue'
@@ -73,23 +73,170 @@ watch(() => route.query.tab, (t) => {
   if (want !== activeTab.value) activeTab.value = want
 })
 
-// ── 时间轴标记：在当前播放位置打点，导出弹窗可一键填入起止时间 ──
-const marks = ref<number[]>([])
-const markBtnOn = computed(() => marks.value.some((m) => Math.abs(m - currentTs.value) < 1500))
-function toggleMark() {
+// ── 时间轴标记：持久化到后端（marks 表）──
+//
+// 为什么必须持久化：此前 marks 只是页面内存数组，退出即丢，
+// 用户无法积累「要回头看的时刻」。现在改为后端存储，
+// 支持跨会话保留、点击跳转、单独删除。
+const marks = ref<Mark[]>([])
+/** 标记是否加载完成：避免首屏未加载完就判断「当前点已标记」 */
+const marksLoaded = ref(false)
+
+// ── 时间轴可视窗口（跨日无限滑动 + 捏合缩放）──
+//
+// 不再以「一天」为视窗：tlStart 是窗口起点、tlSpan 是窗口跨度，
+// 两者都由 TimelineBar 通过 v-model 驱动。跨度越小分辨率越高
+// （最细 30 秒，可精调到秒），越大越粗（最粗 7 天，用于快速跨日查找）。
+const tlStart = ref(0)
+const tlSpan = ref(86400000)
+/** 录像时间边界：限制滑动范围，避免滑到无录像的空白区 */
+const tlBounds = ref<{ earliest: number; latest: number } | undefined>(undefined)
+/** 已经加载过的窗口范围，避免同一范围重复请求 */
+let loadedFrom = 0
+let loadedTo = 0
+let rangeLoadSeq = 0
+
+/**
+ * 窗口变化时按需加载录像段。
+ *
+ * 不每次滑动都请求：只有当可视窗口超出「已加载范围」时才补拉
+ * （两边各留一屏余量），拖动过程中因此几乎不产生请求。
+ */
+async function onTimelineRange(r: { from: number; to: number }) {
+  if (!deviceId.value || !active) return
+  const margin = r.to - r.from
+  const wantFrom = r.from - margin
+  const wantTo = r.to + margin
+  // 已加载范围覆盖所需范围 → 无需请求
+  if (wantFrom >= loadedFrom && wantTo <= loadedTo) return
+  const seq = ++rangeLoadSeq
+  try {
+    const { segments: segs, bounds } = await fetchRecordingsRange(
+      deviceId.value,
+      wantFrom,
+      wantTo,
+    )
+    if (seq !== rangeLoadSeq || !active) return
+    segments.value = segs.sort((a, b) => a.start - b.start)
+    loadedFrom = wantFrom
+    loadedTo = wantTo
+    if (bounds) tlBounds.value = bounds
+  } catch {
+    /* 滑动时的加载失败不打断播放，保留已有数据 */
+  }
+}
+
+/** 把时间轴窗口移到某时刻并保证其可见 */
+function centerTimelineOn(ts: number) {
+  if (ts < tlStart.value || ts > tlStart.value + tlSpan.value) {
+    tlStart.value = ts - tlSpan.value / 2
+  }
+}
+
+/** 当前播放位置是否已有标记（1.5 秒内视为同一时刻） */
+const markBtnOn = computed(() =>
+  // 1 秒窗口：与后端 CreateMark 的幂等判定（BETWEEN ±1s）保持一致。
+  // 之前用 1.5s，在时间轴上相邻点击容易误判为「已在标记上」而触发删除。
+  marks.value.some((m) => Math.abs(m.time - currentTs.value) < 1000),
+)
+
+async function loadMarks() {
+  if (!deviceId.value || !isBackend() || isDemoMode()) {
+    marks.value = []
+    marksLoaded.value = true
+    return
+  }
+  try {
+    // 时间轴跨日滑动：按当前可视窗口增量取用（这里取标记页签所属日 ±1 天，
+    // 覆盖跨日滑动时的相邻范围），避免一次拉全量
+    const from = dayStart.value - 86400000
+    const to = dayStart.value + 2 * 86400000
+    marks.value = await fetchMarks(deviceId.value, from, to)
+  } catch {
+    marks.value = []
+  } finally {
+    marksLoaded.value = true
+  }
+}
+
+async function toggleMark() {
   if (!segments.value.length) {
     showToast('当前没有录像，无法标记')
     return
   }
-  const hit = marks.value.findIndex((m) => Math.abs(m - currentTs.value) < 1500)
-  if (hit >= 0) {
-    marks.value = marks.value.filter((_, i) => i !== hit)
-    showToast('已取消该标记')
+  if (!deviceId.value) return
+  const hit = marks.value.find((m) => Math.abs(m.time - currentTs.value) < 1000)
+  if (hit) {
+    // 已标记 → 删除（原先是「再点一次取消」，现在也支持在旗标弹层里删）
+    await removeMark(hit)
     return
   }
-  marks.value = [...marks.value, currentTs.value].sort((a, b) => a - b)
-  if (marks.value.length > 12) marks.value = marks.value.slice(-12)
-  showToast(`已标记 ${fmtHM(currentTs.value)}`)
+  try {
+    const created = await createMark(deviceId.value, currentTs.value)
+    // 后端对 1 秒内重复打点返回已有记录，这里去重后再插入
+    if (!marks.value.some((m) => m.id === created.id)) {
+      marks.value = [...marks.value, created].sort((a, b) => a.time - b.time)
+    }
+    showToast(`已标记 ${fmtHM(created.time)}`)
+  } catch {
+    showToast('标记失败，请检查网络')
+  }
+}
+
+async function removeMark(m: { id: string }) {
+  const prev = marks.value
+  marks.value = marks.value.filter((x) => x.id !== m.id) // 乐观更新
+  try {
+    await deleteMark(deviceId.value, m.id)
+    showToast('已删除标记')
+  } catch {
+    marks.value = prev // 失败回滚
+    showToast('删除失败，请检查网络')
+  }
+}
+
+/**
+ * Home/End 导航：把窗口与光标移到目标时刻。
+ *
+ * 与 onSeekEnd 的区别：导航不受「当前无录像」限制——无录像日按 Home
+ * 也应把窗口移到当天开头并更新光标，让用户看到「这天没录像」，
+ * 而不是按键毫无反应（旧实现直接 return）。
+ */
+function onTimelineNavigate(ts: number) {
+  currentTs.value = ts
+  centerTimelineOn(ts)
+  // 不调用 onSeekEnd：那是「松手提交播放位置」，带吸附逻辑。
+  // 导航语义是「把视图移到这一天首/末」，若走吸附会被吸到
+  // 当前已加载窗口里的某段录像上，Home 看起来就"没反应"。
+  // 窗口滑过去后，onTimelineRange 会按新范围加载该处录像；
+  // 用户若确实要播放，点一下时间轴（seek）即可。
+}
+
+/**
+ * 点击时间轴上的标记：跳转到该时刻。
+ *
+ * 参数类型用 TimelineMark（id/time/note）而非完整 Mark：
+ * 时间轴只需要这三项，收窄后组件与视图之间不必互相依赖完整模型。
+ */
+function onMarkSeek(m: { time: number }) {
+  onSeekEnd(m.time)
+}
+
+// 标记快填：第一次点 = 起点，第二次点 = 终点（终点更早时自动对调）
+function pickMark(m: Mark) {
+  const sec = secOfDay(m.time)
+  if (markStage.value === 0) {
+    exportStart.value = sec
+    markStage.value = 1
+    showToast('已设为起点，再点一个标记作为终点')
+  } else if (sec > exportStart.value) {
+    exportEnd.value = sec
+    markStage.value = 0
+  } else {
+    exportEnd.value = exportStart.value
+    exportStart.value = sec
+    markStage.value = 0
+  }
 }
 
 // ── 导出：独立按钮 + 弹窗（起止时间滚轮选择 / 标记快填 / 任务列表）──
@@ -190,22 +337,6 @@ function onTimePickConfirm({ selectedValues }: { selectedValues: number[] }) {
   timePickOpen.value = false
 }
 
-// 标记快填：第一次点 = 起点，第二次点 = 终点（终点更早时自动对调）
-function pickMark(m: number) {
-  const sec = secOfDay(m)
-  if (markStage.value === 0) {
-    exportStart.value = sec
-    markStage.value = 1
-    showToast('已设为起点，再点一个标记作为终点')
-  } else if (sec > exportStart.value) {
-    exportEnd.value = sec
-    markStage.value = 0
-  } else {
-    exportEnd.value = exportStart.value
-    exportStart.value = sec
-    markStage.value = 0
-  }
-}
 
 async function confirmExport() {
   if (!deviceId.value || creating.value) return
@@ -314,6 +445,12 @@ async function loadSegments() {
   segments.value = []
   dayEvents.value = []
   currentTs.value = dayStart.value
+  // 时间轴窗口对齐到所选出日期的 00:00 起一整天；同时清掉已加载范围标记，
+  // 强制下一次 rangechange 重新取数（否则沿用旧设备的范围会误判为已覆盖）
+  tlStart.value = dayStart.value
+  loadedFrom = 0
+  loadedTo = 0
+  rangeLoadSeq++
   playError.value = ''
   playing.value = false
   if (!deviceId.value) {
@@ -327,6 +464,10 @@ async function loadSegments() {
     const result = await fetchDaySegments(deviceId.value, dateStr.value)
     if (token !== loadToken || !active) return
     segments.value = result.sort((a, b) => a.start - b.start)
+    // 记录「已加载范围 = 当日」，与时间轴的窗口请求配合避免重复拉取
+    loadedFrom = dayStart.value
+    loadedTo = dayStart.value + 86400000
+    tlBounds.value = { earliest: dayStart.value, latest: dayStart.value + 86400000 }
   } catch (e: any) {
     if (token !== loadToken || !active) return
     // 连接故障（ConnUnavailableError）没有 response，回退到 message，
@@ -650,12 +791,27 @@ function onSeekEnd(ts: number) {
   seekTimer = null
   const containing = segments.value.find(s => ts >= s.start && ts < s.end)
   if (!containing) {
-    const next = segments.value.find(s => s.start >= ts)
-    const last = segments.value[segments.value.length - 1]
-    ts = next ? next.start : Math.max(last.start, last.end - 1000)
-    showToast('所选时间无录像，已定位到最近录像')
+    // 窗口化加载后 segments 只覆盖当前可视窗口，不能再用「最后一段」当兜底
+    // ——那会把 Home（当天 00:00）吸附到窗口末尾，跳到完全无关的时间。
+    // 改为只在「目标时间附近」找最近段：向前找 >= ts 的最近一段，
+    // 找不到就向前找 <= ts 的最近一段；都没有（目标在已加载范围之外）
+    // 则保持原时间不动，让时间轴窗口自己滑过去。
+    const after = segments.value.find(s => s.start >= ts)
+    const before = [...segments.value].reverse().find(s => s.end <= ts)
+    if (after) {
+      ts = after.start
+      showToast('所选时间无录像，已定位到最近录像')
+    } else if (before && ts - before.end < 300000) {
+      // 仅在 5 分钟内的空档才回退，避免跨越无录像时段乱跳
+      ts = Math.max(before.start, before.end - 1000)
+      showToast('所选时间无录像，已定位到最近录像')
+    }
+    // 都不满足：保持 ts，仅把窗口滑过去（下方 centerTimelineOn 处理）
   }
   currentTs.value = ts
+  // 跳转目标可能落在当前窗口外（从事件列表/标记跳转、或滑动后回跳）：
+  // 把窗口带过去，否则光标看不见，用户不知道跳到哪了
+  centerTimelineOn(ts)
   if (!isBackend() || isDemoMode()) {
     playable?.seek(ts)
     return
@@ -841,13 +997,16 @@ watch(
 
 watch(deviceId, () => {
   marks.value = []
+  marksLoaded.value = false
   loadMonth()
   loadSegments()
+  loadMarks()
 })
 watch(ym, loadMonth)
 watch(dateStr, () => {
-  marks.value = []
+  // 跨日滑动时标记也跟着换窗口，不能清空后不管（否则切回来看不到标记）
   loadSegments()
+  loadMarks()
 })
 onDeactivated(() => {
   active = false
@@ -1018,13 +1177,19 @@ onBeforeUnmount(() => {
             </div>
             <div class="tl-main">
               <TimelineBar
-                :day-start="dayStart"
+                v-model:view-start="tlStart"
+                v-model:view-span="tlSpan"
                 :segments="segments"
                 :events="timelineEvents"
                 :value="currentTs"
                 :marks="marks"
+                :bounds="tlBounds"
                 @seek="onSeek"
                 @seekend="onSeekEnd"
+                @navigate="onTimelineNavigate"
+                @markseek="onMarkSeek"
+                @markdelete="removeMark"
+                @rangechange="onTimelineRange"
               />
             </div>
             <div v-if="isBackend() && !isDemoMode()" class="tl-side">
@@ -1166,11 +1331,11 @@ onBeforeUnmount(() => {
           <div class="exp-marks-hint">{{ markStage === 1 ? '已选起点：再点一个标记作为终点' : '点标记快速填充（先起点后终点）' }}</div>
           <div class="exp-mark-chips">
             <button
-              v-for="(m, i) in marks" :key="i" type="button"
+              v-for="m in marks" :key="m.id" type="button"
               class="mark-chip mono"
-              :class="{ sel: markStage === 1 && secOfDay(m) === exportStart }"
+              :class="{ sel: markStage === 1 && secOfDay(m.time) === exportStart }"
               @click="pickMark(m)"
-            >{{ fmtHM(m) }}</button>
+            >{{ fmtHM(m.time) }}</button>
           </div>
         </div>
 

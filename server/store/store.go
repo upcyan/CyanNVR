@@ -52,9 +52,16 @@ func (s *Store) migrate() error {
 			type TEXT NOT NULL, label TEXT, description TEXT,
 			time DATETIME NOT NULL, snapshot TEXT, gif TEXT,
 			video_start DATETIME, video_end DATETIME)`,
+		// 用户标记：回放时在时间轴打点，用于快速跳转与导出选段。
+		// 必须持久化——此前只存内存，退出即丢，用户无法积累关注点。
+		`CREATE TABLE IF NOT EXISTS marks (
+			id TEXT PRIMARY KEY, device_id TEXT NOT NULL, time DATETIME NOT NULL,
+			note TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_segments_device ON segments(device_id, start)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_device_time ON events(device_id, time)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_time ON events(time)`,
+		// 标记按「设备 + 时间」查询，且时间轴要按时间范围取用
+		`CREATE INDEX IF NOT EXISTS idx_marks_device_time ON marks(device_id, time)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.db.Exec(st); err != nil {
@@ -453,6 +460,49 @@ func (s *Store) SegmentsForDay(deviceID string, dayStart, dayEnd time.Time) ([]m
 	return scanSegments(rows)
 }
 
+// SegmentsForRange 返回与 [from, to) 有交集的录像段。
+//
+// 与 SegmentsForDay 语义相同（都是「重叠即算」），单独取名是为了表明
+// 调用方可传任意时间范围——时间轴跨日无限滑动时按可视窗口取数，
+// 不再受「一天」这个边界限制。
+func (s *Store) SegmentsForRange(deviceID string, from, to time.Time) ([]models.RecordingSegment, error) {
+	if !to.After(from) {
+		return []models.RecordingSegment{}, nil
+	}
+	rows, err := s.db.Query(`SELECT id, device_id, start, end, path FROM segments
+		WHERE device_id=? AND start < ? AND end > ? ORDER BY start`,
+		deviceID, to, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSegments(rows)
+}
+
+// RecordingBounds 返回该设备最早/最晚的录像时间，用于时间轴滑动边界。
+// 无录像时 ok=false。
+//
+// 为什么用 ORDER BY + LIMIT 1 而不是 MIN()/MAX()：
+// modernc 驱动依赖结果集的「声明列类型」来决定是否把值转成 time.Time，
+// 而聚合表达式没有声明类型，扫进 sql.NullTime 会直接报错。
+// 取真实列（含类型信息）即可正常转换。
+func (s *Store) RecordingBounds(deviceID string) (earliest, latest time.Time, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT start FROM segments WHERE device_id=? ORDER BY start ASC LIMIT 1`,
+		deviceID).Scan(&earliest)
+	if err == sql.ErrNoRows {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	err = s.db.QueryRow(`SELECT end FROM segments WHERE device_id=? ORDER BY end DESC LIMIT 1`,
+		deviceID).Scan(&latest)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	return earliest, latest, true, nil
+}
+
 func (s *Store) SegmentsAfter(deviceID string, start time.Time) ([]models.RecordingSegment, error) {
 	rows, err := s.db.Query(`SELECT id, device_id, start, end, path FROM segments
 		WHERE device_id=? AND end > ? ORDER BY start`, deviceID, start)
@@ -499,6 +549,80 @@ func scanSegments(rows *sql.Rows) ([]models.RecordingSegment, error) {
 			return nil, err
 		}
 		out = append(out, seg)
+	}
+	return out, rows.Err()
+}
+
+// ---- marks（用户标记）----
+
+// CreateMark 新增一个标记。同一设备同一时刻（1 秒内）已有标记时直接返回已有的，
+// 避免重复点击在时间轴上叠出多个重合旗标。
+func (s *Store) CreateMark(m models.Mark) (models.Mark, error) {
+	lo := m.Time.Add(-time.Second)
+	hi := m.Time.Add(time.Second)
+	var exist models.Mark
+	err := s.db.QueryRow(`SELECT id, device_id, time, note, created_at FROM marks
+		WHERE device_id=? AND time BETWEEN ? AND ? LIMIT 1`,
+		m.DeviceID, lo, hi).Scan(&exist.ID, &exist.DeviceID, &exist.Time, &exist.Note, &exist.CreatedAt)
+	if err == nil {
+		return exist, nil
+	}
+	_, err = s.db.Exec(`INSERT INTO marks(id, device_id, time, note, created_at) VALUES(?,?,?,?,?)`,
+		m.ID, m.DeviceID, m.Time, m.Note, m.CreatedAt)
+	return m, err
+}
+
+// MarksForRange 返回某设备在 [from, to) 内的标记（按时间升序）。
+// 时间轴跨日滑动时用它按可视窗口增量取用。
+// deviceID 为空时返回所有设备的标记（管理/汇总场景）。
+func (s *Store) MarksForRange(deviceID string, from, to time.Time) ([]models.Mark, error) {
+	const cols = `SELECT id, device_id, time, note, created_at FROM marks`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if deviceID == "" {
+		rows, err = s.db.Query(cols+` WHERE time >= ? AND time < ? ORDER BY time`, from, to)
+	} else {
+		rows, err = s.db.Query(cols+` WHERE device_id=? AND time >= ? AND time < ? ORDER BY time`,
+			deviceID, from, to)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMarks(rows)
+}
+
+// DeleteMark 删除一个标记，返回是否真的删掉了（用于区分 404）。
+func (s *Store) DeleteMark(deviceID, id string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM marks WHERE id=? AND device_id=?`, id, deviceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UpdateMarkNote 修改标记备注（空字符串表示清除备注）。
+func (s *Store) UpdateMarkNote(deviceID, id, note string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE marks SET note=? WHERE id=? AND device_id=?`, note, id, deviceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func scanMarks(rows *sql.Rows) ([]models.Mark, error) {
+	// 非 nil 空切片：nil 会被序列化成 null，前端 .map 会抛 TypeError
+	out := []models.Mark{}
+	for rows.Next() {
+		m := models.Mark{}
+		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Time, &m.Note, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }

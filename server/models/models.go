@@ -96,6 +96,18 @@ type RecordingSegment struct {
 	Path     string    `json:"path"`
 }
 
+// Mark 是用户在回放时间轴上打的标记点。
+//
+// 用途：① 快速跳转到关注时刻 ② 导出时选起止。必须持久化，
+// 否则退出页面即丢，用户无法积累关注点（此前就是内存数组）。
+type Mark struct {
+	ID        string    `json:"id"`
+	DeviceID  string    `json:"deviceId"`
+	Time      time.Time `json:"time"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type EventType string
 
 const (

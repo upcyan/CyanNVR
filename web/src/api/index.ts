@@ -222,6 +222,53 @@ export async function fetchDaySegments(deviceId: string, date: string): Promise<
   })) as RecordingSegment[]
 }
 
+export interface RangeSegments {
+  segments: RecordingSegment[]
+  /** 该设备的录像时间边界（无录像时缺省），用于限制时间轴滑动范围 */
+  bounds?: { earliest: number; latest: number }
+}
+
+/**
+ * 按任意时间范围取录像段（时间轴跨日无限滑动用）。
+ *
+ * 与 fetchDaySegments（固定一天）的分工：本接口可跨任意天数，
+ * 由调用方按可视窗口请求，滑动到新范围时增量加载。
+ */
+export async function fetchRecordingsRange(
+  deviceId: string,
+  fromMs: number,
+  toMs: number,
+): Promise<RangeSegments> {
+  if (isDemoMode()) {
+    // 演示模式：按天聚合，覆盖范围内每一天
+    const out: RecordingSegment[] = []
+    const day = 86400000
+    for (let t = fromMs; t < toMs; t += day) {
+      const d = new Date(t)
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      out.push(...(await mock.fetchDaySegments(deviceId, date)))
+    }
+    return { segments: out }
+  }
+  requireBackend()
+  const { data } = await http.get(`/api/devices/${deviceId}/recordings-range`, {
+    params: { from: Math.floor(fromMs), to: Math.ceil(toMs) },
+  })
+  const segs = ((data.segments ?? []) as Array<{ start: string | number; end: string | number; id: string; deviceId: string; path: string }>).map((s) => ({
+    ...s,
+    start: typeof s.start === 'string' ? new Date(s.start).getTime() : s.start,
+    end: typeof s.end === 'string' ? new Date(s.end).getTime() : s.end,
+  })) as RecordingSegment[]
+  let bounds: { earliest: number; latest: number } | undefined
+  if (data.bounds?.earliest && data.bounds?.latest) {
+    bounds = {
+      earliest: new Date(data.bounds.earliest).getTime(),
+      latest: new Date(data.bounds.latest).getTime(),
+    }
+  }
+  return { segments: segs, bounds }
+}
+
 export async function createPlayback(
   deviceId: string,
   start: number,
@@ -314,6 +361,84 @@ export function deleteExport(id: string): Promise<{ ok: boolean }> {
 export function exportFileURL(id: string): string {
   const token = localStorage.getItem('nvr_token') || ''
   return `${server.base}/api/exports/${id}/file?token=${encodeURIComponent(token)}`
+}
+
+// ---- 用户标记（回放时间轴打点，持久化）----
+
+export interface Mark {
+  id: string
+  deviceId: string
+  /** 标记时间（毫秒） */
+  time: number
+  note: string
+  createdAt: string
+}
+
+interface RawMark {
+  id: string
+  deviceId: string
+  time: string | number
+  note?: string
+  createdAt?: string
+}
+
+function toMark(r: RawMark): Mark {
+  return {
+    id: r.id,
+    deviceId: r.deviceId,
+    time: typeof r.time === 'string' ? new Date(r.time).getTime() : r.time,
+    note: r.note ?? '',
+    createdAt: r.createdAt ?? '',
+  }
+}
+
+/**
+ * 拉取标记。
+ *
+ * 传 from/to（毫秒）时只取该区间——时间轴跨日滑动时按可视窗口增量取用，
+ * 不必每次拉全量。不传则取该设备全部标记。
+ */
+export async function fetchMarks(
+  deviceId: string,
+  from?: number,
+  to?: number,
+): Promise<Mark[]> {
+  if (isDemoMode()) return []
+  requireBackend()
+  const params: Record<string, string | number> = { deviceId }
+  if (from != null && to != null) {
+    params.from = Math.floor(from)
+    params.to = Math.ceil(to)
+  }
+  const { data } = await http.get('/api/marks', { params })
+  return ((data.marks ?? []) as RawMark[]).map(toMark)
+}
+
+export async function createMark(
+  deviceId: string,
+  timeMs: number,
+  note = '',
+): Promise<Mark> {
+  requireBackend()
+  const { data } = await http.post('/api/marks', { deviceId, time: Math.floor(timeMs), note })
+  return toMark(data.mark as RawMark)
+}
+
+export async function updateMark(
+  deviceId: string,
+  id: string,
+  note: string,
+): Promise<{ ok: boolean }> {
+  requireBackend()
+  return http.put(`/api/marks/${id}`, { deviceId, note }).then((r) => r.data)
+}
+
+export async function deleteMark(
+  deviceId: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  requireBackend()
+  return http.delete(`/api/marks/${id}`, { params: { deviceId } }).then((r) => r.data)
 }
 
 export function downloadEventSnapshotURL(eventId: string): string {

@@ -245,6 +245,8 @@ func (s *Server) Router() http.Handler {
 	protected.POST("/devices/:id/probe", s.requireOperator, s.probeDevice)
 	protected.GET("/devices/:id/snapshot", s.deviceSnapshot)
 	protected.GET("/devices/:id/recordings", s.deviceRecordings)
+	// 任意时间范围取录像段：时间轴跨日无限滑动时按可视窗口取数
+	protected.GET("/devices/:id/recordings-range", s.deviceRecordingsRange)
 	protected.GET("/devices/:id/recordings/:date/:time/download", s.downloadRecording)
 	// 录像导出：自定义起止时间，后台拼接成单个 mp4；任务列表/徽标见 /exports
 	protected.POST("/devices/:id/export", s.requireOperator, s.createExport)
@@ -262,6 +264,15 @@ func (s *Server) Router() http.Handler {
 	protected.DELETE("/events/:id", s.requireOperator, s.deleteEvent)
 	protected.GET("/events/:id/snapshot/download", s.downloadEventSnapshot)
 	protected.GET("/events/:id/gif/download", s.downloadEventGIF)
+
+	// 用户标记：回放时间轴打点，持久化到 marks 表。
+	// 查看对所有登录用户开放（与录像查看权限一致）；
+	// 新增需登录（任何角色都可标记自己关注的时间点），删除/改备注归操作员以上，
+	// 避免 viewer 账号误删他人标记。跨设备误删由 deviceId 条件兜住。
+	protected.GET("/marks", s.listMarks)
+	protected.POST("/marks", s.createMark)
+	protected.PUT("/marks/:id", s.requireOperator, s.updateMark)
+	protected.DELETE("/marks/:id", s.requireOperator, s.deleteMark)
 
 	protected.GET("/settings", s.getSettings)
 	protected.PUT("/settings", s.requireAdmin, s.putSettings)

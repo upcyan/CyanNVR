@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -614,6 +615,65 @@ func (s *Server) deviceRecordings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"segments": segs})
+}
+
+// parseFlexibleTime 解析 RFC3339 字符串或 epoch 毫秒字符串。
+func parseFlexibleTime(sv string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, sv); err == nil {
+		return t, nil
+	}
+	if ms, err := strconv.ParseInt(strings.TrimSpace(sv), 10, 64); err == nil {
+		return time.UnixMilli(ms), nil
+	}
+	return time.Time{}, errors.New("bad time")
+}
+
+// deviceRecordingsRange 按任意时间范围取录像段（时间轴跨日无限滑动用）。
+//
+// 与 deviceRecordings（按 date，固定一天）的分工：
+//   - 按 date 的接口保持不动，兼容已发布的前端与深链；
+//   - 本接口接受 from/to（RFC3339 或 epoch 毫秒），一次可跨多天，
+//     并返回该设备的录像时间边界（bounds），供时间轴确定可滑动范围。
+//
+// 范围上限 31 天：一屏通常远小于此，设限是防止误传超大范围一次拉太多。
+func (s *Server) deviceRecordingsRange(c *gin.Context) {
+	id := c.Param("id")
+	if d, err := s.st.GetDevice(id); err != nil || d == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	if fromStr == "" || toStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from and to required"})
+		return
+	}
+	from, err1 := parseFlexibleTime(fromStr)
+	to, err2 := parseFlexibleTime(toStr)
+	if err1 != nil || err2 != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad from/to (RFC3339 or epoch millis)"})
+		return
+	}
+	if !to.After(from) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be after from"})
+		return
+	}
+	const maxRange = 31 * 24 * time.Hour
+	if to.Sub(from) > maxRange {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "range too large (max 31 days)"})
+		return
+	}
+	segs, err := s.st.SegmentsForRange(id, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resp := gin.H{"segments": segs, "from": from, "to": to}
+	// 附带录像边界：时间轴据此限制滑动范围（无录像时省略）
+	if lo, hi, ok, err := s.st.RecordingBounds(id); err == nil && ok {
+		resp["bounds"] = gin.H{"earliest": lo, "latest": hi}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) deviceMonth(c *gin.Context) {
