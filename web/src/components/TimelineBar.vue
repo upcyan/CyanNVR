@@ -78,6 +78,35 @@ const activeMarkId = ref<string | null>(null)
 const span = () => Math.max(1, props.viewSpan)
 /** 时间 → 轨道内百分比 */
 const pct = (ts: number) => ((ts - props.viewStart) / span()) * 100
+/**
+ * 只渲染落在可视窗口内的元素。
+ *
+ * 为什么必须过滤：pct() 对窗口外的时间会返回极大值（如缩放后某个事件
+ * 落在 800 个窗口之外 → left: 533508px）。因为 .track 用了 overflow:visible
+ * （标记弹层需要溢出到轨道外），这些超远元素会撑出巨大的滚动宽度，
+ * 在部分布局下把时间轴两侧的按钮盖住。
+ * 过滤后既消除溢出，也顺带省掉大量无意义的 DOM。
+ * 留 1% 余量让贴边元素不被切掉。
+ */
+function inWindow(ts: number): boolean {
+  const p = pct(ts)
+  return p >= -1 && p <= 101
+}
+const visibleEvents = computed(() => evList.value.filter((e) => inWindow(e.time)))
+const visibleMarks = computed(() => markList.value.filter((m) => inWindow(m.time)))
+/**
+ * 录像段：与窗口有交集即渲染（段可能很长，一端在窗口外），
+ * 但把 left/width 夹到 [0,100] 内，避免负值或超宽撑破轨道。
+ */
+const visibleSegments = computed(() =>
+  props.segments
+    .filter((s) => s.end > props.viewStart && s.start < props.viewStart + span())
+    .map((s) => {
+      const a = Math.max(0, pct(s.start))
+      const b = Math.min(100, pct(s.end))
+      return { id: s.id, left: a, width: Math.max(0.15, b - a) }
+    }),
+)
 /** 轨道内比例 → 时间 */
 function tsFromRatio(r: number): number {
   return props.viewStart + r * span()
@@ -423,16 +452,13 @@ defineExpose({ ensureVisible, setWindow })
       @keydown="onKeydown"
     >
       <div
-        v-for="s in segments"
+        v-for="s in visibleSegments"
         :key="s.id"
         class="seg"
-        :style="{
-          left: pct(s.start) + '%',
-          width: Math.max(0.15, pct(s.end) - pct(s.start)) + '%',
-        }"
+        :style="{ left: s.left + '%', width: s.width + '%' }"
       />
       <div
-        v-for="e in evList"
+        v-for="e in visibleEvents"
         :key="'et-' + e.time"
         class="ev-tick"
         :style="{ left: pct(e.time) + '%', background: EV_TICK[e.type] || '#ff4d4f' }"
@@ -449,7 +475,7 @@ defineExpose({ ensureVisible, setWindow })
       </div>
       <!-- 标记：可点击跳转与删除 -->
       <div
-        v-for="m in markList"
+        v-for="m in visibleMarks"
         :key="m.id"
         class="mark-flag"
         :class="{ active: activeMarkId === m.id }"
@@ -509,8 +535,10 @@ defineExpose({ ensureVisible, setWindow })
   cursor: grab;
   /* 交给指针事件自行处理平移/缩放，禁用浏览器默认滚动与缩放 */
   touch-action: none;
-  /* 不用 overflow:hidden：标记弹层需要溢出到轨道之外才能点到删除按钮 */
-  overflow: visible;
+  /* 横向裁掉越界内容（刻度标签贴边时会溢出一小截），
+     但纵向保持 visible——标记弹层是向下展开的，需要溢出到轨道外才点得到。
+     clip-path 能分别控制两个方向，overflow 做不到。 */
+  clip-path: inset(-200px 0px -200px 0px);
 }
 .track:active {
   cursor: grabbing;
@@ -554,6 +582,10 @@ defineExpose({ ensureVisible, setWindow })
   color: rgba(255, 255, 255, 0.5);
   white-space: nowrap;
   pointer-events: none;
+  /* 标签宽度有限，靠右的标签允许向左伸展，避免越过轨道右边界 */
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: clip;
 }
 /* 标记旗标：可点击，横向用 .mark-hit 扩出 24px 命中区 */
 .mark-flag {
