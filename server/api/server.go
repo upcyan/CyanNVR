@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -208,7 +209,24 @@ func (s *Server) Router() http.Handler {
 		}
 		c.Next()
 	})
-	r.Use(gin.Logger(), gin.Recovery())
+	// 访问日志脱敏：hls.js/事件缩略图/App 无法对 <video>、<img> 请求带
+	// Authorization 头，token 只能走 URL query——默认 gin.Logger 会把完整 JWT
+	// 写进日志（排查导出日志即凭据泄漏）。这里把 token 值替换为长度占位。
+	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		path := param.Path
+		if i := strings.Index(path, "token="); i >= 0 {
+			end := strings.IndexByte(path[i:], '&')
+			if end < 0 {
+				path = path[:i] + "token=REDACTED"
+			} else {
+				path = path[:i] + "token=REDACTED&" + path[i+end+1:]
+			}
+		}
+		return fmt.Sprintf("[GIN] %v |%s %3d %s| %13v | %15s | %-7s %#v\n",
+			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			param.StatusCodeColor(), param.StatusCode, param.ResetColor(),
+			param.Latency, param.ClientIP, param.Method, path)
+	}), gin.Recovery())
 
 	api := r.Group("/api")
 	api.Use(func(c *gin.Context) {

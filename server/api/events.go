@@ -48,7 +48,9 @@ func (s *Server) eventSnapshot(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no snapshot"})
 		return
 	}
-	s.serveEventFile(c, e.DeviceID, c.Param("id"), "snapshot.jpg")
+	// 用 DB 校验后的 e.ID 而非 c.Param("id")：防御纵深，杜绝任何
+	// 参数解码差异把 .. 带进文件路径的可能
+	s.serveEventFile(c, e.DeviceID, e.ID, "snapshot.jpg")
 }
 
 func (s *Server) eventGIF(c *gin.Context) {
@@ -60,7 +62,7 @@ func (s *Server) eventGIF(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no gif"})
 		return
 	}
-	s.serveEventFile(c, e.DeviceID, c.Param("id"), "animation.gif")
+	s.serveEventFile(c, e.DeviceID, e.ID, "animation.gif")
 }
 
 func (s *Server) getEvent(c *gin.Context) (*models.Event, bool) {
@@ -91,7 +93,7 @@ func (s *Server) deleteEvent(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := removeEventFiles(s.cfg.EventDir, e.DeviceID, id); err != nil {
+	if err := removeEventFiles(s.cfg.EventDir, e.DeviceID, e.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
