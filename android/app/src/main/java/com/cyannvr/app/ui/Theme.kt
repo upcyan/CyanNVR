@@ -27,14 +27,7 @@ private val DarkColors = darkColorScheme(
     secondary = Color(0xFF67E8F9),
 )
 
-/**
- * 跟随系统深色模式。
- *
- * 用 LocalConfiguration.current.uiMode 实时读取，而不是 isSystemInDarkTheme()：
- * MainActivity 的 configChanges 声明了 uiMode，系统切深色时 Activity 不重建，
- * 但 LocalConfiguration 仍会随 onConfigurationChanged 更新并触发重组——
- * isSystemInDarkTheme() 依赖旧 snapshot，会读到过时值（系统已深色、App 仍浅色）。
- */
+/** 原生界面通过 LocalConfiguration 跟随系统；WebView 主题由原生桥另行同步。 */
 @Composable
 fun CyanNvrTheme(
     darkTheme: Boolean? = null,

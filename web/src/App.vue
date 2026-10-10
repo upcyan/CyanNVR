@@ -20,7 +20,14 @@ const devices = useDeviceStore()
 const { connect: connectSSE, disconnect: disconnectSSE } = useNotifications()
 const isDesktop = ref(typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches)
 // 系统深浅色（theme='auto' 时跟随）：初始化即读取，变化由 setupColorScheme 监听
-const sysDark = ref(typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+function nativeSystemDark(): boolean {
+  const bridge = (window as any).CyanNVRApp
+  try {
+    if (typeof bridge?.isSystemDark === 'function') return !!bridge.isSystemDark()
+  } catch { /* 旧版 App 或桥未就绪时用浏览器媒体查询 */ }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+const sysDark = ref(nativeSystemDark())
 // 实际生效的主题：'auto' 折算成系统当前值，其余为用户显式选择
 const uiTheme = computed<'dark' | 'light'>(() => {
   if (settings.settings.theme === 'auto') return sysDark.value ? 'dark' : 'light'
@@ -50,12 +57,17 @@ let onMqDark: ((e: MediaQueryListEvent) => void) | null = null
 function setupColorScheme() {
   if (mqDark) return
   mqDark = window.matchMedia('(prefers-color-scheme: dark)')
-  sysDark.value = mqDark.matches
-  onMqDark = (e) => {
-    sysDark.value = e.matches
+  sysDark.value = nativeSystemDark()
+  onMqDark = () => {
+    sysDark.value = nativeSystemDark()
     applyA11y()
   }
   mqDark.addEventListener('change', onMqDark)
+  window.addEventListener('cyannvr-environment', onNativeEnvironment)
+}
+function onNativeEnvironment() {
+  sysDark.value = nativeSystemDark()
+  applyA11y()
 }
 /** 已完成初始化的会话代次：避免重复初始化、也能识别「换会话」 */
 let initializedEpoch = -1
@@ -76,6 +88,7 @@ function applyA11y() {
   document.body.classList.toggle('care', careActive)
   document.body.classList.toggle('light', uiTheme.value === 'light')
   document.body.classList.toggle('dark', uiTheme.value === 'dark')
+  try { (window as any).CyanNVRApp?.setTheme?.(uiTheme.value) } catch { /* 旧版桥不支持 */ }
 }
 
 /** 视口相关的初始化：与登录状态无关，任何情况下都必须执行 */
@@ -178,6 +191,7 @@ onBeforeUnmount(() => {
   disconnectSSE()
   if (mq && onMqChange) mq.removeEventListener('change', onMqChange)
   if (mqDark && onMqDark) mqDark.removeEventListener('change', onMqDark)
+  window.removeEventListener('cyannvr-environment', onNativeEnvironment)
 })
 </script>
 

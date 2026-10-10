@@ -1,7 +1,6 @@
 package com.cyannvr.app.net
 
 import android.content.Context
-import android.content.pm.PackageManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -35,6 +34,8 @@ object UpdateManager {
         val apkUrl: String?,
         val apkName: String?,
         val notes: String,
+        val apkSize: Long = 0,
+        val error: String? = null,
     )
 
     data class DownloadResult(
@@ -61,12 +62,13 @@ object UpdateManager {
         try {
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    return UpdateInfo(false, "", current, null, null, "检查失败（HTTP ${resp.code}）")
+                    return UpdateInfo(false, "", current, null, null, "", error = "检查失败（HTTP ${resp.code}）")
                 }
-                val o = JSONObject(resp.body?.string() ?: return UpdateInfo(false, "", current, null, null, "响应为空"))
+                val o = JSONObject(resp.body?.string() ?: return UpdateInfo(false, "", current, null, null, "", error = "响应为空"))
                 val tag = o.optString("tag_name", "").removePrefix("v")
                 var apkUrl: String? = null
                 var apkName: String? = null
+                var apkSize = 0L
                 val assets = o.optJSONArray("assets")
                 if (assets != null) {
                     for (i in 0 until assets.length()) {
@@ -75,6 +77,7 @@ object UpdateManager {
                         if (name.endsWith(".apk")) {
                             apkUrl = a.optString("browser_download_url", "")
                             apkName = name
+                            apkSize = a.optLong("size", 0)
                             break
                         }
                     }
@@ -86,10 +89,11 @@ object UpdateManager {
                     apkUrl = apkUrl,
                     apkName = apkName,
                     notes = o.optString("body", "").trim(),
+                    apkSize = apkSize,
                 )
             }
         } catch (e: Exception) {
-            return UpdateInfo(false, "", current, null, null, "检查失败：${e.message ?: "网络错误"}")
+            return UpdateInfo(false, "", current, null, null, "", error = "检查失败：${e.message ?: "网络错误"}")
         }
     }
 
@@ -101,34 +105,24 @@ object UpdateManager {
         dir.mkdirs()
         val target = File(dir, name)
 
-        // 已存在且大小非 0，视为已下载
-        if (target.exists() && target.length() > 0) {
+        // 只复用完整包，避免上次失败遗留的非空文件被误认为下载完成。
+        if (target.exists() && target.length() > 0 && (info.apkSize <= 0 || target.length() == info.apkSize)) {
+            onProgress?.invoke(target.length(), target.length())
             return DownloadResult(target, true)
         }
-
         val req = Request.Builder().url(url).header("User-Agent", "CyanNVRApp").get().build()
         downloadClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IllegalStateException("下载失败（HTTP ${resp.code}）")
             val body = resp.body ?: throw IllegalStateException("下载响应为空")
-            val total = body.contentLength()
+            val total = if (info.apkSize > 0) info.apkSize else body.contentLength()
             val tmp = File(dir, "$name.part")
-            tmp.outputStream().use { out ->
-                val input = body.byteStream()
-                val buf = ByteArray(64 * 1024)
-                var read: Int
-                var done = 0L
-                while (input.read(buf).also { read = it } != -1) {
-                    out.write(buf, 0, read)
-                    done += read
-                    onProgress?.invoke(done, total)
-                }
+            try {
+                copyUpdatePackage(body.byteStream(), tmp, total, onProgress)
+                check(tmp.renameTo(target)) { "无法保存更新包" }
+                return DownloadResult(target, false)
+            } finally {
+                if (tmp.exists()) tmp.delete()
             }
-            if (tmp.length() == 0L) {
-                tmp.delete()
-                throw IllegalStateException("下载内容为空")
-            }
-            tmp.renameTo(target)
-            return DownloadResult(target, false)
         }
     }
 
@@ -144,35 +138,16 @@ object UpdateManager {
         return 0
     }
 
-    /**
-     * 检查 → 下载 → 调起安装器（后台线程）。
-     * 供 Web 端 bridge 调用：WebView 里点「安装更新」走这里。
-     */
-    fun installLatest(activity: android.app.Activity) {
-        Thread {
-            try {
-                val info = check(activity)
-                if (!info.hasUpdate || info.apkUrl == null) {
-                    activity.runOnUiThread {
-                        android.widget.Toast.makeText(activity, "已是最新版本", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    return@Thread
-                }
-                activity.runOnUiThread {
-                    android.widget.Toast.makeText(activity, "正在下载 v${info.latest}…", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                val result = download(activity, info)
-                activity.runOnUiThread { installApk(activity, result.file) }
-            } catch (e: Exception) {
-                activity.runOnUiThread {
-                    android.widget.Toast.makeText(activity, "更新失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
-    }
-
     /** 调起系统安装器安装已下载的 APK。 */
     fun installApk(context: android.content.Context, file: java.io.File) {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+            context.startActivity(android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                android.net.Uri.parse("package:${context.packageName}"),
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            android.widget.Toast.makeText(context, "请允许安装更新，返回后点击安装", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -183,5 +158,37 @@ object UpdateManager {
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+}
+
+/** 独立于 Android UI 的下载复制逻辑：报告字节进度，拒绝空包和截断包。 */
+internal fun copyUpdatePackage(input: java.io.InputStream, target: File, total: Long,
+    onProgress: ((Long, Long) -> Unit)? = null) {
+    try {
+        var done = 0L
+        var lastReport = 0L
+        onProgress?.invoke(0, total)
+        input.use { source ->
+            target.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = source.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    done += read
+                    val now = System.nanoTime()
+                    if (now - lastReport >= 100_000_000L) {
+                        onProgress?.invoke(done, total)
+                        lastReport = now
+                    }
+                }
+            }
+        }
+        check(done > 0) { "下载内容为空" }
+        check(total <= 0 || done == total) { "下载不完整，请重试" }
+        onProgress?.invoke(done, if (total > 0) total else done)
+    } catch (e: Exception) {
+        target.delete()
+        throw e
     }
 }

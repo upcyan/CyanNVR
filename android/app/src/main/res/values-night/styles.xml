@@ -1,0 +1,4 @@
+<resources>
+    <!-- WebView 的窗口主题也必须随系统切换，不能始终声明为 Light。 -->
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar" />
+</resources>

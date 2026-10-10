@@ -25,7 +25,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -56,16 +57,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.cyannvr.app.net.ConnectionManager
 import com.cyannvr.app.net.NvrClient
 import com.cyannvr.app.net.UpdateManager
+import com.cyannvr.app.ui.UpdateDialog
 import org.json.JSONObject
 
 /** WebView 单例句柄：供返回键/全屏逻辑在 Compose 之外访问 */
@@ -95,6 +98,15 @@ fun NvrWebViewScreen(
     var loadError by remember { mutableStateOf<Pair<String, String>?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    var updateOpen by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val systemDark = (LocalConfiguration.current.uiMode and
+        android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    val safeBottom = (WindowInsets.navigationBars.getBottom(density) / density.density).toInt()
+    LaunchedEffect(safeBottom, systemDark, progress) {
+        WebViewHolder.safeBottomPx = safeBottom
+        WebViewHolder.webView?.evaluateJavascript(injectEnvironmentScript(safeBottom), null)
+    }
 
     fun exitFullscreen() {
         WebViewHolder.customView = null
@@ -107,7 +119,7 @@ fun NvrWebViewScreen(
             WindowInsetsControllerCompat(a.window, decor).apply {
                 show(WindowInsetsCompat.Type.systemBars())
             }
-            WindowCompat.setDecorFitsSystemWindows(a.window, true)
+            WindowCompat.setDecorFitsSystemWindows(a.window, false)
         }
     }
 
@@ -198,17 +210,11 @@ fun NvrWebViewScreen(
             }
         }
 
-        // 黑色背景与 Web 深色主题一致。
-        // navigationBarsPadding 让 WebView 区域在 Compose 层就避开系统导航栏
-        // （三大金刚键/手势条），不再依赖 WebView 内部 inset 监听的 JS 注入
-        // （此前靠 onApplyWindowInsets 注入 --nvr-safe-bottom，但 Compose 的
-        // AndroidView 会先消费 insets，监听器收不到导致注入恒为 0，tabbar 被
-        // 三大金刚键遮挡）。改为 Compose 层直接 padding，可靠且无时序竞态。
+        // WebView 延伸到系统手势条下方，页面通过 safe-bottom 为可点击区域留白。
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .navigationBarsPadding()
                 .background(Color.Black)
         ) {
             if (progress in 1..99) {
@@ -254,6 +260,24 @@ fun NvrWebViewScreen(
                                 }
                             }
 
+                            /** 不依赖 WebView 的 prefers-color-scheme，读取真实系统 uiMode。 */
+                            @android.webkit.JavascriptInterface
+                            fun isSystemDark(): Boolean = (ctx.resources.configuration.uiMode and
+                                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                                android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+                            /** 让系统栏图标颜色跟随网页实际主题，背景保持透明。 */
+                            @android.webkit.JavascriptInterface
+                            fun setTheme(theme: String) {
+                                activity?.runOnUiThread {
+                                    val light = theme == "light"
+                                    WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
+                                        isAppearanceLightStatusBars = light
+                                        isAppearanceLightNavigationBars = light
+                                    }
+                                }
+                            }
+
                             /** App 自身版本号（供 Web 端「检查更新」区分 App 版本 / 服务器版本） */
                             @android.webkit.JavascriptInterface
                             fun appVersion(): String = UpdateManager.currentVersion(ctx)
@@ -273,27 +297,16 @@ fun NvrWebViewScreen(
                                     put("apkUrl", info.apkUrl ?: "")
                                     put("apkName", info.apkName ?: "")
                                     put("notes", info.notes)
+                                    put("error", info.error ?: "")
                                 }.toString()
                             }
 
                             /** 在 App 内下载并安装更新（复用 UpdateManager + 系统安装器） */
                             @android.webkit.JavascriptInterface
                             fun installAppUpdate() {
-                                val a = activity ?: return
-                                UpdateManager.installLatest(a)
+                                activity?.runOnUiThread { updateOpen = true }
                             }
                         }, "CyanNVRApp")
-
-                        // 把系统手势条高度注入页面 CSS 变量（WebView 不支持 env(safe-area-inset-*)）
-                        ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
-                            val bar = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-                            val cssPx = (bar / v.resources.displayMetrics.density).toInt()
-                            if (cssPx != WebViewHolder.safeBottomPx) {
-                                WebViewHolder.safeBottomPx = cssPx
-                                WebViewHolder.webView?.evaluateJavascript(injectSafeBottomScript(cssPx), null)
-                            }
-                            WindowInsetsCompat.CONSUMED
-                        }
 
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -318,6 +331,7 @@ fun NvrWebViewScreen(
                             override fun onPageFinished(view: WebView, url: String) {
                                 super.onPageFinished(view, url)
                                 if (!url.endsWith("#/login")) injectSession(view, base)
+                                view.evaluateJavascript(injectEnvironmentScript(WebViewHolder.safeBottomPx), null)
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
@@ -358,7 +372,7 @@ fun NvrWebViewScreen(
                                 activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                                 activity?.let { a ->
                                     a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                    WindowCompat.setDecorFitsSystemWindows(a.window, true)
+                                    WindowCompat.setDecorFitsSystemWindows(a.window, false)
                                     WindowInsetsControllerCompat(a.window, a.window.decorView).apply {
                                         show(WindowInsetsCompat.Type.systemBars())
                                     }
@@ -405,6 +419,10 @@ fun NvrWebViewScreen(
             AndroidView(factory = { cv }, modifier = Modifier.fillMaxSize())
             DisposableEffect(Unit) { onDispose { exitFullscreen() } }
         }
+    }
+
+    if (updateOpen) {
+        UpdateDialog(onDismiss = { updateOpen = false }, autoDownload = true)
     }
 
     if (infoOpen) {
@@ -457,8 +475,9 @@ private fun injectSession(view: WebView, base: String) {
     view.evaluateJavascript(script, null)
 }
 
-private fun injectSafeBottomScript(cssPx: Int): String =
-    "(function(){document.documentElement.style.setProperty('--nvr-safe-bottom','${cssPx}px')})();"
+private fun injectEnvironmentScript(cssPx: Int): String =
+    "(function(){document.documentElement.style.setProperty('--nvr-safe-bottom','${cssPx}px');" +
+        "window.dispatchEvent(new Event('cyannvr-environment'));})();"
 
 private fun fileNameFrom(contentDisposition: String?, url: String): String {
     contentDisposition?.let { cd ->

@@ -307,6 +307,7 @@ async function checkForUpdate() {
         hasUpdate: !!info.hasUpdate,
         latest: info.latest || '',
         current: info.current || '',
+        error: info.error || undefined,
         inApp: true,
       }
       return

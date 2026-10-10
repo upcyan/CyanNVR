@@ -75,14 +75,14 @@ import com.cyannvr.app.net.NsdFinder
 import com.cyannvr.app.net.NvrClient
 import com.cyannvr.app.net.NvrException
 import com.cyannvr.app.net.UpdateManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import android.content.Intent
-import android.net.Uri
-import androidx.core.content.FileProvider
 import java.io.File
 
 // ---------------------------------------------------------------------------
@@ -788,121 +788,100 @@ fun HelpDialog(onDismiss: () -> Unit) {
 // ---------------------------------------------------------------------------
 
 @Composable
-fun UpdateDialog(onDismiss: () -> Unit) {
+fun UpdateDialog(onDismiss: () -> Unit, autoDownload: Boolean = false) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-
-    var checking by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(true) }
     var downloading by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var progress by remember { mutableStateOf(0L to -1L) }
     var info by remember { mutableStateOf<UpdateManager.UpdateInfo?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloadedFile by remember { mutableStateOf<File?>(null) }
 
-    // 打开即检查
-    LaunchedEffect(Unit) {
-        checking = true
-        val result = withContext(Dispatchers.IO) { UpdateManager.check(context) }
-        info = result
-        checking = false
+    fun install(file: File) {
+        runCatching { UpdateManager.installApk(context, file) }
+            .onFailure { error = "无法打开安装器：${it.message}" }
     }
 
-    fun installApk(file: File) {
-        val apkUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file,
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+    suspend fun download(info: UpdateManager.UpdateInfo) {
+        if (downloading) return
+        downloading = true
+        progress = 0L to info.apkSize
+        error = null
+        try {
+            val result = withContext(Dispatchers.IO) {
+                val downloadContext = currentCoroutineContext()
+                UpdateManager.download(context, info) { done, total ->
+                    downloadContext.ensureActive()
+                    scope.launch(Dispatchers.Main.immediate) { progress = done to total }
+                }
+            }
+            downloadedFile = result.file
+            if (autoDownload) install(result.file)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = "下载失败：${e.message}"
+        } finally {
+            downloading = false
         }
-        runCatching { context.startActivity(intent) }
-            .onFailure { error = "无法调起系统安装器：${it.message}" }
+    }
+
+    LaunchedEffect(Unit) {
+        try {
+            val result = withContext(Dispatchers.IO) { UpdateManager.check(context) }
+            info = result
+            error = result.error
+            checking = false
+            if (autoDownload && result.error == null && result.hasUpdate && result.apkUrl != null) download(result)
+        } finally { checking = false }
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("检查更新") },
+        onDismissRequest = { if (!downloading) onDismiss() },
+        title = { Text(if (downloading) "正在下载更新" else "App 更新") },
         text = {
-            Column {
-                when {
-                    checking -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(12.dp))
-                            Text("正在检查…")
-                        }
-                    }
-                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
-                    info != null -> {
-                        val u = info!!
-                        if (!u.hasUpdate) {
-                            Text("当前已是最新版本 v${u.current}")
-                        } else {
-                            Text("发现新版本 v${u.latest}（当前 v${u.current}）")
-                            Spacer(Modifier.height(8.dp))
-                            if (u.apkUrl == null) {
-                                Text("release 中没有 APK 资产，请到 GitHub 下载", color = MaterialTheme.colorScheme.error)
-                            } else if (downloading) {
-                                val p = progress
-                                if (p != null && p.second > 0) {
-                                    val pct = (p.first * 100 / p.second).toInt()
-                                    Text("下载中… $pct%")
-                                    Spacer(Modifier.height(8.dp))
-                                    LinearProgressIndicator(
-                                        progress = { p.first.toFloat() / p.second },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                } else {
-                                    Text("下载中…")
-                                }
-                            } else if (downloadedFile != null) {
-                                Text("更新包已下载，可安装")
-                            }
-                            if (u.notes.isNotBlank()) {
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    u.notes,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 8,
-                                )
-                            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("正在检查 App 更新…")
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                info?.let { u ->
+                    if (u.error == null) {
+                        Text(if (u.hasUpdate) "新版本 v${u.latest}（当前 v${u.current}）" else "当前已是最新版本 v${u.current}")
+                        if (u.hasUpdate && u.apkUrl == null) Text("此版本未提供 APK，请到 GitHub 下载")
+                        if (u.hasUpdate && !downloading && u.notes.isNotBlank()) {
+                            Text(u.notes, style = MaterialTheme.typography.bodySmall, maxLines = 8)
                         }
                     }
                 }
+                if (downloading) {
+                    val (done, total) = progress
+                    if (total > 0) {
+                        val fraction = (done.toFloat() / total).coerceIn(0f, 1f)
+                        Text("下载中 ${(fraction * 100).toInt()}%")
+                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        Text("正在连接下载源…")
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    fun mb(bytes: Long) = String.format(java.util.Locale.US, "%.1f", bytes / 1048576.0)
+                    Text(if (total > 0) "${mb(done)} MB / ${mb(total)} MB" else "已下载 ${mb(done)} MB")
+                }
+                if (downloadedFile != null && !downloading) Text("更新包已下载，点击安装可继续")
             }
         },
         confirmButton = {
             val u = info
-            if (u != null && u.hasUpdate && u.apkUrl != null && !downloading && !checking) {
+            if (!checking && !downloading) {
                 if (downloadedFile != null) {
-                    TextButton(onClick = { installApk(downloadedFile!!) }) { Text("安装") }
-                } else {
-                    TextButton(onClick = {
-                        scope.launch {
-                            downloading = true
-                            error = null
-                            try {
-                                val result = withContext(Dispatchers.IO) {
-                                    UpdateManager.download(context, u) { done, total ->
-                                        progress = done to total
-                                    }
-                                }
-                                downloadedFile = result.file
-                            } catch (e: Exception) {
-                                error = "下载失败：${e.message}"
-                            } finally {
-                                downloading = false
-                            }
-                        }
-                    }) { Text("下载更新") }
+                    TextButton(onClick = { install(downloadedFile!!) }) { Text("安装") }
+                } else if (u != null && u.hasUpdate && u.apkUrl != null) {
+                    TextButton(onClick = { scope.launch { download(u) } }) { Text(if (error != null) "重新下载" else "下载更新") }
                 }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
+        dismissButton = { TextButton(enabled = !downloading, onClick = onDismiss) { Text("关闭") } },
     )
 }
