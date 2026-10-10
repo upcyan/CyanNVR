@@ -13,7 +13,6 @@ import TimelineBar from '../components/TimelineBar.vue'
 import PlaybackPlayer from '../components/PlaybackPlayer.vue'
 import PlaybackDateBar from '../components/PlaybackDateBar.vue'
 import { enterFullscreen, exitFullscreen } from '../utils/screen'
-import { isNvrApp } from '../utils/env'
 
 const store = useDeviceStore()
 const route = useRoute()
@@ -108,7 +107,7 @@ async function onTimelineRange(r: { from: number; to: number }) {
   const wantFrom = r.from - margin
   const wantTo = r.to + margin
   // 已加载范围覆盖所需范围 → 无需请求
-  if (wantFrom >= loadedFrom && wantTo <= loadedTo) return
+  if (r.from >= loadedFrom && r.to <= loadedTo) return
   const seq = ++rangeLoadSeq
   try {
     const { segments: segs, bounds } = await fetchRecordingsRange(
@@ -128,9 +127,7 @@ async function onTimelineRange(r: { from: number; to: number }) {
 
 /** 把时间轴窗口移到某时刻并保证其可见 */
 function centerTimelineOn(ts: number) {
-  if (ts < tlStart.value || ts > tlStart.value + tlSpan.value) {
-    tlStart.value = ts - tlSpan.value / 2
-  }
+  tlStart.value = ts - tlSpan.value / 2
 }
 
 /** 当前播放位置是否已有标记（1.5 秒内视为同一时刻） */
@@ -203,6 +200,13 @@ async function removeMark(m: { id: string }) {
  * 而不是按键毫无反应（旧实现直接 return）。
  */
 function onTimelineNavigate(ts: number) {
+  timelineCommitSeq++ // 取消尚未完成的拖动提交，避免回写旧时间
+  sessionToken++
+  if (seekTimer) window.clearTimeout(seekTimer)
+  seekTimer = null
+  playable?.pause()
+  playing.value = false
+  seekPending.value = false
   currentTs.value = ts
   centerTimelineOn(ts)
   // 不调用 onSeekEnd：那是「松手提交播放位置」，带吸附逻辑。
@@ -440,6 +444,7 @@ async function loadMonth() {
 
 async function loadSegments() {
   if (!active) return
+  timelineCommitSeq++
   const token = ++loadToken
   releasePlayback()
   segments.value = []
@@ -447,7 +452,7 @@ async function loadSegments() {
   currentTs.value = dayStart.value
   // 时间轴窗口对齐到所选出日期的 00:00 起一整天；同时清掉已加载范围标记，
   // 强制下一次 rangechange 重新取数（否则沿用旧设备的范围会误判为已覆盖）
-  tlStart.value = dayStart.value
+  tlStart.value = dayStart.value - tlSpan.value / 2
   loadedFrom = 0
   loadedTo = 0
   rangeLoadSeq++
@@ -702,7 +707,7 @@ function earliestInterestingStart(): number {
 
 async function buildSession(fromTs: number) {
   const token = ++sessionToken
-  const winStart = Math.max(dayStart.value, fromTs)
+  const winStart = fromTs
   // 不把录像空档拼接成连续时间：时间轴与视频必须保持同一时钟。
   let coverageEnd = fromTs
   for (const segment of segments.value) {
@@ -710,7 +715,7 @@ async function buildSession(fromTs: number) {
     if (segment.start > coverageEnd + 1000) break
     coverageEnd = Math.max(coverageEnd, segment.end)
   }
-  const winEnd = Math.min(dayStart.value + 86400000, fromTs + 600000, coverageEnd)
+  const winEnd = Math.min(fromTs + 600000, coverageEnd)
   if (winEnd <= winStart) return
   try {
     const url = await createPlayback(deviceId.value, winStart, winEnd)
@@ -764,6 +769,35 @@ function startTimer() {
       }
     }
   }, 500)
+}
+
+// 拖动预览仅更新时间，阻止旧播放会话的计时器回写；松手才真正 seek。
+function cancelTimelinePreview(ts: number) {
+  timelineCommitSeq++
+  seekPending.value = false
+  currentTs.value = ts
+  centerTimelineOn(ts)
+}
+function onTimelinePreview(ts: number) {
+  seekPending.value = true
+  currentTs.value = ts
+}
+let timelineCommitSeq = 0
+async function commitTimelineSeek(ts: number) {
+  const seq = ++timelineCommitSeq
+  const id = deviceId.value
+  onTimelinePreview(ts)
+  centerTimelineOn(ts)
+  await onTimelineRange({ from: tlStart.value, to: tlStart.value + tlSpan.value })
+  if (seq !== timelineCommitSeq || id !== deviceId.value || !active) return
+  if (!segments.value.some(s => ts >= s.start && ts < s.end)) {
+    playable?.pause()
+    playing.value = false
+    seekPending.value = false
+    showToast('该时间没有录像')
+    return
+  }
+  onSeekEnd(ts)
 }
 
 // 拖动过程中持续触发：只更新游标，并尽量就地跳转。
@@ -1009,6 +1043,7 @@ watch(dateStr, () => {
   loadMarks()
 })
 onDeactivated(() => {
+  timelineCommitSeq++
   active = false
   loadToken++
   monthToken++
@@ -1082,7 +1117,7 @@ onBeforeUnmount(() => {
     <!-- App 内嵌环境：原生 TopAppBar 已显示服务器名，此处不再重复「录像管理」
          标题；但保留右侧「选择设备」入口（否则 App 端无法切换设备）。
          普通浏览器仍显示完整标题。 -->
-    <van-nav-bar :title="isNvrApp() ? '' : '录像管理'">
+    <van-nav-bar title="录像管理">
       <template #right>
         <button type="button" class="device-picker control-button" aria-label="选择回放设备" @click="pickDevice">
           <span class="dp-name">{{ device?.name ?? '选择设备' }}</span>
@@ -1184,8 +1219,10 @@ onBeforeUnmount(() => {
                 :value="currentTs"
                 :marks="marks"
                 :bounds="tlBounds"
+                @cancel="cancelTimelinePreview"
+                @preview="onTimelinePreview"
                 @seek="onSeek"
-                @seekend="onSeekEnd"
+                @seekend="commitTimelineSeek"
                 @navigate="onTimelineNavigate"
                 @markseek="onMarkSeek"
                 @markdelete="removeMark"

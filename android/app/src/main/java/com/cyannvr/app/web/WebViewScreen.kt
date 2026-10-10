@@ -102,6 +102,7 @@ fun NvrWebViewScreen(
         WebViewHolder.customViewCallback = null
         activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         activity?.let { a ->
+            a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             val decor = a.window.decorView
             WindowInsetsControllerCompat(a.window, decor).apply {
                 show(WindowInsetsCompat.Type.systemBars())
@@ -123,10 +124,19 @@ fun NvrWebViewScreen(
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            // App 端不显示服务器信息（名称 + 局域网/公网地址）：
-            // Web 端页面内已有标题，这里再显示一遍属于重复信息，且占顶部空间。
-            // 需要看当前连接时，菜单里有「复制服务器地址」。
-            title = {},
+            title = {
+                Column {
+                    Text(server.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        (if (conn.viaLan) "局域网 · " else "公网 · ") +
+                            base.removePrefix("http://").removePrefix("https://"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            },
             actions = {
                 IconButton(onClick = { loadError = null; WebViewHolder.webView?.reload() }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "刷新")
@@ -347,6 +357,7 @@ fun NvrWebViewScreen(
                                 WebViewHolder.customViewCallback = null
                                 activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                                 activity?.let { a ->
+                                    a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                                     WindowCompat.setDecorFitsSystemWindows(a.window, true)
                                     WindowInsetsControllerCompat(a.window, a.window.decorView).apply {
                                         show(WindowInsetsCompat.Type.systemBars())

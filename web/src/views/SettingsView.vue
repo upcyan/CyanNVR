@@ -6,7 +6,6 @@ import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
 import { http } from '../api/client'
-import { isNvrApp } from '../utils/env'
 import {
   createUser,
   deleteUser,
@@ -862,7 +861,7 @@ async function removeUser(u: ManagedUser) {
 
 <template>
   <div ref="pageRef" class="page settings-page" :class="{ 'has-sidenav': isDesktopSettings }" @scroll.passive="onSettingsScroll">
-    <van-nav-bar v-if="!isNvrApp()" title="设置" left-arrow @click-left="goBack" />
+    <van-nav-bar title="设置" left-arrow @click-left="goBack" />
 
     <!-- 桌面端分区导航：窄屏不渲染（完全走原有单列布局） -->
     <nav v-if="isDesktopSettings" class="settings-nav" aria-label="设置分区导航">

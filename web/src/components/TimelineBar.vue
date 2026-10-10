@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { RecordingSegment } from '../types'
 
 export interface TimelineMark {
@@ -46,6 +46,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:viewStart', v: number): void
   (e: 'update:viewSpan', v: number): void
+  (e: 'cancel', ts: number): void
+  (e: 'preview', ts: number): void
   (e: 'seek', ts: number): void
   (e: 'seekend', ts: number): void
   /** 导航到某时刻（Home/End）：即使当前无录像也应生效 */
@@ -144,16 +146,14 @@ function setWindow(start: number, s: number) {
   if (st !== props.viewStart) emit('update:viewStart', st)
   if (ns !== props.viewSpan) emit('update:viewSpan', ns)
   emit('rangechange', { from: st, to: st + ns })
+  return st + ns / 2
 }
 
-/** 缩放：以 anchorRatio 处的时刻为锚点，保证手指下的时间不动 */
-function zoomAt(anchorRatio: number, factor: number) {
-  const anchorTime = tsFromRatio(anchorRatio)
+/** 缩放只改变跨度，中央选定时刻保持不变。 */
+function zoomAt(_anchorRatio: number, factor: number) {
+  const center = props.viewStart + span() / 2
   const ns = Math.min(MAX_SPAN, Math.max(MIN_SPAN, span() / factor))
-  const nr = ns / span()
-  setWindow(anchorTime - anchorRatio * ns, ns)
-  // nr 仅用于说明换算意图，实际窗口已由 setWindow 统一设置
-  void nr
+  setWindow(center - ns / 2, ns)
 }
 
 // ---- 手势：单指平移 / 双指捏合 ----
@@ -163,7 +163,11 @@ let panStartView = 0
 let moved = false
 let pinchStartDist = 0
 let pinchStartSpan = 0
-let pinchAnchorRatio = 0.5
+let pinchCenter = 0
+let pinched = false
+let panSpan = 0
+let selectedCenter = 0
+let panOriginalTime = 0
 /** 轻点判定：位移与时长都在阈值内才算跳转，否则视为平移 */
 const TAP_MOVE_PX = 8
 let downAt = 0
@@ -174,19 +178,25 @@ function onDown(e: PointerEvent) {
   // 右键/中键不参与：避免右键弹出上下文菜单时误跳转（回归有断言）
   if (e.button !== 0) return
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
-  el.setPointerCapture?.(e.pointerId)
+  // 指针可能已被系统取消；捕获失败不应跳过手势状态初始化。
+  try { el.setPointerCapture?.(e.pointerId) } catch { /* 已失效的指针 */ }
   activeMarkId.value = null
 
   if (pointers.size === 1) {
     panStartX = e.clientX
     panStartView = props.viewStart
+    panSpan = span()
+    panOriginalTime = props.value
+    selectedCenter = props.viewStart + panSpan / 2
+    pinched = false
     moved = false
     downAt = Date.now()
   } else if (pointers.size === 2) {
     const [a, b] = [...pointers.values()]
     pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y) || 1
     pinchStartSpan = span()
-    pinchAnchorRatio = ratioFromX((a.x + b.x) / 2)
+    pinchCenter = props.viewStart + span() / 2
+    pinched = true
   }
 }
 
@@ -200,18 +210,19 @@ function onMove(e: PointerEvent) {
     const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
     const factor = dist / pinchStartDist
     const ns = Math.min(MAX_SPAN, Math.max(MIN_SPAN, pinchStartSpan / factor))
-    const anchorTime = props.viewStart + pinchAnchorRatio * pinchStartSpan
-    setWindow(anchorTime - pinchAnchorRatio * ns, ns)
+    setWindow(pinchCenter - ns / 2, ns)
     moved = true
     return
   }
 
+  if (pinched) return // 捏合后剩余一指不触发拖动或播放跳转
   // 单指平移：像素位移 → 时间位移
   const dx = e.clientX - panStartX
   if (Math.abs(dx) > TAP_MOVE_PX) moved = true
   if (moved) {
-    const dt = (-dx / rectWidth()) * span()
-    setWindow(panStartView + dt, span())
+    const dt = (-dx / rectWidth()) * panSpan
+    selectedCenter = setWindow(panStartView + dt, panSpan)
+    emit('preview', selectedCenter)
   }
 }
 
@@ -232,25 +243,29 @@ function onUp(e: PointerEvent) {
   if (e.button !== 0 || !wasTracked) return
   if (pointers.size > 0) return
 
-  // 未发生位移且按下时间短 → 视为轻点跳转
-  const quick = Date.now() - downAt < 400
-  if (!wasMoved && quick) {
+  if (pinched) { pinched = false; return }
+  if (wasMoved) {
+    emit('seekend', selectedCenter)
+  } else if (Date.now() - downAt < 400) {
     const ts = tsFromRatio(ratioFromX(e.clientX))
-    emit('seek', ts)
-    emit('seekend', ts)
+    const selected = setWindow(ts - span() / 2, span())
+    emit('preview', selected)
+    emit('seekend', selected)
   }
 }
 
 function onCancel(e: PointerEvent) {
-  pointers.delete(e.pointerId)
-  if (pointers.size === 0) moved = false
+  const tracked = pointers.delete(e.pointerId)
+  if (!tracked) return
+  if (pointers.size === 0) {
+    moved = false
+    pinched = false
+    emit('cancel', panOriginalTime)
+  }
 }
 
-/** 指针离开轨道时的兜底复位（capture 失效等异常路径） */
-function onLostCapture(e: PointerEvent) {
-  pointers.delete(e.pointerId)
-  if (pointers.size === 0) moved = false
-}
+/** 正常松手已移除指针；意外丢失捕获才恢复拖动前的位置。 */
+function onLostCapture(e: PointerEvent) { onCancel(e) }
 
 /** 滚轮：平移；Ctrl/⌘ 缩放（桌面端无捏合手势的替代） */
 function onWheel(e: WheelEvent) {
@@ -261,7 +276,9 @@ function onWheel(e: WheelEvent) {
   } else {
     e.preventDefault()
     const dt = (e.deltaY / rectWidth()) * span()
-    setWindow(props.viewStart + dt, span())
+    const center = setWindow(props.viewStart + dt, span())
+    emit('preview', center)
+    emit('seekend', center)
   }
 }
 
@@ -269,6 +286,7 @@ function onWheel(e: WheelEvent) {
 let markLeaveTimer = 0
 function onMarkClick(m: TimelineMark) {
   activeMarkId.value = m.id
+  setWindow(m.time - span() / 2, span())
   emit('markseek', m)
 }
 function onMarkDelete(m: TimelineMark) {
@@ -332,24 +350,20 @@ function tickLabel(ts: number, st: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-/** 当前分辨率的人话描述，显示在标签行 */
+/** 两行信息：日期时间与当前可视跨度。 */
+const selectedTimeLabel = computed(() => fmtMarkTime(props.viewStart + span() / 2))
 const resolutionLabel = computed(() => {
   const s = span()
-  const d = new Date(props.value)
-  const p = (n: number) => String(n).padStart(2, '0')
-  const cur = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  if (s >= 86400000) return `${cur} · 窗宽 ${(s / 86400000).toFixed(1)} 天`
-  if (s >= 3600000) return `${cur} · 窗宽 ${(s / 3600000).toFixed(1)} 小时`
-  if (s >= 60000) return `${cur} · 窗宽 ${Math.round(s / 60000)} 分钟`
-  return `${cur} · 窗宽 ${Math.round(s / 1000)} 秒`
+  if (s >= 86400000) return `窗宽 ${(s / 86400000).toFixed(1)} 天`
+  if (s >= 3600000) return `窗宽 ${(s / 3600000).toFixed(1)} 小时`
+  if (s >= 60000) return `窗宽 ${Math.round(s / 60000)} 分钟`
+  return `窗宽 ${Math.round(s / 1000)} 秒`
 })
-
-/** 光标是否在当前窗口内（滑走后提示可一键回到播放位置） */
-const cursorVisible = computed(() => props.value >= props.viewStart && props.value <= props.viewStart + span())
-
-function centerOnValue() {
-  setWindow(props.value - span() / 2, span())
-}
+// 播放自然推进和外部跳转时，让刻度在固定中央光标下移动。
+watch(() => props.value, (ts) => {
+  if (!Number.isFinite(ts) || pointers.size || moved) return
+  setWindow(ts - span() / 2, span())
+}, { immediate: true })
 
 // 双击：以该点为中心放大一档（快速精调）
 let lastTapAt = 0
@@ -498,19 +512,13 @@ defineExpose({ ensureVisible, setWindow })
           <button type="button" class="mark-del" aria-label="删除该标记" @click.stop="onMarkDelete(m)">删除</button>
         </span>
       </div>
-      <div v-if="cursorVisible" class="cursor" :style="{ left: pct(value) + '%' }">
+      <div class="cursor" style="left: 50%">
         <span class="knob" />
       </div>
     </div>
     <div class="labels">
-      <button
-        v-if="!cursorVisible"
-        type="button"
-        class="recenter"
-        @click="centerOnValue"
-      >回到播放位置</button>
-      <span class="current mono">{{ resolutionLabel }}</span>
-      <span class="hint">拖动滑动 · 双指缩放</span>
+      <span class="current mono">{{ selectedTimeLabel }}</span>
+      <span class="resolution">{{ resolutionLabel }}</span>
     </div>
   </div>
 </template>
@@ -695,49 +703,21 @@ defineExpose({ ensureVisible, setWindow })
 }
 .labels {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 2px;
-  font-size: calc(11px * var(--nvr-font-scale, 1));
-  color: var(--nvr-text-2);
-  /* 单行不换行：关怀模式字号放大 + 窄屏时，提示文字换行会把整个
-     时间轴撑高几百像素，把下方内容顶出视口 */
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.labels > * {
-  flex: 0 1 auto;
+  gap: 2px;
+  margin-top: 4px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: calc(11px * var(--nvr-font-scale, 1));
+  line-height: 1.35;
+  color: var(--nvr-text-2);
 }
 .labels .current {
   color: var(--nvr-accent);
   font-weight: 600;
   white-space: nowrap;
 }
-.labels .hint {
-  color: var(--nvr-text-3);
-  font-size: calc(10px * var(--nvr-font-scale, 1));
-  flex: 0 0 auto;
-}
-/* 窄屏/矮屏隐藏手势提示：空间不足时优先保证时间与窗宽可读 */
-@media (max-width: 480px), (max-height: 480px) {
-  .labels .hint {
-    display: none;
-  }
-}
-.recenter {
-  padding: 2px 8px;
-  border: 1px solid var(--nvr-border);
-  border-radius: var(--nvr-radius-full);
-  background: var(--nvr-panel-2);
-  color: var(--nvr-accent);
-  font-size: calc(11px * var(--nvr-font-scale, 1));
-  cursor: pointer;
-}
+.labels .resolution { white-space: nowrap; }
 /* 关怀模式：时间标签放大（11px 对适老场景过小） */
 :global(body.care .timeline .labels) {
   font-size: calc(14px * var(--nvr-font-scale, 1));
@@ -745,5 +725,10 @@ defineExpose({ ensureVisible, setWindow })
 :global(body.care .timeline .track) {
   /* 关怀模式放大但同样受视口高度约束，避免把内容顶出屏幕 */
   height: clamp(32px, 5vh, 44px);
+}
+/* 横屏矮窗口仍保留两行，收紧轨道与行高，避免覆盖底部导航。 */
+@media (max-height: 480px) {
+  :global(body.care .timeline .track) { height: 28px; }
+  :global(body.care .timeline .labels) { font-size: 12px; line-height: 1.2; }
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { showToast } from 'vant'
 import type { Device } from '../types'
 import { createPlayable, type Playable } from '../utils/player'
@@ -53,11 +53,12 @@ watch(
   () => props.show,
   (v) => {
     if (v) openStream()
-    else closeStream()
+    else { void exitFullscreen(); closeStream() }
   },
 )
 
-function close() {
+async function close() {
+  await exitFullscreen()
   emit('update:show', false)
 }
 
@@ -88,7 +89,8 @@ function snapshot() {
   }, 'image/jpeg', 0.95)
 }
 
-function goPlayback() {
+async function goPlayback() {
+  await exitFullscreen()
   if (props.device) {
     emit('playback', props.device)
   }
@@ -102,11 +104,16 @@ async function toggleFullscreen() {
     await exitFullscreen()
   }
 }
-if (typeof document !== 'undefined') {
-  document.addEventListener('fullscreenchange', () => {
-    isFullscreen.value = !!document.fullscreenElement
-  })
+function updateFullscreenState() {
+  isFullscreen.value = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
 }
+onMounted(() => document.addEventListener('fullscreenchange', updateFullscreenState))
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', updateFullscreenState)
+  if (props.show) void exitFullscreen()
+  closeStream()
+})
+
 </script>
 
 <template>
@@ -118,7 +125,7 @@ if (typeof document !== 'undefined') {
   >
     <div class="viewer">
       <div class="vhd">
-        <button class="control-button" aria-label="关闭实时预览" @click="close"><van-icon name="arrow-left" size="20" /></button>
+        <button class="control-button" aria-label="关闭实时预览" @click="close"><van-icon name="arrow-left" size="20" /><span>返回</span></button>
         <span class="vname">{{ device?.name ?? '' }}</span>
         <span class="vstate" :class="{ on: device?.online }">
           {{ device?.online ? '在线' : '离线' }}
