@@ -370,16 +370,20 @@ func (m *Manager) ProcStats() map[string]any {
 
 // ---------- worker ----------
 
+// inputArgs 返回预览（live）输入参数。
+//
+// RTSP 输入走 ffconcat 播放列表：本函数返回的 args 不含 URL，
+// URL 经 ffmpeg.ConcatPlaylist 渲染后由调用方用 StartStdin + FeedBytes
+// 从 stdin 喂入。凭证因此只存在于管道数据里，不落 argv
+// （argv 经 /proc/<pid>/cmdline 对本机所有用户可读，实测无需特权即可
+// 读到明文摄像头密码）。
+// 非 RTSP 场景（测试源 lavfi）返回原样参数，走普通 Start。
 func (w *Worker) inputArgs() []string {
 	if w.dev.Source == models.SourceTest {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
-	url := w.inputURL()
-	// 硬件解码参数需置于 -i 之前
-	args := []string{"-rtsp_transport", "tcp"}
-	args = append(args, ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
-	args = append(args, "-i", url)
-	return args
+	// 硬件解码参数需置于 -i 之前（rtsp_transport 已移入播放列表 option）
+	return w.rtspInputArgs(ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
 }
 
 // streamURL resolves the RTSP URL for a given role ("preview" or "record"),
@@ -425,14 +429,41 @@ func (w *Worker) inputURL() string {
 	return w.withCreds(w.streamURL("preview"))
 }
 
+// playlistFeed 渲染一份含 RTSP 凭证的 ffconcat 播放列表。
+// 返回值只喂给 ffmpeg stdin——绝不进 argv（/proc/<pid>/cmdline 对本机
+// 所有用户可读，实测 ps 即可看到明文密码）。
+func (w *Worker) playlistFeed(rawURL string) []byte {
+	return ffmpeg.ConcatPlaylist(w.withCreds(rawURL))
+}
+
+// rtspInputArgs 构造经 ffconcat 播放列表的 RTSP 输入参数。
+// decodeFirst（-hwaccel 等）必须位于 -i 之前，作为前缀拼入。
+// 调用方必须用 StartStdin 启动进程，并 FeedBytes(playlistFeed(url))。
+func (w *Worker) rtspInputArgs(decodeFirst ...string) []string {
+	args := []string{
+		"-protocol_whitelist", ffmpeg.ConcatWhitelist,
+		"-f", "concat", "-safe", "0", "-i", "pipe:0",
+	}
+	return append(args, decodeFirst...)
+}
+
+// recordInputArgs 返回录像输入参数。契约同 inputArgs：
+// RTSP 走 ffconcat 播放列表，URL 由调用方经 stdin 喂入。
 func (w *Worker) recordInputArgs() []string {
 	if w.dev.Source == models.SourceTest {
 		return []string{"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"}
 	}
-	args := []string{"-rtsp_transport", "tcp"}
-	args = append(args, ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
-	args = append(args, "-i", w.withCreds(w.streamURL("record")))
-	return args
+	return w.rtspInputArgs(ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs()...)
+}
+
+// recordPlaylistFeed 返回录像流（record role）的播放列表内容。
+func (w *Worker) recordPlaylistFeed() []byte {
+	return w.playlistFeed(w.streamURL("record"))
+}
+
+// previewPlaylistFeed 返回预览流（preview role）的播放列表内容。
+func (w *Worker) previewPlaylistFeed() []byte {
+	return w.playlistFeed(w.streamURL("preview"))
 }
 
 func transcodeArgs(ffmpegPath string) []string {
@@ -516,18 +547,28 @@ func (w *Worker) startSingleConn() error {
 	args = append(args, "-f", "tee", teeSpec)
 
 	log.Printf("[%s] starting ffmpeg (single-conn): %v", w.dev.Name, sanitizeArgs(args))
-	var err error
-	if w.teeProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, args...); err != nil {
+	var feed []byte
+	if w.dev.Source != models.SourceTest {
+		// RTSP：URL 经 stdin 播放列表喂入，不落 argv
+		feed = w.previewPlaylistFeed()
+	}
+	teeProc, err := w.launchFFmpeg(args, feed)
+	if err != nil {
 		log.Printf("[%s] single-conn start error: %v", w.dev.Name, err)
 		return err
 	}
+	w.teeProc = teeProc
 
 	// 快照从 HLS 播放列表读取：不新增 RTSP 连接。
 	// AI 关闭时不启动（current.jpg 只服务 AI 分析）。
 	if w.needSnapshots() {
 		snapArgs := append(w.snapInputArgs(),
 			"-vf", "fps=1", "-update", "1", filepath.Join(w.snapDir, "current.jpg"))
-		w.snapProc, _ = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+		var snapFeed []byte
+		if w.snapNeedsFeed() {
+			snapFeed = w.snapPlaylistFeed()
+		}
+		w.snapProc, _ = w.launchFFmpeg(snapArgs, snapFeed)
 	}
 
 	// 复用字段便于既有逻辑（waitExit / killProcs）统一处理
@@ -609,28 +650,51 @@ func (w *Worker) startMultiConn() error {
 		filepath.Join(w.liveDir, "index.m3u8"))
 
 	log.Printf("[%s] starting ffmpeg: record=%v", w.dev.Name, sanitizeArgs(recArgs))
-	var err error
-	if w.recordProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, recArgs...); err != nil {
+	recProc, err := w.launchFFmpeg(recArgs, w.recordPlaylistFeed())
+	if err != nil {
 		log.Printf("[%s] record start error: %v", w.dev.Name, err)
 		return err
 	}
+	w.recordProc = recProc
 	log.Printf("[%s] starting ffmpeg: live=%v", w.dev.Name, sanitizeArgs(liveArgs))
-	if w.liveProc, err = ffmpeg.Start(w.mgr.cfg.Ffmpeg, liveArgs...); err != nil {
+	liveProc, err := w.launchFFmpeg(liveArgs, w.previewPlaylistFeed())
+	if err != nil {
 		log.Printf("[%s] live start error: %v", w.dev.Name, err)
 		w.recordProc.Kill()
 		return err
 	}
+	w.liveProc = liveProc
 	// 快照：优先从 HLS 读（零额外摄像头连接）；AI 关闭时完全不启动
 	if w.needSnapshots() {
 		snapArgs := append(w.snapInputArgs(),
 			"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
 		log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, sanitizeArgs(snapArgs))
-		w.snapProc, _ = ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+		var snapFeed []byte
+		if w.snapNeedsFeed() {
+			snapFeed = w.snapPlaylistFeed()
+		}
+		w.snapProc, _ = w.launchFFmpeg(snapArgs, snapFeed)
 		if w.snapProc == nil {
 			log.Printf("[%s] snap start error (non-fatal)", w.dev.Name)
 		}
 	}
 	return nil
+}
+
+// launchFFmpeg 按输入形态选择启动方式：
+//
+//	feed == nil  → 普通 Start（lavfi 测试源 / 本地 HLS 播放列表，无凭据）
+//	feed != nil  → StartStdin + FeedBytes（RTSP 经 ffconcat 播放列表，凭证不落 argv）
+func (w *Worker) launchFFmpeg(args []string, feed []byte) (*ffmpeg.Proc, error) {
+	if feed == nil {
+		return ffmpeg.Start(w.mgr.cfg.Ffmpeg, args...)
+	}
+	p, err := ffmpeg.StartStdin(w.mgr.cfg.Ffmpeg, args...)
+	if err != nil {
+		return nil, err
+	}
+	p.FeedBytes(feed)
+	return p, nil
 }
 
 // sanitizeArgs masks credentials in RTSP URLs before logging.
@@ -1373,7 +1437,11 @@ func (w *Worker) captureFrame(target string) (string, error) {
 	tmp := target + ".tmp"
 	args := append(w.snapInputArgs(),
 		"-frames:v", "1", "-f", "image2", "-q:v", "4", "-y", tmp)
-	p, err := ffmpeg.Start(w.mgr.cfg.Ffmpeg, args...)
+	var snapFeed []byte
+	if w.snapNeedsFeed() {
+		snapFeed = w.snapPlaylistFeed()
+	}
+	p, err := w.launchFFmpeg(args, snapFeed)
 	if err != nil || p == nil {
 		return "", fmt.Errorf("启动抓帧进程失败: %v", err)
 	}
@@ -1448,6 +1516,20 @@ func (w *Worker) snapInputArgs() []string {
 	return append([]string{"-loglevel", "error", "-y"}, w.inputArgs()...)
 }
 
+// snapNeedsFeed 报告 snapInputArgs 当前是否走 stdin 播放列表路径
+// （true = 必须用 StartStdin + FeedBytes；false = 普通 Start）。
+// 规则与 snapInputArgs 一致：HLS 就绪走本地文件（false），否则 RTSP 直连（true）。
+func (w *Worker) snapNeedsFeed() bool {
+	livePl := filepath.Join(w.liveDir, "index.m3u8")
+	_, err := os.Stat(livePl)
+	return err != nil && w.dev.Source != models.SourceTest
+}
+
+// snapPlaylistFeed 返回抓帧路径的播放列表内容。
+func (w *Worker) snapPlaylistFeed() []byte {
+	return w.previewPlaylistFeed()
+}
+
 // guardSnap restarts the snapshot process if it exited, without disturbing
 // the record/live pipeline. AI 关闭时不启动（见 needSnapshots）。
 func (w *Worker) guardSnap() {
@@ -1467,7 +1549,11 @@ func (w *Worker) guardSnap() {
 	}
 	snapArgs := append(w.snapInputArgs(),
 		"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
-	p, err := ffmpeg.Start(w.mgr.cfg.Ffmpeg, snapArgs...)
+	var snapFeed []byte
+	if w.snapNeedsFeed() {
+		snapFeed = w.snapPlaylistFeed()
+	}
+	p, err := w.launchFFmpeg(snapArgs, snapFeed)
 	if err != nil || p == nil {
 		log.Printf("[%s] snap restart error (non-fatal): %v", w.dev.Name, err)
 		return

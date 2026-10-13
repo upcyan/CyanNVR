@@ -106,7 +106,13 @@ else
     warn "未找到应用用户 CyanNVR（应用可能尚未安装）。"
     warn "请安装应用后重新执行本脚本，或手动执行： chown -R CyanNVR:CyanNVR $DST"
 fi
-chmod -R 755 "$DST" 2>/dev/null || true
+# 只放开目录的遍历位；文件不再递归改 755（录像文件无需可执行位）。
+# 历史写法 `chmod -R 755` 会把 jwt_secret 与 nvr.db 一并刷成全局可读，
+# 任何本机用户都能拿走 JWT 密钥（可伪造管理员）和库内摄像头明文密码。
+find "$DST" -type d -exec chmod 755 {} + 2>/dev/null || true
+for _f in jwt_secret nvr.db nvr.db-wal nvr.db-shm settings.json; do
+    [ -e "$DST/${_f}" ] && chmod 600 "$DST/${_f}" 2>/dev/null || true
+done
 
 # ── 校验 ──
 echo ""

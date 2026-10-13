@@ -45,7 +45,7 @@ func TestSelectExportCuts_ClipStartAndEnd(t *testing.T) {
 }
 
 func TestSelectExportCuts_SpanTwoSegments(t *testing.T) {
-	a := seg("a", base(), base().Add(time.Hour))              // 00:00-01:00
+	a := seg("a", base(), base().Add(time.Hour))                  // 00:00-01:00
 	b := seg("b", base().Add(time.Hour), base().Add(2*time.Hour)) // 01:00-02:00
 	cuts := selectExportCuts([]models.RecordingSegment{b, a}, base().Add(30*time.Minute), base().Add(90*time.Minute))
 	if len(cuts) != 2 {
@@ -54,10 +54,10 @@ func TestSelectExportCuts_SpanTwoSegments(t *testing.T) {
 	if cuts[0].Path != a.Path {
 		t.Fatalf("cuts 未按开始时间排序: %s", cuts[0].Path)
 	}
-	if cuts[0].Inpoint != (30 * time.Minute).Microseconds() || cuts[0].Outpoint != 0 {
+	if cuts[0].Inpoint != (30*time.Minute).Microseconds() || cuts[0].Outpoint != 0 {
 		t.Fatalf("a 裁剪错误: %+v", cuts[0])
 	}
-	if cuts[1].Inpoint != 0 || cuts[1].Outpoint != (30 * time.Minute).Microseconds() {
+	if cuts[1].Inpoint != 0 || cuts[1].Outpoint != (30*time.Minute).Microseconds() {
 		t.Fatalf("b 裁剪错误: %+v", cuts[1])
 	}
 }

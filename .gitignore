@@ -79,3 +79,7 @@ data-wsl/
 simplenvr-linux
 fpk/fnpack
 fpk/version.env
+
+# DSH 沙箱构建时用的 docker 配置与扫描产物，禁止提交
+.docker-config/
+artifacts/

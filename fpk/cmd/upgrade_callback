@@ -1,8 +1,21 @@
 #!/bin/bash
 # 升级后执行：保留数据目录，仅补齐新增子目录
 
-mkdir -p "${TRIM_PKGVAR}"/{live,recordings,snapshots,events,models}
-chmod -R 755 "${TRIM_PKGVAR}" 2>/dev/null
+# 数据目录可能是用户自定义的（datadir.conf 优先）。只认 TRIM_PKGVAR 会把
+# 权限修正做在错误目录上，真实目录仍留着全局可读的 jwt_secret 与 nvr.db。
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -f "${TRIM_PKGETC}/datadir.conf" ]; then
+    _saved=$(head -n 1 "${TRIM_PKGETC}/datadir.conf" | tr -d '[:space:]')
+    [ -n "${_saved}" ] && [ -d "${_saved}" ] && DATA_DIR="${_saved}"
+fi
+mkdir -p "${DATA_DIR}"/{live,recordings,snapshots,events,models}
+# 只放开目录的遍历位；文件不再递归改 755（录像文件无需可执行位）。
+# 历史写法 `chmod -R 755` 会把 jwt_secret 与 nvr.db 一并刷成全局可读，
+# 任何本机用户都能拿走 JWT 密钥（可伪造管理员）和库内摄像头明文密码。
+find "${DATA_DIR}" -type d -exec chmod 755 {} + 2>/dev/null || true
+for _f in jwt_secret nvr.db nvr.db-wal nvr.db-shm settings.json; do
+    [ -e "${DATA_DIR}/${_f}" ] && chmod 600 "${DATA_DIR}/${_f}" 2>/dev/null || true
+done
 
 # 更新预置模型（不覆盖用户已下载的其他模型）
 if [ -f "${TRIM_APPDEST}/models/yolov8n.onnx" ]; then

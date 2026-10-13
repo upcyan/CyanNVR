@@ -47,8 +47,8 @@ type ExportTask struct {
 	FileName   string    `json:"fileName,omitempty"` // 下载名（ASCII，避免 CJK 头兼容问题）
 	Size       int64     `json:"size,omitempty"`
 
-	file string // 导出产物磁盘路径（不进 JSON）
-	CreatedAt  time.Time `json:"createdAt"`
+	file      string    // 导出产物磁盘路径（不进 JSON）
+	CreatedAt time.Time `json:"createdAt"`
 
 	cmd *exec.Cmd // 运行中的 ffmpeg 进程，删除任务时强杀
 }

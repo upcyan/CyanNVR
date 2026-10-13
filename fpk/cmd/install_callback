@@ -35,7 +35,13 @@ if [ "${DATA_DIR}" != "${TRIM_PKGVAR}" ]; then
 fi
 
 mkdir -p "${DATA_DIR}"/{live,recordings,snapshots,events,models}
-chmod -R 755 "${DATA_DIR}" 2>/dev/null
+# 只放开目录的遍历位；文件不再递归改 755（录像文件无需可执行位）。
+# 历史写法 `chmod -R 755` 会把 jwt_secret 与 nvr.db 一并刷成全局可读，
+# 任何本机用户都能拿走 JWT 密钥（可伪造管理员）和库内摄像头明文密码。
+find "${DATA_DIR}" -type d -exec chmod 755 {} + 2>/dev/null || true
+for _f in jwt_secret nvr.db nvr.db-wal nvr.db-shm settings.json; do
+    [ -e "${DATA_DIR}/${_f}" ] && chmod 600 "${DATA_DIR}/${_f}" 2>/dev/null || true
+done
 # 自定义目录不在 @appdata 下，属主需显式改为应用用户
 chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${DATA_DIR}" 2>/dev/null
 
@@ -77,6 +83,10 @@ for src in ${LEGACY_DIRS}; do
             fi
         done
         chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${DATA_DIR}" 2>/dev/null
+        # cp -a 连源权限一起复制，源目录若是旧的 755 这里会重新带入，故再收紧一次
+        for _f in jwt_secret nvr.db nvr.db-wal nvr.db-shm settings.json; do
+            [ -e "${DATA_DIR}/${_f}" ] && chmod 600 "${DATA_DIR}/${_f}" 2>/dev/null || true
+        done
         MIGRATED="${src}"
         break
     fi

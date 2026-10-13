@@ -46,14 +46,14 @@ type Analyzer struct {
 
 // Capability 是 AI worker 实测得出的算力画像。
 type Capability struct {
-	Tier           string  `json:"tier"`            // high | medium | low | minimal
-	MeanMs         float64 `json:"mean_ms"`         // 单帧推理均值
-	PeakMs         float64 `json:"peak_ms"`         // 单帧峰值
-	EffectiveMs    float64 `json:"effective_ms"`    // 定档依据（均值 + 峰值*0.3）
-	MaxStreams     int     `json:"max_streams"`     // 建议最多同时分析路数
-	SuggestSec     float64 `json:"suggest_interval_sec"` // 建议分析间隔
-	Backend        string  `json:"backend"`
-	Reason         string  `json:"reason"`
+	Tier        string  `json:"tier"`                 // high | medium | low | minimal
+	MeanMs      float64 `json:"mean_ms"`              // 单帧推理均值
+	PeakMs      float64 `json:"peak_ms"`              // 单帧峰值
+	EffectiveMs float64 `json:"effective_ms"`         // 定档依据（均值 + 峰值*0.3）
+	MaxStreams  int     `json:"max_streams"`          // 建议最多同时分析路数
+	SuggestSec  float64 `json:"suggest_interval_sec"` // 建议分析间隔
+	Backend     string  `json:"backend"`
+	Reason      string  `json:"reason"`
 }
 
 type DeviceState struct {

@@ -60,6 +60,10 @@ func main() {
 	}
 	defer st.Close()
 
+	// 打开库之后再收紧一次：SQLite 建库/WAL 的权限跟随 umask（通常 0644），
+	// 而数据目录整体是 755，等于任何本机用户都能直接读走库里的摄像头明文密码。
+	hardenDataDir(cfg.DataDir)
+
 	seedAdmin(cfg, st)
 
 	am := auth.NewManager(cfg.JWTSecret)
@@ -263,4 +267,42 @@ func loadOrCreateJWTSecret(cfg *config.Config) (string, error) {
 	}
 	log.Printf("generated new JWT secret at %s", path)
 	return secret, nil
+}
+
+// hardenDataDir 收紧数据目录内凭据类文件的权限（0600）。
+//
+// 为什么需要它：安装/升级生命周期脚本历史上执行过 `chmod -R 755 $DATA_DIR`，
+// 会把 jwt_secret（写入时本是 0o600）连同 nvr.db 一起刷成全局可读。
+// 后果不是理论风险，实测在本机可直接读到：
+//   - jwt_secret：拿到即可伪造任意管理员 JWT
+//   - nvr.db：strings 一把就能提取全部摄像头 RTSP 明文密码
+//
+// 脚本侧已改为「目录保持 755 + 敏感文件单独收紧」，但升级不会重跑
+// install_callback，存量机器不会被脚本修好，因此这里每次启动兜底一次。
+//
+// 只动权限、不动属主，服务自身（cyannvr）仍可正常读写。
+func hardenDataDir(dataDir string) {
+	targets := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{filepath.Join(dataDir, "jwt_secret"), 0o600},
+		// WAL/SHM 与主库同等敏感：未 checkpoint 的最新写入都在这里。
+		{filepath.Join(dataDir, "nvr.db"), 0o600},
+		{filepath.Join(dataDir, "nvr.db-wal"), 0o600},
+		{filepath.Join(dataDir, "nvr.db-shm"), 0o600},
+		// settings.json 含 AI apiKey 等配置。
+		{filepath.Join(dataDir, "settings.json"), 0o600},
+		// 自签/ACME 私钥；证书目录同时去掉他人遍历位。
+		{filepath.Join(dataDir, "tls"), 0o700},
+		{filepath.Join(dataDir, "tls", "key.pem"), 0o600},
+	}
+	for _, t := range targets {
+		if _, err := os.Stat(t.path); err != nil {
+			continue // 尚未生成（如 TLS 未启用）属正常，跳过
+		}
+		if err := os.Chmod(t.path, t.mode); err != nil {
+			log.Printf("harden %s: %v", t.path, err)
+		}
+	}
 }

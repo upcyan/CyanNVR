@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ func Exists(bin string) bool {
 
 type Proc struct {
 	cmd    *exec.Cmd
+	stdin  io.WriteCloser
 	stdout bytes.Buffer
 	stderr bytes.Buffer
 	done   chan error
@@ -39,6 +41,38 @@ func Start(bin string, args ...string) (*Proc, error) {
 	return p, nil
 }
 
+// StartStdin 与 Start 相同，但额外拿到子进程 stdin 的写入端。
+// 用于把含凭据的 ffconcat 播放列表从管道喂入，避免 URL 进入 argv
+// （argv 经 /proc/<pid>/cmdline 对本机所有用户可读，实测无需任何特权）。
+func StartStdin(bin string, args ...string) (*Proc, error) {
+	cmd := exec.Command(bin, args...)
+	p := &Proc{cmd: cmd, done: make(chan error, 1)}
+	cmd.Stdout = &p.stdout
+	cmd.Stderr = &p.stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	p.stdin = stdin
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, err
+	}
+	go func() { p.done <- cmd.Wait() }()
+	return p, nil
+}
+
+// FeedBytes 向子进程 stdin 写入 data 并关闭写端（EOF）。
+// 必须异步：ffmpeg 启动初期不读 stdin，同步写会在管道缓冲区（64KB）
+// 填满后死锁。写完即关——concat demuxer 读到 EOF 就停止等待新条目，
+// 播放列表只有几行，远小于缓冲区，实际总是立即完成。
+func (p *Proc) FeedBytes(data []byte) {
+	go func() {
+		_, _ = p.stdin.Write(data)
+		_ = p.stdin.Close()
+	}()
+}
+
 func (p *Proc) Wait() error { return <-p.done }
 
 func (p *Proc) Running() bool {
@@ -51,6 +85,11 @@ func (p *Proc) Kill() {
 	p.mu.Lock()
 	p.killed = true
 	p.mu.Unlock()
+	// 先关 stdin 再杀进程：让 FeedBytes 的写入 goroutine 立刻解除阻塞，
+	// 不会在进程死后还挂在管道写上。
+	if p.stdin != nil {
+		_ = p.stdin.Close()
+	}
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
 	}
@@ -92,6 +131,66 @@ func runProbe(bin string, args []string) (msg string, err error, timedOut bool) 
 	return out.String(), err, false
 }
 
+// runProbeStdin 与 runProbe 相同，额外把 stdinData 从管道喂入子进程。
+// 用于 concat 播放列表路径：URL 凭证不进 argv。
+func runProbeStdin(bin string, args []string, stdinData []byte) (msg string, err error, timedOut bool) {
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	cmd.SysProcAttr = sysProcAttr()
+	cmd.WaitDelay = 2 * time.Second
+	stdin, pipeErr := cmd.StdinPipe()
+	if pipeErr != nil {
+		return "", pipeErr, false
+	}
+	if startErr := cmd.Start(); startErr != nil {
+		_ = stdin.Close()
+		return "", startErr, false
+	}
+	// 播放列表远小于管道缓冲区（64KB），同步写通常立即完成；
+	// 仍异步 + Wait 收尾，防子进程不读 stdin 时把探测挂死。
+	feedDone := make(chan struct{})
+	go func() {
+		_, _ = stdin.Write(stdinData)
+		_ = stdin.Close()
+		close(feedDone)
+	}()
+	err = cmd.Wait()
+	<-feedDone
+	if ctx.Err() == context.DeadlineExceeded {
+		return out.String(), err, true
+	}
+	return out.String(), err, false
+}
+
+// concatWhitelist 是经 ffconcat 播放列表拉 RTSP 流所需的协议白名单。
+// 默认 whitelist（file,crypto,data）不含 rtsp，会被 "Protocol 'rtsp' not on
+// whitelist" 拒绝；pipe 用于 -i pipe:0 本身。
+const concatWhitelist = "file,pipe,rtsp,tcp,udp,rtp"
+
+// ConcatWhitelist 暴露给 recorder/hls 包复用（与 concatWhitelist 同值）。
+const ConcatWhitelist = concatWhitelist
+
+// ConcatPlaylist 把 RTSP URL 渲染成 ffconcat 播放列表文本。
+// 凭证（user:pass@）只出现在返回的字节里，调用方通过 stdin 喂给 ffmpeg，
+// 不进入 argv。option 指令必须放在 file 之后（实测放前面报
+// "option without file"）。
+func ConcatPlaylist(url string) []byte {
+	var b strings.Builder
+	b.WriteString("ffconcat version 1.0\n")
+	b.WriteString("file '" + url + "'\n")
+	b.WriteString("option rtsp_transport tcp\n")
+	return []byte(b.String())
+}
+
+// isRTSP 判断 URL 是否 RTSP 协议（大小写/空白容忍）。
+func isRTSP(u string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(u)), "rtsp://")
+}
+
 // TestRTSPErr performs an RTSP connectivity test and returns a human-readable
 // error reason (auth failure, timeout, connection refused, binary missing).
 func TestRTSPErr(bin, url string) (bool, string) {
@@ -105,15 +204,25 @@ func TestRTSPProbe(bin, url string) (ok bool, errMsg, codec string, width, heigh
 	if !Exists(bin) {
 		return false, "ffmpeg 未安装或未配置", "", 0, 0
 	}
-	args := []string{"-hide_banner"}
-	// -rtsp_transport 只对 RTSP 输入有意义；对 http/file 等其它协议加了会
-	// 直接报 "Option rtsp_transport not found"，把本可探测的源误判为失败。
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(url)), "rtsp://") {
-		args = append(args, "-rtsp_transport", "tcp")
+	// RTSP 输入改走 ffconcat 播放列表（stdin 喂入）：凭证不落 argv。
+	// 非 RTSP（http/file 等）保持原路径——concat 对它们无意义。
+	if isRTSP(url) {
+		args := []string{"-hide_banner", "-protocol_whitelist", concatWhitelist}
+		args = append(args, "-f", "concat", "-safe", "0", "-i", "pipe:0", "-t", "1", "-f", "null", "-")
+		msg, err, timedOut := runProbeStdin(bin, args, ConcatPlaylist(url))
+		codec, width, height = parseVideoStream(msg)
+		return interpretProbe(msg, err, timedOut, codec, width, height)
 	}
+	args := []string{"-hide_banner"}
 	args = append(args, "-i", url, "-t", "1", "-f", "null", "-")
 	msg, err, timedOut := runProbe(bin, args)
 	codec, width, height = parseVideoStream(msg)
+	return interpretProbe(msg, err, timedOut, codec, width, height)
+}
+
+// interpretProbe 把探测结果翻译为 (ok, errMsg, codec, width, height)。
+// 从 TestRTSPProbe 拆出，供直接拉流与 concat 拉流两条路径共用。
+func interpretProbe(msg string, err error, timedOut bool, codec string, width, height int) (bool, string, string, int, int) {
 	if timedOut {
 		return false, "探测超时（12 秒无响应）：请检查网络连通性与摄像头是否可达", codec, width, height
 	}
@@ -204,9 +313,17 @@ func ProbeFileVideoCodec(bin, path string) string {
 
 // ProbeVideoCodec detects the video codec of an RTSP (or file) input by
 // reading ffmpeg's stream info. Returns "h264", "hevc" or "" on failure.
+// RTSP 输入走 ffconcat 播放列表（凭证不落 argv）；文件输入保持原路径。
 func ProbeVideoCodec(bin, url string) string {
 	var out bytes.Buffer
-	cmd := exec.Command(bin, "-hide_banner", "-rtsp_transport", "tcp", "-i", url, "-t", "1", "-f", "null", "-")
+	var cmd *exec.Cmd
+	if isRTSP(url) {
+		cmd = exec.Command(bin, "-hide_banner", "-protocol_whitelist", concatWhitelist,
+			"-f", "concat", "-safe", "0", "-i", "pipe:0", "-t", "1", "-f", "null", "-")
+		cmd.Stdin = bytes.NewReader(ConcatPlaylist(url))
+	} else {
+		cmd = exec.Command(bin, "-hide_banner", "-i", url, "-t", "1", "-f", "null", "-")
+	}
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	_ = cmd.Run()

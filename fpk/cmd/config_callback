@@ -51,7 +51,13 @@ fi
 if [ -n "${NEW_DIR}" ] && [ "${NEW_DIR}" != "${CUR_DIR}" ]; then
     if mkdir -p "${NEW_DIR}"/{live,recordings,snapshots,events,models} 2>/dev/null; then
         chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME}" "${NEW_DIR}" 2>/dev/null
-        chmod -R 755 "${NEW_DIR}" 2>/dev/null
+        # 只放开目录的遍历位；文件不再递归改 755（录像文件无需可执行位）。
+        # 历史写法 `chmod -R 755` 会把 jwt_secret 与 nvr.db 一并刷成全局可读，
+        # 任何本机用户都能拿走 JWT 密钥（可伪造管理员）和库内摄像头明文密码。
+        find "${NEW_DIR}" -type d -exec chmod 755 {} + 2>/dev/null || true
+        for _f in jwt_secret nvr.db nvr.db-wal nvr.db-shm settings.json; do
+            [ -e "${NEW_DIR}/${_f}" ] && chmod 600 "${NEW_DIR}/${_f}" 2>/dev/null || true
+        done
 
         # 迁移现有数据（复制，不删除原目录，保留回退余地）
         if [ "${wizard_migrate_data}" = "move" ] && [ -d "${CUR_DIR}" ]; then
