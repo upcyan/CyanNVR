@@ -5,6 +5,7 @@ import { showConfirmDialog, showToast } from 'vant'
 import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
+import { isNvrApp } from '../utils/env'
 import { http } from '../api/client'
 import {
   createUser,
@@ -862,7 +863,10 @@ async function removeUser(u: ManagedUser) {
 
 <template>
   <div ref="pageRef" class="page settings-page" :class="{ 'has-sidenav': isDesktopSettings }" @scroll.passive="onSettingsScroll">
-    <van-nav-bar title="设置" left-arrow @click-left="goBack" />
+    <!-- App 内嵌环境：原生 TopAppBar 已显示服务器与页面层级，系统返回键可用，
+         Web 端标题栏纯属重复（与录像页在 App 内的表现统一）。
+         浏览器保留 left-arrow 供返回。 -->
+    <van-nav-bar v-if="!isNvrApp()" title="设置" left-arrow @click-left="goBack" />
 
     <!-- 桌面端分区导航：窄屏不渲染（完全走原有单列布局） -->
     <nav v-if="isDesktopSettings" class="settings-nav" aria-label="设置分区导航">

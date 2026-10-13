@@ -231,7 +231,9 @@ function onViewerPlayback(d: Device) {
       <button type="button" class="pause-banner-btn" @click="togglePause">恢复录制</button>
     </div>
 
-    <p class="data-source" role="status">{{ isDemoMode() ? '演示数据（非已添加设备）' : `当前服务器：${sourceLabel}` }}</p>
+    <!-- App 内嵌环境：原生 TopAppBar 已显示「服务器名 + 地址」，此行纯属重复；
+         且服务器地址属敏感信息，尽量少一处明文展示。浏览器保持原样。 -->
+    <p v-if="!isNvrApp()" class="data-source" role="status">{{ isDemoMode() ? '演示数据（非已添加设备）' : `当前服务器：${sourceLabel}` }}</p>
     <div class="cards">
       <CameraCard
         v-for="d in store.devices"
