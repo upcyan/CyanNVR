@@ -71,14 +71,27 @@ object UpdateManager {
                 var apkSize = 0L
                 val assets = o.optJSONArray("assets")
                 if (assets != null) {
+                    // release 里可能同时存在多个版本的 APK（发布疏漏或旧包未清理）。
+                    // 取「文件名版本号最高」的一个，而不是第一个——曾因字母序让
+                    // 1.10.30 旧包排在 1.10.32 前面，导致更新死循环（下载后版本不变）。
+                    // 文件名解析不出版本的资产跳过，不作为候选。
+                    var bestVer: List<Int>? = null
                     for (i in 0 until assets.length()) {
-                        val a = assets.optJSONObject(i)
-                        val name = a?.optString("name", "") ?: ""
-                        if (name.endsWith(".apk")) {
+                        val a = assets.optJSONObject(i) ?: continue
+                        val name = a.optString("name", "")
+                        if (!name.endsWith(".apk")) continue
+                        val ver = Regex("_(\\d+\\.\\d+\\.\\d+)_android\\.apk$")
+                            .find(name)?.groupValues?.get(1)
+                            ?.split(".")?.mapNotNull { it.toIntOrNull() } ?: continue
+                        if (ver.size != 3) continue
+                        if (bestVer == null || compareVersion(
+                                ver.joinToString("."), bestVer.joinToString(".")
+                            ) > 0
+                        ) {
+                            bestVer = ver
                             apkUrl = a.optString("browser_download_url", "")
                             apkName = name
                             apkSize = a.optLong("size", 0)
-                            break
                         }
                     }
                 }
