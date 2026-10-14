@@ -437,14 +437,16 @@ func (w *Worker) playlistFeed(rawURL string) []byte {
 }
 
 // rtspInputArgs 构造经 ffconcat 播放列表的 RTSP 输入参数。
-// decodeFirst（-hwaccel 等）必须位于 -i 之前，作为前缀拼入。
+// decodeFirst（-hwaccel 等解码参数）作为输入选项，必须拼在 -i 之前——
+// 1.10.28 曾把它错拼到 -i 之后，ffmpeg 报
+// "Option hwaccel cannot be applied to output"并每 2 秒崩溃重启（生产事故）。
 // 调用方必须用 StartStdin 启动进程，并 FeedBytes(playlistFeed(url))。
 func (w *Worker) rtspInputArgs(decodeFirst ...string) []string {
-	args := []string{
+	args := append([]string{}, decodeFirst...)
+	return append(args,
 		"-protocol_whitelist", ffmpeg.ConcatWhitelist,
 		"-f", "concat", "-safe", "0", "-i", "pipe:0",
-	}
-	return append(args, decodeFirst...)
+	)
 }
 
 // recordInputArgs 返回录像输入参数。契约同 inputArgs：
