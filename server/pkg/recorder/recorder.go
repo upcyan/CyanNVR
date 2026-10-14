@@ -1286,6 +1286,10 @@ func (w *Worker) watchProcs() {
 	if w.stall == nil {
 		w.stall = map[string]*stallState{}
 	}
+	// 抓帧守护随假死巡检一起跑：guardSnap 原先只在 worker 主循环每轮末尾
+	// （waitExit 返回后）调用，管线长期不重启时抓帧进程退出后无人重启，
+	// current.jpg 会冻结（1.10.29 生产实测：封面停在 08:59，14 小时未更新）。
+	w.guardSnap()
 	procs := map[string]*ffmpeg.Proc{
 		"record": w.recordProc,
 		"live":   w.liveProc,
