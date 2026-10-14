@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { checkStreamSession } from './streamSession'
 import { server } from '../api/server'
 import { useSettingsStore } from '../stores/settings'
 
@@ -28,14 +29,17 @@ export function useNotifications() {
     if (!token || token === 'demo') return
 
     const url = `${server.base}/api/events/sse?token=${token}`
-    evtSource = new EventSource(url)
+    const source = new EventSource(url)
+    evtSource = source
 
-    evtSource.onopen = () => {
+    source.onopen = () => {
+      if (evtSource !== source) return
       // 连接真正建立后才重置退避，避免「连上又立刻断开」时退避永远为 1s
       retryDelay = 1000
     }
 
-    evtSource.onmessage = (ev) => {
+    source.onmessage = (ev) => {
+      if (evtSource !== source) return
       try {
         const n: PushNotification = JSON.parse(ev.data)
         notifications.value = [n, ...notifications.value].slice(0, 50)
@@ -50,8 +54,10 @@ export function useNotifications() {
       }
     }
 
-    evtSource.onerror = () => {
-      evtSource?.close()
+    source.onerror = async () => {
+      if (evtSource !== source) return
+      source.close()
+      if (!await checkStreamSession() || evtSource !== source) return
       evtSource = null
       if (reconnectTimer) clearTimeout(reconnectTimer)
       reconnectTimer = setTimeout(connect, retryDelay)

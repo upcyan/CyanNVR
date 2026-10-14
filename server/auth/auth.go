@@ -122,20 +122,10 @@ func (m *Manager) Middleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 			return
 		}
-		claims, err := m.Parse(token)
-		expired := false
+		claims, expired, err := m.ParseWithTrust(token)
 		if err != nil {
-			// 区分「签名无效」与「已过期」：仅过期可被信任窗口豁免
-			if !isExpiredErr(err) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-				return
-			}
-			claims, err = m.ParseLenient(token)
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-				return
-			}
-			expired = true
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
 		}
 		// 改密后旧 token 立即失效：早于 password_changed_at 签发的一律拒绝。
 		// 信任窗口不豁免这一条——改密必须重新输入密码。

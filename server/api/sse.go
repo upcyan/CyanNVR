@@ -100,7 +100,8 @@ func (s *Server) sseHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 		return
 	}
-	if _, err := s.am.Parse(token); err != nil {
+	claims, _, err := s.am.ParseWithTrust(token)
+	if err != nil || s.am.Revoked(claims) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
@@ -130,6 +131,10 @@ func (s *Server) sseHandler(c *gin.Context) {
 		case <-notify:
 			return
 		case <-heartbeat.C:
+			claims, _, err := s.am.ParseWithTrust(token)
+			if err != nil || s.am.Revoked(claims) {
+				return
+			}
 			if _, err := c.Writer.WriteString(": ping\n\n"); err != nil {
 				return
 			}

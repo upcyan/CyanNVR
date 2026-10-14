@@ -6,6 +6,7 @@ import type { RecordMode } from '../types'
 import { useSettingsStore } from '../stores/settings'
 import { useAuthStore } from '../stores/auth'
 import { isNvrApp } from '../utils/env'
+import { aboutVersion } from '../utils/version'
 import { http } from '../api/client'
 import {
   createUser,
@@ -265,14 +266,34 @@ const fmtUptime = (sec?: number) => {
 onUnmounted(closeStatusTimer)
 
 const appVersion = ref('')
+const appVersionSource = ref<'app' | 'server' | 'none'>('none')
 
-// 版本自检：底部展示服务端版本。看不到这一行 = 页面还是旧缓存。
+// 版本自检：底部展示当前运行体的版本。
+//   · App 内嵌 WebView：显示 App 自身版本（原生桥），而非服务端 Web 版本——
+//     两者是两条发布线，混用会让「检查更新（当前 v1.10.26）」与底部版本号互相矛盾。
+//   · 浏览器 / fnOS 桌面：展示服务端版本。看不到这一行 = 页面还是旧缓存。
 async function loadAboutVersion() {
+  const bridge = appBridge()
+  if (isNvrApp() && bridge?.appVersion) {
+    try {
+      const v = String(bridge.appVersion() || '')
+      if (v) {
+        const r = aboutVersion(v, '')
+        appVersion.value = r.version
+        appVersionSource.value = r.source
+        return
+      }
+    } catch { /* 桥不可用时回退服务端版本 */ }
+  }
   try {
     const { data } = await http.get('/api/health')
-    appVersion.value = data.version || ''
+    const r = aboutVersion('', data.version || '')
+    appVersion.value = r.version
+    appVersionSource.value = r.source
   } catch {
-    appVersion.value = ''
+    const r = aboutVersion('', '')
+    appVersion.value = r.version
+    appVersionSource.value = r.source
   }
 }
 
@@ -1311,7 +1332,7 @@ async function removeUser(u: ManagedUser) {
       </section>
     </div>
     <div v-if="appVersion" class="about-version">
-      CyanNVR v{{ appVersion }} · 界面 {{ buildId }}
+      CyanNVR v{{ appVersion }}<template v-if="appVersionSource === 'app'">（App）</template> · 界面 {{ buildId }}
       <button type="button" class="check-update-btn" :disabled="checkingUpdate" @click="checkForUpdate">
         {{ checkingUpdate ? '检查中…' : '检查更新' }}
       </button>

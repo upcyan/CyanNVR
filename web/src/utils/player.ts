@@ -1,4 +1,5 @@
 import type HlsType from 'hls.js'
+import { checkStreamSession, currentStreamUrl } from './streamSession'
 
 export interface Playable {
   attach(el: HTMLVideoElement): void
@@ -168,19 +169,27 @@ export class HlsStream implements Playable {
   // 供 onHlsError 判断错误类别（HlsType 本身是 type-only 导入，不能当值用）。
 
   private errorTypes: typeof HlsType.ErrorTypes | null = null
+  private checkingAuth = false
+  private generation = 0
+  private tokenHandler = () => {
+    if (!localStorage.getItem('nvr_token')) this.destroy()
+    else { this.rebuilds = 0; this.rebuild() }
+  }
 
   constructor(private url: string, private baseTs = 0, private live = false) {}
 
   async attach(el: HTMLVideoElement) {
     this.destroy()
     this.video = el
+    const generation = this.generation
     el.srcObject = null
     el.muted = true
     el.playsInline = true
     const { default: Hls } = await import('hls.js')
-    if (this.video !== el) return
+    if (this.video !== el || generation !== this.generation) return
     if (Hls.isSupported()) {
       this.hls = new Hls({
+        xhrSetup: (xhr, url) => { xhr.open('GET', currentStreamUrl(url), true) },
         enableWorker: true,
         ...(this.live
           ? {
@@ -206,11 +215,13 @@ export class HlsStream implements Playable {
       })
 
       this.errorTypes = Hls.ErrorTypes
-      this.hls.on(Hls.Events.ERROR, (_evt, data) => this.onHlsError(data))
-      this.hls.loadSource(this.url)
+      this.hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (generation === this.generation) this.onHlsError(data)
+      })
+      this.hls.loadSource(currentStreamUrl(this.url))
       this.hls.attachMedia(el)
     } else if (el.canPlayType('application/vnd.apple.mpegurl')) {
-      el.src = this.url
+      el.src = currentStreamUrl(this.url)
     }
     if (!this.visibilityHandler) {
       this.visibilityHandler = () => {
@@ -218,13 +229,30 @@ export class HlsStream implements Playable {
       }
       document.addEventListener('visibilitychange', this.visibilityHandler)
     }
+    window.addEventListener('nvr-session-token', this.tokenHandler)
     // attach/自愈重建后恢复用户设定的倍速：显式重放保证任何重建路径后
     // 倍速不回落到 1x
     el.playbackRate = this.speed
     if (!this.paused) el.play().catch(() => {})
   }
 
-  private onHlsError(data: { fatal?: boolean; type?: string }) {
+  private onHlsError(data: { fatal?: boolean; type?: string; response?: { code?: number } }) {
+    if (data.response?.code === 401) {
+      if (this.checkingAuth) return
+      this.checkingAuth = true
+      const el = this.video
+      const generation = this.generation
+      window.clearTimeout(this.retryTimer)
+      this.hls?.stopLoad()
+      void checkStreamSession().then((valid) => {
+        if (generation !== this.generation) return
+        this.checkingAuth = false
+        if (this.video !== el) return
+        if (!valid) this.destroy()
+        else this.rebuild()
+      })
+      return
+    }
     if (!data.fatal) return
     if (data.type === this.errorTypes?.NETWORK_ERROR) {
       if (this.netRetries >= HLS_MAX_NETWORK_RETRIES) {
@@ -316,6 +344,9 @@ export class HlsStream implements Playable {
   }
 
   destroy() {
+    this.generation++
+    this.checkingAuth = false
+    window.removeEventListener('nvr-session-token', this.tokenHandler)
     window.clearTimeout(this.retryTimer)
     if (this.visibilityHandler) {
       document.removeEventListener('visibilitychange', this.visibilityHandler)

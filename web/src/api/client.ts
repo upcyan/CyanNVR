@@ -34,6 +34,8 @@ http.interceptors.request.use((cfg) => {
   if (token) cfg.headers.Authorization = `Bearer ${token}`
   // 快照发出请求时的会话代次，供响应侧判断是否属于当前会话
   ;(cfg as any).__epoch = epochProvider()
+  ;(cfg as any).__token = token
+  ;(cfg as any).__base = server.base
   return cfg
 })
 
@@ -42,7 +44,10 @@ http.interceptors.response.use(
     // 免登录信任窗口：token 过期但仍在窗口内时，服务端自动续签，
     // 新 token 经此响应头下发。这里同步到 store 与本地存储，用户全程无感。
     const renewed = r.headers?.['x-renewed-token']
-    if (typeof renewed === 'string' && renewed) {
+    if (typeof renewed === 'string' && renewed &&
+        (r.config as any).__epoch === epochProvider() &&
+        (r.config as any).__base === server.base &&
+        (r.config as any).__token === localStorage.getItem('nvr_token')) {
       tokenRenewedHandler(renewed)
     }
     return r
@@ -58,7 +63,9 @@ http.interceptors.response.use(
       // 这个迟到的 401 属于旧会话，不能清掉新会话。
       const epoch = (err.config as any)?.__epoch
       const expected = typeof epoch === 'number' ? epoch : epochProvider()
-      if (expected !== epochProvider()) return Promise.reject(err)
+      if (expected !== epochProvider() ||
+          (err.config as any).__base !== server.base ||
+          (err.config as any).__token !== localStorage.getItem('nvr_token')) return Promise.reject(err)
       authLostHandler(expected)
       if (location.hash && !location.hash.includes('/login')) {
         location.hash = '#/login'

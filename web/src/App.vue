@@ -160,7 +160,11 @@ onMounted(() => {
 // 登录/退出/切换账号都会改变 token 或会话代次 → 自动重建或清理会话资源
 watch(
   () => [auth.token, auth.sessionEpoch] as const,
-  () => syncSession(),
+  () => {
+    syncSession()
+    disconnectSSE()
+    if (auth.isLoggedIn) connectSSE()
+  },
 )
 
 watch(

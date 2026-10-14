@@ -24,6 +24,17 @@ async function bootstrap() {
     onAuthLost: (epoch) => auth.invalidate(epoch),
     onTokenRenewed: (token) => auth.renewToken(token),
   })
+  window.addEventListener('storage', (event) => {
+    if (event.storageArea !== localStorage || (event.key !== null &&
+        !['nvr_token', 'nvr_user'].includes(event.key))) return
+    const token = localStorage.getItem('nvr_token') || ''
+    if (token === auth.token) return
+    auth.sessionEpoch++
+    auth.token = token
+    try { auth.user = JSON.parse(localStorage.getItem('nvr_user') || 'null') }
+    catch { auth.user = null }
+    window.dispatchEvent(new Event('nvr-session-token'))
+  })
   app.use(router)
   app.use(Vant)
   app.directive('picker-desktop', pickerDesktop)

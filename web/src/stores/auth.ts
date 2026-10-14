@@ -73,6 +73,7 @@ export const useAuthStore = defineStore('auth', {
       if (!token) return
       this.token = token
       localStorage.setItem('nvr_token', token)
+      window.dispatchEvent(new Event('nvr-session-token'))
     },
     /**
      * 会话失效（401 且确实带了凭据）。
@@ -86,6 +87,7 @@ export const useAuthStore = defineStore('auth', {
       this.sessionEpoch++
       localStorage.removeItem('nvr_token')
       localStorage.removeItem('nvr_user')
+      window.dispatchEvent(new Event('nvr-session-token'))
       return true
     },
     logout() {
