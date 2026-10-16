@@ -103,6 +103,28 @@ let rangeLoadSeq = 0
  */
 async function onTimelineRange(r: { from: number; to: number }) {
   if (!deviceId.value || !active) return
+  // 跨日拖动时，右上角日期组件跟随「与可视窗口交集最大」的那一天。
+  // 之前只由日期弹层/前后天按钮更新 dateStr，时间轴拖到别的日期后两者
+  // 脱节：时间轴在另一天，日期组件还停在原日期。
+  // 注意局部时间窗口（tlSpan 最细 30s，最粗 7 天），这里直接按天枚举交集，
+  // 最多 8 次循环，代价可忽略。
+  {
+    const ds0 = dayStart.value
+    const candidates = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7].map((k) => ds0 + k * 86400000)
+    let best = ds0
+    let bestOverlap = -1
+    for (const ds of candidates) {
+      const ov = Math.min(r.to, ds + 86400000) - Math.max(r.from, ds)
+      if (ov > bestOverlap) {
+        bestOverlap = ov
+        best = ds
+      }
+    }
+    if (best !== ds0 && bestOverlap > 0) {
+      const d = new Date(best)
+      dateStr.value = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    }
+  }
   const margin = r.to - r.from
   const wantFrom = r.from - margin
   const wantTo = r.to + margin
@@ -563,7 +585,10 @@ const halfGroups = computed<HalfGroup[]>(() => {
   const byHalf = new Map<string, Map<number, SegGroup>>()
   for (const seg of segments.value) {
     // 按「当日可见区间」的小时分组，跨午夜分段不会落到昨天的小时里
-    const { a } = segDayRange(seg.start, seg.end)
+    const { a, b } = segDayRange(seg.start, seg.end)
+    // 与当日无交集的段（跨日滑动时增量接口带回的相邻日期数据）直接丢弃：
+    // 否则 b<a，durationMin 累加出巨大的负数（实测 -322259 分钟）。
+    if (b <= a) continue
     const d = new Date(a)
     const halfKey = d.getHours() < 12 ? 'am' : 'pm'
     const h = d.getHours()
@@ -587,8 +612,10 @@ const halfGroups = computed<HalfGroup[]>(() => {
     g.segs.push(seg)
     g.start = Math.min(g.start, a)
     g.end = Math.max(g.end, seg.end)
-    // 时长只计当日可见部分，避免「1 段」却把跨天前的分钟也算进去
-    g.durationMin += (segDayRange(seg.start, seg.end).b - a) / 60000
+    // 时长只计当日可见部分，避免「1 段」却把跨天前的分钟也算进去；
+    // 单段钳制到 24h 内（异常数据兜底，正常段最长 5 分钟）
+    const dur = Math.min(Math.max((b - a) / 60000, 0), 1440)
+    g.durationMin += dur
   }
   const order = ['am', 'pm']
   const titles: Record<string, string> = { am: '上午', pm: '下午' }
