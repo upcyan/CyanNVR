@@ -448,7 +448,17 @@ function fmtRange(a: number, b: number) {
 const device = computed<Device | undefined>(() => store.byId(deviceId.value))
 const dayStart = computed(() => new Date(`${dateStr.value}T00:00:00`).getTime())
 const ym = computed(() => dateStr.value.slice(0, 7))
-const totalMinutes = computed(() => Math.round(segments.value.reduce((a, s) => a + (s.end - s.start), 0) / 60000))
+const totalMinutes = computed(() => {
+  // 与时段分组同一口径：只统计「当日可见部分」。无交集段不计（否则跨日
+  // 滑动带入的相邻日期段会把总数撑爆），单段钳制 24h 兜底。
+  let m = 0
+  for (const s of segments.value) {
+    const { a, b } = segDayRange(s.start, s.end)
+    if (b <= a) continue
+    m += Math.min(Math.max((b - a) / 60000, 0), 1440)
+  }
+  return Math.round(m)
+})
 
 async function loadMonth() {
   const token = ++monthToken
@@ -1332,12 +1342,20 @@ onBeforeUnmount(() => {
                 <span class="half-title">{{ half.title }}</span>
                 <span class="half-meta">{{ half.segCount }} 段 · {{ fmtDur(half.durationMin) }}</span>
               </div>
+              <!-- 组级时长条：宽度 = 组时长 / 12h（半天上限），一眼看出录像密度 -->
+              <div class="mini-bar" role="presentation">
+                <div class="mini-fill" :style="{ width: Math.min(half.durationMin / 720, 1) * 100 + '%' }" />
+              </div>
               <div v-for="h in half.hours" :key="h.key" class="hour-block">
                 <button type="button" class="hour-head" :aria-expanded="openHours.includes(h.key)" :class="{ open: openHours.includes(h.key) }" @click="toggleHour(h.key)">
                   <van-icon :name="openHours.includes(h.key) ? 'arrow-down' : 'arrow'" size="13" />
                   <span class="hour-label mono">{{ h.hourLabel }}</span>
                   <span class="hour-meta">{{ h.segs.length }} 段 · {{ fmtDur(h.durationMin) }}</span>
                 </button>
+                <!-- 小时级时长条：宽度 = 该小时录像分钟 / 60 -->
+                <div class="mini-bar" role="presentation">
+                  <div class="mini-fill" :style="{ width: Math.min(h.durationMin / 60, 1) * 100 + '%' }" />
+                </div>
                 <div v-show="openHours.includes(h.key)" class="seg-list">
                   <span
                     v-for="s in h.segs"
@@ -1775,6 +1793,23 @@ onBeforeUnmount(() => {
   margin-left: auto;
   color: var(--nvr-text-2);
   font-size: calc(11px * var(--nvr-font-scale, 1));
+}
+/* 时长条：小时行内 3px 微条，宽度按录像分钟占比，扫一眼看出哪个小时录了多久 */
+.mini-bar {
+  height: 3px;
+  margin: 0 10px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--nvr-border) 60%, transparent);
+  overflow: hidden;
+}
+.mini-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--nvr-accent);
+  opacity: 0.75;
+}
+.half-head + .mini-bar {
+  margin: 0 2px 4px;
 }
 .seg-wrap .seg-list {
   padding: 8px 10px 10px;
