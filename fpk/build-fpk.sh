@@ -376,6 +376,22 @@ if [ "$BUILT_OK" = "0" ] || ! command -v go &>/dev/null; then
     NEED_IMAGE=1
 fi
 
+# 宿主已有「比源码新」的 simplenvr-linux 时，镜像的两个用途都不需要它：
+# 二进制可直接取用，dist 也由主机 npm 产出。跳过 docker build 是必要的，
+# 不是优化——Dockerfile 的 apt 层（ffmpeg/python/tzdata）需要外网，在
+# 内网/无代理环境下会长时间卡住并让出包失败（实测反复卡在 Unpacking python3）。
+# 这些系统包只有 docker 部署形态才需要，fpk 形态由 fnOS 宿主提供。
+HOST_BIN="$PROJECT_ROOT/simplenvr-linux"
+HOST_BIN_FRESH=0
+if [ -f "$HOST_BIN" ] && \
+   [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$HOST_BIN" 2>/dev/null | head -1)" ]; then
+    HOST_BIN_FRESH=1
+fi
+if [ "$HOST_BIN_FRESH" = "1" ] && [ "$BUILT_OK" = "1" ]; then
+    NEED_IMAGE=0
+    info "宿主二进制与前端均新鲜，跳过 Docker 镜像构建"
+fi
+
 # 构建上下文必须存在主机侧编译好的 simplenvr-linux：根 Dockerfile 是 runtime-only，
 # 用 `COPY simplenvr-linux /app/cyannvr` 取后端二进制。主机无 go 时若缺这一步会死锁
 # ——Dockerfile 要 simplenvr-linux，而脚本又只从该镜像里提取后端二进制。
@@ -464,6 +480,12 @@ if command -v go &>/dev/null; then
     info "本地编译 Go 二进制..."
     (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
         go build -ldflags="-s -w" -o "$APP_DIR/cyannvr" .)
+elif [ -f "$HOST_BIN" ]; then
+    # 宿主侧已编译好的产物（ensure_host_binary 或上一次出包留下）。
+    # 直接从镜像里捞二进制只是「没有 go 也没有产物」时的兜底，
+    # 而那种情况还要先 docker build，成本远高于直接用这份产物。
+    info "使用宿主已编译的 simplenvr-linux"
+    cp -f "$HOST_BIN" "$APP_DIR/cyannvr"
 else
     docker image inspect "$IMAGE" &>/dev/null || error "未安装 Go 且找不到 Docker 镜像 $IMAGE"
     info "从 Docker 镜像提取 Go 二进制..."
