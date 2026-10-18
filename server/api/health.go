@@ -14,14 +14,24 @@ import (
 // 定义为变量而非常量，让 api 包不必依赖 main 包。
 var CoreVersion = "dev"
 
+// FpkVersion 是本二进制所属 fpk 包的完整版本（1.10.34-6），由 main 注入。
+// 更新检查用它和 release 里的 fpk 资产名比对；为空表示非 fpk 部署（docker/开发）。
+var FpkVersion = ""
+
 func (s *Server) health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	out := gin.H{
 		"status":  "ok",
 		"name":    "CyanNVR",
 		"version": CoreVersion,
 		"time":    time.Now().Format(time.RFC3339),
 		"auth":    true,
-	})
+	}
+	// fpk 部署的完整版本（含打包修订号），非 fpk 部署时不出现该字段。
+	// 前端用它展示「服务器 v1.10.34-6」，也是更新检查比对 current 的来源。
+	if FpkVersion != "" {
+		out["fpkVersion"] = FpkVersion
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Server) getSettings(c *gin.Context) {

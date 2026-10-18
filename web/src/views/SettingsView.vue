@@ -267,12 +267,26 @@ onUnmounted(closeStatusTimer)
 
 const appVersion = ref('')
 const appVersionSource = ref<'app' | 'server' | 'none'>('none')
+/** 服务器（fpk）版本，与 App 版本分开显示 */
+const serverVersion = ref('')
 
 // 版本自检：底部展示当前运行体的版本。
-//   · App 内嵌 WebView：显示 App 自身版本（原生桥），而非服务端 Web 版本——
+//   · App 内嵌 WebView：显示 App 自身版本（原生桥），而非服务端版本——
 //     两者是两条发布线，混用会让「检查更新（当前 v1.10.26）」与底部版本号互相矛盾。
 //   · 浏览器 / fnOS 桌面：展示服务端版本。看不到这一行 = 页面还是旧缓存。
+// 服务器版本单独存一份（serverVersion），App 内也展示，方便对照 fpk 是否该升级。
 async function loadAboutVersion() {
+  // 服务器版本总是要取：即使 App 内也要展示「服务器 fpk 是哪个版本」，
+  // 否则用户无法判断服务器端要不要升级（两条线各自更新）。
+  try {
+    const { data } = await http.get('/api/health')
+    // 优先用 fpk 完整版本（1.10.34-6）：它才是用户在应用中心能看到的版本，
+    // 也是更新检查比对的对象。docker/开发部署没有该字段，回退核心版本。
+    serverVersion.value = data.fpkVersion || data.version || ''
+  } catch {
+    serverVersion.value = ''
+  }
+
   const bridge = appBridge()
   if (isNvrApp() && bridge?.appVersion) {
     try {
@@ -285,16 +299,9 @@ async function loadAboutVersion() {
       }
     } catch { /* 桥不可用时回退服务端版本 */ }
   }
-  try {
-    const { data } = await http.get('/api/health')
-    const r = aboutVersion('', data.version || '')
-    appVersion.value = r.version
-    appVersionSource.value = r.source
-  } catch {
-    const r = aboutVersion('', '')
-    appVersion.value = r.version
-    appVersionSource.value = r.source
-  }
+  const r = aboutVersion('', serverVersion.value)
+  appVersion.value = r.version
+  appVersionSource.value = r.source
 }
 
 // ---- 检查更新 ----
@@ -334,7 +341,10 @@ async function checkForUpdate() {
       }
       return
     }
-    const { data } = await http.get('/api/update/check')
+    // platform=fpk：比对 release 里 **fpk 资产**的版本，而不是 tag。
+    // tag 由最后一次发布动作决定，常与 fpk 版本不一致——用 tag 比对会
+    // 「查到更新→下载→装完没变→再查还是新版本」。
+    const { data } = await http.get('/api/update/check', { params: { platform: 'fpk' } })
     updateState.value = data.update
   } catch {
     updateState.value = { hasUpdate: false, latest: '', error: '检查更新失败，请稍后再试' }
@@ -1332,18 +1342,27 @@ async function removeUser(u: ManagedUser) {
       </section>
     </div>
     <div v-if="appVersion" class="about-version">
-      CyanNVR v{{ appVersion }}<template v-if="appVersionSource === 'app'">（App）</template> · 界面 {{ buildId }}
+      <template v-if="appVersionSource === 'app'">
+        CyanNVR App v{{ appVersion }}
+        <template v-if="serverVersion"> · 服务器 v{{ serverVersion }}</template>
+      </template>
+      <template v-else>CyanNVR v{{ appVersion }} · 服务器</template>
+      · 界面 {{ buildId }}
       <button type="button" class="check-update-btn" :disabled="checkingUpdate" @click="checkForUpdate">
         {{ checkingUpdate ? '检查中…' : '检查更新' }}
       </button>
       <div v-if="updateState" class="update-panel">
         <p v-if="updateState.error" class="update-err">{{ updateState.error }}</p>
         <template v-else-if="updateState.hasUpdate">
-          <p class="update-new">发现新版本 v{{ updateState.latest }}<template v-if="updateState.inApp && updateState.current">（当前 v{{ updateState.current }}）</template></p>
+          <p class="update-new">
+            发现新版本 v{{ updateState.latest }}
+            <template v-if="updateState.current">（当前 v{{ updateState.current }}）</template>
+            <template v-if="!updateState.inApp">· 服务器端，需在应用中心手动安装</template>
+          </p>
           <button v-if="updateState.inApp" type="button" class="update-open-btn" @click="installAppUpdate">下载并安装</button>
           <button v-else type="button" class="update-open-btn" @click="openRelease">前往 GitHub 下载</button>
         </template>
-        <p v-else class="update-ok">已是最新版本<template v-if="updateState.inApp && updateState.current">（v{{ updateState.current }}）</template></p>
+        <p v-else class="update-ok">已是最新版本<template v-if="updateState.current">（v{{ updateState.current }}）</template></p>
       </div>
     </div>
 

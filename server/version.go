@@ -20,4 +20,14 @@ package main
 //
 // 注意：本文件被 build-fpk.sh 写入，且被排除在「变更判定」的哈希之外
 // （否则每次打包都会自我触发 bump）。
-const CoreVersion = "1.10.33"
+const CoreVersion = "1.10.35"
+
+// FpkVersion 是**本二进制被哪个 fpk 包携带**的完整版本，形如 1.10.34-6
+// （核心版本 + 打包修订号），由 build-fpk.sh 用 -ldflags 注入。
+//
+// 为什么需要它：更新检查要和 release 里的 fpk 资产名（CyanNVR_1.10.34-6_x86.fpk）
+// 比对。若只用 CoreVersion=1.10.34 去比 1.10.34-6，会因为「有修订号更大」而
+// 永远判定「有新版本」——用户装完再查还是提示有更新，死循环。
+//
+// 空值表示不是 fpk 部署（docker / 本地开发），此时回退到 CoreVersion 比对。
+var FpkVersion = ""

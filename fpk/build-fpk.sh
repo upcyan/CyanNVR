@@ -384,7 +384,8 @@ fi
 HOST_BIN="$PROJECT_ROOT/simplenvr-linux"
 HOST_BIN_FRESH=0
 if [ -f "$HOST_BIN" ] && \
-   [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$HOST_BIN" 2>/dev/null | head -1)" ]; then
+   [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$HOST_BIN" 2>/dev/null | head -1)" ] && \
+   grep -aq "$VERSION" "$HOST_BIN"; then
     HOST_BIN_FRESH=1
 fi
 if [ "$HOST_BIN_FRESH" = "1" ] && [ "$BUILT_OK" = "1" ]; then
@@ -399,15 +400,20 @@ fi
 GO_IMAGE="hub.rat.dev/library/golang:1.25-alpine"
 ensure_host_binary() {
     local out="$PROJECT_ROOT/simplenvr-linux"
+    # 复用条件：比源码新 **且** 注入的 fpk 版本等于本次要打的版本。
+    # 只看 mtime 是不够的——修订号 +1 时源码没变，会复用上一次的二进制，
+    # 包里二进制写着 1.10.35-1 而 manifest 是 1.10.35-2，更新检查据此
+    # 永远判定「有新版本」（这正是「查到更新却装不上」的另一半成因）。
     if [ -f "$out" ] && \
-       [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$out" 2>/dev/null | head -1)" ]; then
-        info "复用已有的 simplenvr-linux"
+       [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$out" 2>/dev/null | head -1)" ] && \
+       grep -aq "$VERSION" "$out"; then
+        info "复用已有的 simplenvr-linux（版本 $VERSION）"
         return 0
     fi
     if command -v go &>/dev/null; then
         info "本地编译 simplenvr-linux..."
         (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -ldflags="-s -w" -o "$out" .)
+            go build -ldflags="-s -w -X main.FpkVersion=$VERSION" -o "$out" .)
     else
         info "无本地 go，用 golang 容器编译 simplenvr-linux..."
         # 模块缓存挂到宿主机，避免每次出包都重新下载全部依赖
@@ -420,14 +426,31 @@ ensure_host_binary() {
             -e GOPROXY=https://goproxy.cn,direct \
             -v "$gomod:/tmp/gopath/pkg/mod" \
             -v "$PROJECT_ROOT:/ctx" -w /ctx/server \
-            "$GO_IMAGE" go build -ldflags="-s -w" -o /ctx/simplenvr-linux .
+            "$GO_IMAGE" go build -ldflags="-s -w -X main.FpkVersion=$VERSION" -o /ctx/simplenvr-linux .
     fi
     [ -f "$out" ] || error "simplenvr-linux 生成失败（Docker 构建上下文需要它）"
 }
 
 if [ "$NEED_IMAGE" = "1" ] && [ "$IMAGE_STALE" = "1" ]; then
-    info "构建 Docker 镜像（用于提取前端 dist / 后端二进制）..."
+    # 先确保宿主二进制存在：编出来之后，镜像往往就完全不需要了
+    # （镜像只是「取 dist / 取二进制」的中间站，两者都有产线外来源时跳过）。
     ensure_host_binary
+    # 重新判定：刚编出的 simplenvr-linux 是新鲜的，dist 也已由主机 npm 产出，
+    # 此时镜像两个用途都不成立——继续 docker build 只会白等几分钟 apt 装包。
+    HOST_BIN_FRESH2=0
+    if [ -f "$HOST_BIN" ] && \
+       [ -z "$(find "$PROJECT_ROOT/server" -type f -newer "$HOST_BIN" 2>/dev/null | head -1)" ] && \
+       grep -aq "$VERSION" "$HOST_BIN"; then
+        HOST_BIN_FRESH2=1
+    fi
+    if [ "$HOST_BIN_FRESH2" = "1" ] && [ "$BUILT_OK" = "1" ]; then
+        info "已有宿主二进制与前端产物，跳过 Docker 镜像构建"
+        NEED_IMAGE=0
+    fi
+fi
+
+if [ "$NEED_IMAGE" = "1" ] && [ "$IMAGE_STALE" = "1" ]; then
+    info "构建 Docker 镜像（用于提取前端 dist / 后端二进制）..."
     # 失败时必须把输出露出来：原先 >/dev/null 2>&1 只剩一句「Docker 构建失败」，
     # 真实原因（如 docker 需要可写 HOME 才能放 buildx 状态）全被吞掉。
     BUILD_LOG=$(mktemp)
@@ -479,7 +502,7 @@ cp -a "$DIST/"* "$APP_DIR/dist/"
 if command -v go &>/dev/null; then
     info "本地编译 Go 二进制..."
     (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-        go build -ldflags="-s -w" -o "$APP_DIR/cyannvr" .)
+        go build -ldflags="-s -w -X main.FpkVersion=$VERSION" -o "$APP_DIR/cyannvr" .)
 elif [ -f "$HOST_BIN" ]; then
     # 宿主侧已编译好的产物（ensure_host_binary 或上一次出包留下）。
     # 直接从镜像里捞二进制只是「没有 go 也没有产物」时的兜底，

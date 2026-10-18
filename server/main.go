@@ -38,6 +38,8 @@ func main() {
 
 	// 把核心版本暴露给 api 包，健康检查里会返回，便于确认运行的是哪个版本
 	api.CoreVersion = CoreVersion
+	// fpk 打包版本（核心版本-修订号）随包注入；未注入时留空，更新检查回退到核心版本
+	api.FpkVersion = FpkVersion
 
 	cfg := config.Load()
 	if cfg.JWTSecret == "cyannvr-dev-secret-change-me" {
