@@ -85,7 +85,8 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
     var listVersion by remember { mutableIntStateOf(0) }
     var addOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<NvrServer?>(null) }
-    var addPrefill by remember { mutableStateOf<Pair<String, String>?>(null) } // url to name
+    // 预填添加表单：局域网地址、公网地址（内网穿透，可空）、名称
+    var addPrefill by remember { mutableStateOf<Triple<String, String?, String>?>(null) }
     var scanOpen by remember { mutableStateOf(false) }
     var qrOpen by remember { mutableStateOf(false) }
     var loginTarget by remember { mutableStateOf<Triple<NvrServer, String?, String>?>(null) } // server/base/reason
@@ -95,12 +96,12 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
     LaunchedEffect(pendingPairing) {
         val raw = pendingPairing ?: return@LaunchedEffect
         onPairingConsumed()
-        val base = NvrClient.parsePairingPayload(raw)
-        if (base == null) {
+        val info = NvrClient.parsePairingInfo(raw)
+        if (info == null) {
             Toast.makeText(context, "二维码内容无法识别：$raw", Toast.LENGTH_LONG).show()
         } else {
             editing = null
-            addPrefill = base to "CyanNVR"
+            addPrefill = Triple(info.lan, info.pub, "CyanNVR")
             addOpen = true
         }
     }
@@ -174,6 +175,7 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
         AddServerSheet(
             editing = editing,
             prefillUrl = addPrefill?.first,
+            prefillPub = addPrefill?.second,
             onDismiss = { addOpen = false; editing = null; addPrefill = null },
             onSaved = {
                 addOpen = false
@@ -189,7 +191,7 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
             onPick = { url, name ->
                 scanOpen = false
                 editing = null
-                addPrefill = url to name
+                addPrefill = Triple(url, null, name)
                 addOpen = true
             },
             onDismiss = { scanOpen = false },
@@ -200,12 +202,12 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
         QrScanSheet(
             onResult = { raw ->
                 qrOpen = false
-                val base = NvrClient.parsePairingPayload(raw)
-                if (base == null) {
+                val info = NvrClient.parsePairingInfo(raw)
+                if (info == null) {
                     Toast.makeText(context, "二维码内容无法识别", Toast.LENGTH_LONG).show()
                 } else {
                     editing = null
-                    addPrefill = base to "CyanNVR"
+                    addPrefill = Triple(info.lan, info.pub, "CyanNVR")
                     addOpen = true
                 }
             },
@@ -233,9 +235,14 @@ fun AppRoot(pendingPairing: String?, onPairingConsumed: () -> Unit) {
                 override fun handleOnBackPressed() {
                 when {
                     WebViewHolder.customView != null -> {
-                        WebViewHolder.customView = null
-                        WebViewHolder.customViewCallback?.onCustomViewHidden()
-                        WebViewHolder.customViewCallback = null
+                        // 兜底路径（shim 未生效时的真全屏）：摘 decorView 视图 + 通知 Chromium
+                        WebViewHolder.exitFullscreen(activity)
+                    }
+                    WebViewHolder.landscapeMode -> {
+                        // 常规路径：shim 全屏，通过网页 exitFullscreen 清状态并转回竖屏
+                        WebViewHolder.webView?.evaluateJavascript(
+                            "document.exitFullscreen&&document.exitFullscreen();", null,
+                        )
                     }
                     ConnectionManager.state is ConnState.Connected && WebViewHolder.webView?.canGoBack() == true -> {
                         WebViewHolder.webView?.goBack()

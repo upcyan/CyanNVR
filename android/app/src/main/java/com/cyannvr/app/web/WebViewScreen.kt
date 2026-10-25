@@ -78,6 +78,80 @@ object WebViewHolder {
     var customViewCallback: WebChromeClient.CustomViewCallback? = null
     /** 系统手势条高度（CSS px），由 inset 监听更新、随页面加载注入 */
     var safeBottomPx by mutableIntStateOf(0)
+
+    /**
+     * 网页「横屏模式」：由 JS 桥 setOrientation 驱动（不走 Chromium 全屏）。
+     * 为真，Compose 侧隐藏顶栏/横幅，让 WebView 铺满整个窗口。
+     */
+    var landscapeMode by mutableStateOf(false)
+
+    /**
+     * 网页全屏视图必须同步挂到 Activity decorView：Chromium 要求
+     * onShowCustomView 返回时视图已上屏、onHideCustomView 返回时已摘下。
+     * 注意：仅作兜底——正常路径由注入的 JS shim 接管 requestFullscreen，
+     * 完全不进 Chromium 全屏状态机（该设备 WebView 上退出全屏会使
+     * 渲染进程 CHECK 失败崩溃，见 injectFullscreenShim 注释）。
+     */
+    fun enterFullscreen(a: Activity, view: View, callback: WebChromeClient.CustomViewCallback) {
+        customView = view
+        customViewCallback = callback
+        landscapeMode = true
+        a.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        (a.window.decorView as ViewGroup).addView(
+            view,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+        WindowCompat.setDecorFitsSystemWindows(a.window, false)
+        WindowInsetsControllerCompat(a.window, a.window.decorView)
+            .hide(WindowInsetsCompat.Type.systemBars())
+    }
+
+    /** 原生侧发起退出（返回键 / 页面销毁）：先摘视图再通知 Chromium */
+    fun exitFullscreen(a: Activity?) {
+        detachCustomView()
+        customViewCallback?.onCustomViewHidden()
+        customViewCallback = null
+        restoreWindowAfterFullscreen(a)
+    }
+
+    /** Chromium 发起退出（页面调用 document.exitFullscreen） */
+    fun handleWebExitFullscreen(a: Activity?) {
+        detachCustomView()
+        customViewCallback = null
+        restoreWindowAfterFullscreen(a)
+    }
+
+    /** JS 桥进入横屏：转屏 + 隐藏系统栏（顶栏由 Compose 侧依 landscapeMode 隐藏） */
+    fun enterLandscape(a: Activity?) {
+        landscapeMode = true
+        if (a == null) return
+        a.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        WindowCompat.setDecorFitsSystemWindows(a.window, false)
+        WindowInsetsControllerCompat(a.window, a.window.decorView)
+            .hide(WindowInsetsCompat.Type.systemBars())
+    }
+
+    /** JS 桥退出横屏 */
+    fun exitLandscape(a: Activity?) {
+        landscapeMode = false
+        restoreWindowAfterFullscreen(a)
+    }
+
+    private fun detachCustomView() {
+        val cv = customView ?: return
+        (cv.parent as? ViewGroup)?.removeView(cv)
+        customView = null
+    }
+
+    private fun restoreWindowAfterFullscreen(a: Activity?) {
+        if (a == null) return
+        a.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        WindowCompat.setDecorFitsSystemWindows(a.window, false)
+        WindowInsetsControllerCompat(a.window, a.window.decorView)
+            .show(WindowInsetsCompat.Type.systemBars())
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,21 +182,6 @@ fun NvrWebViewScreen(
         WebViewHolder.webView?.evaluateJavascript(injectEnvironmentScript(safeBottom), null)
     }
 
-    fun exitFullscreen() {
-        WebViewHolder.customView = null
-        WebViewHolder.customViewCallback?.onCustomViewHidden()
-        WebViewHolder.customViewCallback = null
-        activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        activity?.let { a ->
-            a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            val decor = a.window.decorView
-            WindowInsetsControllerCompat(a.window, decor).apply {
-                show(WindowInsetsCompat.Type.systemBars())
-            }
-            WindowCompat.setDecorFitsSystemWindows(a.window, false)
-        }
-    }
-
     LaunchedEffect(base, reloadTick) {
         val url = "$base/#/live"
         loadError = null
@@ -135,7 +194,9 @@ fun NvrWebViewScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
+        // 横屏模式（网页全屏）下隐藏顶栏与横幅，WebView 铺满整个窗口
+        if (!WebViewHolder.landscapeMode) {
+            TopAppBar(
             title = {
                 Column {
                     Text(server.name, style = MaterialTheme.typography.titleMedium)
@@ -209,6 +270,7 @@ fun NvrWebViewScreen(
                 )
             }
         }
+        }
 
         // WebView 延伸到系统手势条下方，页面通过 safe-bottom 为可点击区域留白。
         Box(
@@ -245,6 +307,8 @@ fun NvrWebViewScreen(
                         // JS bridge：Web 端全屏/退出时通知原生设置屏幕方向。
                         // WebView 不支持 screen.orientation.lock()（返回 rejected），
                         // 必须由原生 requestedOrientation 实现真正的横屏。
+                        // 正常路径下 requestFullscreen 已被注入的 shim 劫持，
+                        // 这里只做转屏与窗口修饰，不涉及 Chromium 全屏状态机。
                         addJavascriptInterface(object : Any() {
                             @android.webkit.JavascriptInterface
                             fun setOrientation(landscape: Boolean) {
@@ -253,10 +317,8 @@ fun NvrWebViewScreen(
                                     // 退出全屏恢复「竖屏」而非 UNSPECIFIED：
                                     // UNSPECIFIED 跟随传感器，横屏拿在手里时不会转回竖屏，
                                     // 用户看到的就是「退出全屏没用」。
-                                    a.requestedOrientation = if (landscape)
-                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                    else
-                                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                    if (landscape) WebViewHolder.enterLandscape(a)
+                                    else WebViewHolder.exitLandscape(a)
                                 }
                             }
 
@@ -325,6 +387,7 @@ fun NvrWebViewScreen(
 
                             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
+                                view.evaluateJavascript(injectFullscreenShim(), null)
                                 injectSession(view, base)
                             }
 
@@ -355,28 +418,12 @@ fun NvrWebViewScreen(
 
                             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
                                 if (WebViewHolder.customView != null) { callback.onCustomViewHidden(); return }
-                                WebViewHolder.customView = view
-                                WebViewHolder.customViewCallback = callback
-                                activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                                activity?.let { a ->
-                                    WindowCompat.setDecorFitsSystemWindows(a.window, false)
-                                    WindowInsetsControllerCompat(a.window, a.window.decorView).apply {
-                                        hide(WindowInsetsCompat.Type.systemBars())
-                                    }
-                                }
+                                val a = activity ?: run { callback.onCustomViewHidden(); return }
+                                WebViewHolder.enterFullscreen(a, view, callback)
                             }
 
                             override fun onHideCustomView() {
-                                WebViewHolder.customView = null
-                                WebViewHolder.customViewCallback = null
-                                activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                                activity?.let { a ->
-                                    a.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                    WindowCompat.setDecorFitsSystemWindows(a.window, false)
-                                    WindowInsetsControllerCompat(a.window, a.window.decorView).apply {
-                                        show(WindowInsetsCompat.Type.systemBars())
-                                    }
-                                }
+                                WebViewHolder.handleWebExitFullscreen(activity)
                             }
                         }
 
@@ -411,15 +458,7 @@ fun NvrWebViewScreen(
         }
     }
 
-    // 全屏视频覆盖层
-    WebViewHolder.customView?.let { cv ->
-        Box(
-            Modifier.fillMaxSize().background(Color.Black),
-        ) {
-            AndroidView(factory = { cv }, modifier = Modifier.fillMaxSize())
-            DisposableEffect(Unit) { onDispose { exitFullscreen() } }
-        }
-    }
+    // 全屏视频视图由 WebViewHolder 直接挂 decorView（见其注释），不经 Compose。
 
     if (updateOpen) {
         UpdateDialog(onDismiss = { updateOpen = false }, autoDownload = true)
@@ -434,7 +473,7 @@ fun NvrWebViewScreen(
                 Text(
                     "当前连接：$base\n\n" +
                         "· 局域网：手机与 NVR 同一网络时直连，速度最快。\n" +
-                        "· 公网：需在路由器做端口映射，或使用内网穿透/frps。\n" +
+                        "· 公网：需在路由器做端口映射，或使用内网穿透（frp / 飞牛 fn Connect 等），把地址填入服务器条目的「公网地址」。\n" +
                         "· 网络切换时本应用会自动在局域网与公网地址间切换。\n" +
                         "· 视频/下载使用令牌鉴权，会话 24 小时有效，过期会自动引导重新登录。",
                 )
@@ -444,17 +483,61 @@ fun NvrWebViewScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            // 先同步退出全屏/横屏（摘视图、转回竖屏、复位状态），再销毁 WebView
+            WebViewHolder.exitFullscreen(activity)
+            WebViewHolder.exitLandscape(activity)
             WebViewHolder.webView?.let { wv ->
                 wv.loadUrl("about:blank")
                 wv.removeAllViews()
                 wv.destroy()
             }
             WebViewHolder.webView = null
-            WebViewHolder.customView = null
-            WebViewHolder.customViewCallback = null
         }
     }
 }
+
+/**
+ * 劫持网页全屏 API：App 内不进 Chromium 的全屏状态机。
+ *
+ * 这台设备的系统 WebView（Android 17, com.google.android.webview）上，
+ * document 全屏 + 转屏会让渲染进程先「输入失效、渲染照常」，随后 CHECK
+ * 失败 SIGTRAP 崩溃（同一断言地址稳定复现），并连带 App 进程死亡。
+ * 原生 decorView 挂载方式正确也一样崩，故彻底绕开：
+ * requestFullscreen/exitFullscreen 改为「置假 fullscreenElement + 派发
+ * fullscreenchange + 调原生桥转屏」，网页逻辑（图标切换等）不受影响；
+ * 原生侧以 landscapeMode 隐藏顶栏实现真全屏。
+ * 无桥环境（浏览器）不劫持，行为不变。
+ */
+private fun injectFullscreenShim(): String = """
+    (function(){try{
+      if (!window.CyanNVRApp || document.__nvrFsShim) return;
+      document.__nvrFsShim = true;
+      var doc = document, docEl = document.documentElement;
+      Object.defineProperty(doc, 'fullscreenElement', {
+        get: function(){ return doc.__nvrFs ? docEl : null; }, configurable: true
+      });
+      Object.defineProperty(doc, 'webkitFullscreenElement', {
+        get: function(){ return doc.__nvrFs ? docEl : null; }, configurable: true
+      });
+      var fire = function(){
+        setTimeout(function(){
+          try { doc.dispatchEvent(new Event('fullscreenchange')); } catch (e) {}
+        }, 0);
+      };
+      HTMLElement.prototype.requestFullscreen = function(){
+        try { window.CyanNVRApp.setOrientation(true); } catch (e) {}
+        doc.__nvrFs = true; fire();
+        return Promise.resolve();
+      };
+      HTMLElement.prototype.webkitRequestFullscreen = HTMLElement.prototype.requestFullscreen;
+      doc.exitFullscreen = function(){
+        try { window.CyanNVRApp.setOrientation(false); } catch (e) {}
+        doc.__nvrFs = false; fire();
+        return Promise.resolve();
+      };
+      doc.webkitExitFullscreen = doc.exitFullscreen;
+    }catch(e){}})();
+""".trimIndent()
 
 private fun injectSession(view: WebView, base: String) {
     val c = ConnectionManager.connected() ?: return
