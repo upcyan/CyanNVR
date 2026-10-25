@@ -142,22 +142,55 @@ object NvrClient {
 
     /**
      * 解析配对内容（二维码扫码 / cyannvr:// 深链 / 手动粘贴）。
-     * 支持 cyannvr://host[:port]、http(s)://… 与裸地址，返回规范化 base url 或 null。
+     * 支持 cyannvr://host[:port]、cyannvr://host[:port]?pub=<公网地址>、
+     * http(s)://… 与裸地址，返回规范化 base url 或 null。
      */
-    fun parsePairingPayload(raw: String): String? {
+    fun parsePairingPayload(raw: String): String? = parsePairingInfo(raw)?.lan
+
+    /** 配对载荷解析结果：局域网地址 + 可选公网地址（内网穿透/端口映射） */
+    data class PairingInfo(val lan: String, val pub: String?)
+
+    fun parsePairingInfo(raw: String): PairingInfo? {
         val s = raw.trim()
         if (s.isEmpty()) return null
         return when {
             s.startsWith("cyannvr://") -> {
-                val rest = s.removePrefix("cyannvr://").substringBefore('/').trimEnd('/')
+                // 形态：cyannvr://host[:port][?pub=<urlencoded 公网地址>]
+                val body = s.removePrefix("cyannvr://")
+                val query = body.substringAfter('?', "")
+                val rest = body.substringBefore('?').substringBefore('/').trimEnd('/')
                 if (rest.isEmpty() || !rest.contains('.') && !rest.contains(':')) return null
-                if (rest.contains(':')) "http://$rest" else "http://$rest:8080"
+                val lan = if (rest.contains(':')) "http://$rest" else "http://$rest:8080"
+                PairingInfo(lan, parsePubParam(query))
             }
-            else -> normalizeBaseUrl(s)
+            else -> {
+                val base = normalizeBaseUrl(s) ?: return null
+                PairingInfo(base, parsePubParam(s.substringAfter('?', "")))
+            }
         }
     }
 
-    /** 智能归一化用户输入的地址：补协议、补默认端口 8080，去掉路径与尾斜杠 */
+    /** 从查询串中取出 pub 参数并规范化；无则 null */
+    private fun parsePubParam(query: String): String? {
+        if (query.isEmpty()) return null
+        val pubRaw = query.split('&')
+            .mapNotNull { p ->
+                val i = p.indexOf('=')
+                if (i <= 0) null else p.substring(0, i) to p.substring(i + 1)
+            }
+            .firstOrNull { it.first == "pub" }?.second ?: return null
+        val decoded = try {
+            java.net.URLDecoder.decode(pubRaw, "UTF-8")
+        } catch (_: Exception) {
+            pubRaw
+        }
+        return normalizeBaseUrl(decoded)
+    }
+
+    /**
+     * 智能归一化用户输入的地址：补协议、补默认端口 8080，去掉尾斜杠。
+     * 保留路径：反向代理子路径 / fn Connect 路径式地址需要原样带上。
+     */
     fun normalizeBaseUrl(input: String): String? {
         var s = input.trim()
         if (s.isEmpty()) return null
@@ -173,7 +206,9 @@ object NvrClient {
                 else -> 8080 // CyanNVR 默认端口
             }
             val hostPart = if (port == -1) url.host else "${url.host}:$port"
-            "${url.protocol}://$hostPart"
+            var path = url.path ?: ""
+            while (path.endsWith("/")) path = path.dropLast(1)
+            "${url.protocol}://$hostPart$path"
         } catch (_: Exception) {
             null
         }

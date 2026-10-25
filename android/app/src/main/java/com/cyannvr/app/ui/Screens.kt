@@ -339,12 +339,13 @@ private fun EmptyGuide(onScan: () -> Unit, onAdd: () -> Unit, onQrScan: () -> Un
 fun AddServerSheet(
     editing: NvrServer?,
     prefillUrl: String?,
+    prefillPub: String? = null,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
     val initialUrl = editing?.lanUrl ?: prefillUrl?.let { NvrClient.normalizeBaseUrl(it) } ?: ""
     val initialName = editing?.name ?: "CyanNVR"
-    val initialPub = editing?.pubUrl ?: ""
+    val initialPub = editing?.pubUrl ?: prefillPub?.let { NvrClient.normalizeBaseUrl(it) } ?: ""
     val initialUsername = editing?.username ?: "admin"
 
     var name by remember { mutableStateOf(initialName) }
@@ -484,8 +485,8 @@ fun AddServerSheet(
                 value = pub,
                 onValueChange = { pub = it; testState = null },
                 label = { Text("公网地址（可选）") },
-                placeholder = { Text("外网访问用，如 nvr.example.com") },
-                supportingText = { Text("现场不在局域网时自动改用此地址") },
+                placeholder = { Text("如 nvr.example.com:8080 或 xxx.fnconnect.com:8443") },
+                supportingText = { Text("现场不在局域网时自动改用此地址。支持端口映射、frp、飞牛 fn Connect 等内网穿透地址（https 需带端口号）") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -775,7 +776,7 @@ fun HelpDialog(onDismiss: () -> Unit) {
                 "CyanNVR 服务端默认监听 8080 端口（HTTP）。\n\n" +
                     "① 自动发现：App 同时监听服务端的 mDNS 广播并扫描所在网段；也可在网页端【服务器设置】生成配对二维码，用「扫码添加」自动填入，或直接用系统相机扫码唤起本应用。\n\n" +
                     "② 局域网：手机连上与 NVR 相同的 Wi-Fi 后直连，速度最快。\n\n" +
-                    "③ 公网：在路由器将外网端口映射到 NVR 的 8080，或使用 frp / Tailscale 等内网穿透，把地址填入「公网地址」。App 会在局域网不通时自动切换。\n\n" +
+                    "③ 公网：在路由器将外网端口映射到 NVR 的 8080，或使用内网穿透（frp / Tailscale / 飞牛 fn Connect 等），把地址填入「公网地址」。App 会在局域网不通时自动切换。\n\n" +
                     "④ 登录：账号密码与服务端网页版一致；令牌 24 小时有效，之后会提示重新登录。\n\n" +
                     "提示：mDNS 发现要求服务端与手机在同一二层网络，docker 部署时需加 --network=host。",
             )

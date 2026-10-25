@@ -117,7 +117,20 @@ function pairingUrl(): string {
   if (!raw) return ''
   const s = /^https?:\/\//.test(raw) ? raw : `http://${raw}`
   try {
-    return `cyannvr://${new URL(s).host}`
+    const host = new URL(s).host
+    // 公网地址（内网穿透/端口映射）一并写入配对载荷，App 扫码后自动填入。
+    // 带上协议与路径：fn Connect / 反向代理的 https 与子路径不能丢。
+    const pub = form.publicUrl.trim()
+    if (!pub) return `cyannvr://${host}`
+    const pubNorm = /^https?:\/\//.test(pub) ? pub : `http://${pub}`
+    try {
+      const u = new URL(pubNorm)
+      if (u.host) {
+        const full = `${u.protocol}//${u.host}${u.path.replace(/\/+$/, '')}`
+        return `cyannvr://${host}?pub=${encodeURIComponent(full)}`
+      }
+    } catch { /* 公网地址无效时退回仅局域网 */ }
+    return `cyannvr://${host}`
   } catch {
     return ''
   }
@@ -141,7 +154,7 @@ async function buildQr() {
   }
 }
 
-watch(() => form.lanUrl, scheduleQr, { immediate: true })
+watch(() => [form.lanUrl, form.publicUrl], scheduleQr, { immediate: true })
 
 async function test() {
   testing.value = true
@@ -182,7 +195,7 @@ function goBack() {
 
     <van-cell-group title="连接地址">
       <van-field v-model="form.lanUrl" label="局域网地址" placeholder="如：192.168.1.100:8080" />
-      <van-field v-model="form.publicUrl" label="公网地址" placeholder="如：nvr.example.com:8080" />
+      <van-field v-model="form.publicUrl" label="公网地址" placeholder="如：nvr.example.com:8080 或 xxx.fnconnect.com:8443" />
       <van-cell class="opt-cell" title="连接策略" label="自动：先局域网后公网">
         <van-radio-group v-model="form.mode" direction="horizontal" class="strategy-radios">
           <van-radio name="auto">自动</van-radio>
@@ -190,6 +203,17 @@ function goBack() {
           <van-radio name="public">仅公网</van-radio>
         </van-radio-group>
       </van-cell>
+    </van-cell-group>
+
+    <van-cell-group title="远程访问（内网穿透）">
+      <van-cell
+        title="没有公网 IP？"
+        label="三种常用方式，把「公网地址」填成穿透后的地址即可。手机 App 局域网不通时会自动切换到该地址。"
+      />
+      <van-cell title="飞牛 fn Connect" label="fnOS 用户首选：系统设置里开启 fn Connect 后，为 NVR 的端口生成远程地址（形如 https://你的FNID.域名:端口），填入上方「公网地址」。注意需在飞牛里配好该域名的 HTTPS 证书；穿透流量经飞牛中继，看视频码流较大时延迟略高。">
+      </van-cell>
+      <van-cell title="frp / 花生壳 / Tailscale" label="有公网服务器可用 frp；无公网 IP 也可用花生壳等商用穿透或 Tailscale 组网（组网后填 Tailscale IP）。" />
+      <van-cell title="路由器端口映射" label="有公网 IP 时最直接：把外网端口映射到 NVR 的 8080，公网地址填 外网IP:端口。建议同时开启上方 HTTPS。" />
     </van-cell-group>
 
     <div class="actions">
@@ -208,7 +232,7 @@ function goBack() {
       <div class="qr-box">
         <template v-if="qrDataUrl">
           <img :src="qrDataUrl" alt="配对二维码" class="qr-img" />
-          <p class="qr-text">用 CyanNVR App「扫码添加」即可自动填入服务器地址</p>
+          <p class="qr-text">用 CyanNVR App「扫码添加」即可自动填入服务器地址{{ form.publicUrl.trim() ? '（含公网地址）' : '' }}</p>
           <p class="qr-url">{{ pairingUrl() }}</p>
         </template>
         <p v-else class="qr-text qr-empty">当前页面地址无法识别为有效服务器地址，请填写局域网地址</p>
