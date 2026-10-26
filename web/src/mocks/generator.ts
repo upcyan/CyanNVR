@@ -172,6 +172,7 @@ export function defaultSettings(): Settings {
     tlsDomain: '',
     acmeEmail: '',
     trustWindowHours: 72,
+    snapshotFps: 0.5,
     ai: {
       enabled: false,
       mode: 'local',

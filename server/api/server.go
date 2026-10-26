@@ -145,6 +145,9 @@ func defaultSettings() AppSettings {
 		ScheduleEnd:   "20:00",
 		MotionPush:    true,
 		OfflinePush:   true,
+		// 抓帧频率默认 0.5 fps（每 2 秒一帧）：抓帧进程逐帧完整解码，
+		// fps=1 时 4K 源单路实测占 30% CPU，0.5 足够缩略图/AI 分析使用。
+		SnapshotFPS: 0.5,
 		// 免登录信任窗口默认 3 天：平衡「少登录」与「异常时尽快失效」
 		TrustWindowHours: 72,
 		HTTPS:            false,
@@ -196,7 +199,11 @@ func (s *Server) applySettings() {
 		s.cfg.SnapshotFPS = set.SnapshotFPS
 	}
 	// 已加载的配置变化要作用到正在运行的抓帧进程，否则改了设置看不到任何变化。
-	s.rec.SetSnapshotFPS(s.cfg.SnapshotFPS)
+	// rec 为 nil 的时间窗：单测构造的裸 Server（settingsTestServer）、api.New 尚未
+	// 挂上 recorder 的极早期调用——此时只同步配置，不动进程。
+	if s.rec != nil {
+		s.rec.SetSnapshotFPS(s.cfg.SnapshotFPS)
+	}
 }
 
 func (s *Server) saveSettings() {

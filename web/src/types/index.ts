@@ -121,6 +121,8 @@ export interface Settings {
   acmeEmail: string
   /** 免登录信任窗口（小时），0=关闭 */
   trustWindowHours: number
+  /** 快照抓帧频率（帧/秒），0.5 = 每 2 秒一帧 */
+  snapshotFps: number
   ai: AIConfig
   theme: 'auto' | 'dark' | 'light'
   fontSize: FontSize

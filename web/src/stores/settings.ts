@@ -29,7 +29,8 @@ function toBackend(s: Settings): AppSettings {
   return { retentionDays: s.retentionDays, retentionSizeGB: s.retentionSizeGB, recordMode: s.recordMode,
     scheduleStart: s.scheduleStart, scheduleEnd: s.scheduleEnd, motionPush: s.motionPush, offlinePush: s.offlinePush,
     https: s.https, httpsPort: s.httpsPort, tlsCertMode: s.tlsCertMode, tlsDomain: s.tlsDomain,
-    acmeEmail: s.acmeEmail, ai: s.ai, trustWindowHours: s.trustWindowHours ?? 0 }
+    acmeEmail: s.acmeEmail, ai: s.ai, trustWindowHours: s.trustWindowHours ?? 0,
+    snapshotFps: s.snapshotFps ?? 0.5 }
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 /** Compute changed leaf fields, not the whole stale AI object. */

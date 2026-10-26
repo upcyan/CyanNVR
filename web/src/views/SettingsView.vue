@@ -143,6 +143,19 @@ const s = store.settings
 
 const saving = ref(false)
 
+// ---- 快照抓帧频率（帧/秒，0 = 关闭）----
+// 抓帧进程逐帧完整解码再降采样，是最容易被忽视的 CPU 大户（4K 源 fps=1
+// 单路实测 30%）。默认 0.5：缩略图/AI 分析 2 秒一帧足够。
+const snapshotFps = ref(0.5)
+const snapshotFpsLabel = computed(() =>
+  snapshotFps.value <= 0 ? '关' : `${snapshotFps.value.toFixed(1)} fps · 每 ${(1 / snapshotFps.value).toFixed(1)} 秒`,
+)
+watch(() => s.snapshotFps, v => { snapshotFps.value = typeof v === 'number' && v >= 0 ? v : 0.5 })
+function onSnapshotFpsChange(v: number | string) {
+  const f = Math.round(Number(v) * 10) / 10
+  store.set({ snapshotFps: f <= 0 ? 0 : f })
+}
+
 // ---- 循环覆盖：保留天数（1-3650）与总容量限额（GB，0 = 不限制） ----
 const retentionDaysText = ref(String(s.retentionDays || 30))
 const retentionSizeText = ref(String(s.retentionSizeGB ?? 0))
@@ -1106,6 +1119,22 @@ async function removeUser(u: ManagedUser) {
       >
         <template #right-icon>
           <van-icon name="bar-chart-o" class="user-action" />
+        </template>
+      </van-cell>
+      <van-cell title="快照抓帧频率" label="首页缩略图与 AI 分析的取样频率（帧/秒）。抓帧需逐帧解码，4K 摄像头下调到 0.5 可显著省 CPU；0 = 关闭抓帧">
+        <template #value>
+          <div class="slider-box">
+            <van-slider
+              v-model="snapshotFps"
+              :min="0"
+              :max="2"
+              :step="0.1"
+              bar-height="4px"
+              aria-label="快照抓帧频率"
+              @change="onSnapshotFpsChange"
+            />
+            <span class="days">{{ snapshotFpsLabel }}</span>
+          </div>
         </template>
       </van-cell>
       <van-cell title="循环覆盖 · 保留天数" label="超期自动删除最早录像；直接输入 1-3650 天，或点右侧箭头下拉选快捷档">

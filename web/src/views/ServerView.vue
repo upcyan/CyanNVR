@@ -126,7 +126,7 @@ function pairingUrl(): string {
     try {
       const u = new URL(pubNorm)
       if (u.host) {
-        const full = `${u.protocol}//${u.host}${u.path.replace(/\/+$/, '')}`
+        const full = `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`
         return `cyannvr://${host}?pub=${encodeURIComponent(full)}`
       }
     } catch { /* 公网地址无效时退回仅局域网 */ }
