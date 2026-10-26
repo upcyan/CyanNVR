@@ -67,6 +67,10 @@ type AppSettings struct {
 	// TrustWindowHours 免登录信任窗口（小时）：token 过期后仍可静默续期的
 	// 时长。0=关闭。用户级 trust_window_hours 覆盖此全局默认。
 	TrustWindowHours int `json:"trustWindowHours"`
+	// SnapshotFPS 快照抓帧频率（帧/秒），0.5 = 每 2 秒一帧。
+	// 抓帧进程需逐帧完整解码，是最容易被忽视的 CPU 大户（4K 源单路实测 30%）；
+	// 默认 0.5 兼顾首页缩略图/AI 分析的实时性与功耗。
+	SnapshotFPS float64 `json:"snapshotFps"`
 	// RecordPaused 全局暂停录制（管理员在首页操作）。
 	// 暂停时停掉所有录制/直播进程，设备显示为离线；恢复后按原策略继续。
 	// 持久化到 settings.json：暂停监控属于隐私/维护操作，
@@ -187,6 +191,12 @@ func (s *Server) applySettings() {
 	}
 	// 0 = 关闭容量限制，必须无条件同步（否则一旦设置就再也关不掉）
 	s.cfg.RetentionSizeGB = set.RetentionSizeGB
+	// 抓帧频率：未设置（0，含升级前的旧配置文件）时保持默认 0.5
+	if set.SnapshotFPS > 0 {
+		s.cfg.SnapshotFPS = set.SnapshotFPS
+	}
+	// 已加载的配置变化要作用到正在运行的抓帧进程，否则改了设置看不到任何变化。
+	s.rec.SetSnapshotFPS(s.cfg.SnapshotFPS)
 }
 
 func (s *Server) saveSettings() {

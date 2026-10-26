@@ -38,6 +38,11 @@ type Manager struct {
 	// 且 StartWorker 拒绝启动；恢复时按原策略重新拉起。
 	paused bool
 
+	// snapFPS 运行时生效的抓帧频率（帧/秒），0 = 未设置、用 cfg 默认值。
+	// 放在 Manager 而非直接改 cfg：cfg 是启动期配置，运行期改动混进去会让
+	// 「原本的部署默认值」永久丢失（用户改回自动就没法回退了）。
+	snapFPS float64
+
 	ShouldRecordFn func() (mode, scheduleStart, scheduleEnd string)
 }
 
@@ -228,6 +233,38 @@ func (m *Manager) SetPaused(paused bool) {
 	}
 	m.syncActiveAI()
 	log.Printf("录制已恢复：尝试拉起 %d 路", n)
+}
+
+// SetSnapshotFPS 让抓帧频率的改动立即生效。
+//
+// 只重启抓帧进程，不动录制与直播：改一个缩略图刷新率不该造成录像断流。
+// 已在跑的抓帧进程持有旧的 fps 参数，不重启的话设置改了也看不到变化
+// （这类「改了没反应」是本项目反复出现的坑）。
+func (m *Manager) SetSnapshotFPS(fps float64) {
+	m.mu.Lock()
+	m.snapFPS = fps
+	workers := make([]*Worker, 0, len(m.workers))
+	for _, w := range m.workers {
+		workers = append(workers, w)
+	}
+	m.mu.Unlock()
+	for _, w := range workers {
+		w.restartSnapshot()
+	}
+	if fps > 0 {
+		log.Printf("抓帧频率已切换为 %s fps（每 %.1f 秒一帧）", snapshotFPSArg(fps), 1/fps)
+	}
+}
+
+// snapshotFPS 返回当前生效的抓帧频率：运行期设置优先，否则用部署默认值。
+func (m *Manager) snapshotFPSValue() float64 {
+	m.mu.Lock()
+	f := m.snapFPS
+	m.mu.Unlock()
+	if f > 0 {
+		return f
+	}
+	return m.cfg.SnapshotFPS
 }
 
 // workerByID 从切片里按 id 找 worker（SetPaused 的暂停分支用）。
@@ -564,8 +601,7 @@ func (w *Worker) startSingleConn() error {
 	// 快照从 HLS 播放列表读取：不新增 RTSP 连接。
 	// AI 关闭时不启动（current.jpg 只服务 AI 分析）。
 	if w.needSnapshots() {
-		snapArgs := append(w.snapInputArgs(),
-			"-vf", "fps=1", "-update", "1", filepath.Join(w.snapDir, "current.jpg"))
+		snapArgs := w.snapArgs()
 		var snapFeed []byte
 		if w.snapNeedsFeed() {
 			snapFeed = w.snapPlaylistFeed()
@@ -668,8 +704,7 @@ func (w *Worker) startMultiConn() error {
 	w.liveProc = liveProc
 	// 快照：优先从 HLS 读（零额外摄像头连接）；AI 关闭时完全不启动
 	if w.needSnapshots() {
-		snapArgs := append(w.snapInputArgs(),
-			"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
+		snapArgs := w.snapArgs()
 		log.Printf("[%s] starting ffmpeg: snap=%v", w.dev.Name, sanitizeArgs(snapArgs))
 		var snapFeed []byte
 		if w.snapNeedsFeed() {
@@ -1515,11 +1550,40 @@ func (w *Worker) needSnapshots() bool {
 // 优先从 HLS 播放列表读（与直播同一路数据，零额外摄像头连接）；
 // HLS 尚未就绪时回退到直连 RTSP。
 func (w *Worker) snapInputArgs() []string {
+	// 抓帧同样走硬解：它是每路设备独立的解码进程，之前只带 -i 纯软解，
+	// 4K 源单路可占 30% CPU（生产实测 PID 702590），比录制进程还贵一半。
+	// 解码参数与录制路径一致（DecodeArgs 也是输入选项，必须在 -i 之前）。
 	livePl := filepath.Join(w.liveDir, "index.m3u8")
 	if _, err := os.Stat(livePl); err == nil {
-		return []string{"-loglevel", "error", "-y", "-i", livePl}
+		args := []string{"-loglevel", "error", "-y"}
+		return append(args, append(ffmpeg.ProbeHW(w.mgr.cfg.Ffmpeg).DecodeArgs(),
+			"-i", livePl)...)
 	}
 	return append([]string{"-loglevel", "error", "-y"}, w.inputArgs()...)
+}
+
+// snapArgs 返回完整的抓帧命令参数。
+//
+// 三处调用（单连接、录制+直播、崩溃重启）此前各自硬编码 "-vf fps=1"，
+// 频率无法配置。现在统一由 cfg.SnapshotFPS 决定，并且：
+//   - 值 <=0 视为关闭抓帧（调用方据此跳过进程）；
+//   - 用 select 语法丢弃多余帧而不改变解码节奏，抓帧进程真正降频。
+func (w *Worker) snapArgs() []string {
+	return append(w.snapInputArgs(),
+		"-vf", fmt.Sprintf("fps=%s", snapshotFPSArg(w.mgr.snapshotFPSValue())),
+		"-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
+}
+
+// snapshotFPSArg 把配置值格式化成 ffmpeg 的 fps 表达式。
+// 0.5 -> "0.5"（每 2 秒一帧）。非法值回退到默认 0.5。
+func snapshotFPSArg(fps float64) string {
+	if fps <= 0 {
+		fps = 0.5
+	}
+	if fps > 30 {
+		fps = 30
+	}
+	return strconv.FormatFloat(fps, 'f', -1, 64)
 }
 
 // snapNeedsFeed 报告 snapInputArgs 当前是否走 stdin 播放列表路径
@@ -1553,8 +1617,7 @@ func (w *Worker) guardSnap() {
 	if w.recordProc == nil || !w.recordProc.Running() {
 		return
 	}
-	snapArgs := append(w.snapInputArgs(),
-		"-vf", "fps=1", "-update", "1", "-y", filepath.Join(w.snapDir, "current.jpg"))
+	snapArgs := w.snapArgs()
 	var snapFeed []byte
 	if w.snapNeedsFeed() {
 		snapFeed = w.snapPlaylistFeed()
@@ -1569,6 +1632,34 @@ func (w *Worker) guardSnap() {
 	}
 	w.snapProc = p
 	log.Printf("[%s] snap restarted", w.dev.Name)
+}
+
+// restartSnapshot 用当前频率重建抓帧进程（设置变更时调用）。
+//
+// 前置条件与 guardSnap 一致：AI 关了就没必要存在，录制没跑就没有流可抓。
+// 不满足时直接收起旧进程，避免残留一个按旧参数运行的孤儿。
+func (w *Worker) restartSnapshot() {
+	if w.snapProc != nil {
+		w.snapProc.Kill()
+		w.snapProc = nil
+	}
+	if !w.needSnapshots() {
+		return
+	}
+	if w.recordProc == nil || !w.recordProc.Running() {
+		return
+	}
+	var feed []byte
+	if w.snapNeedsFeed() {
+		feed = w.snapPlaylistFeed()
+	}
+	p, err := w.launchFFmpeg(w.snapArgs(), feed)
+	if err != nil || p == nil {
+		log.Printf("[%s] snap restart (fps change) failed: %v", w.dev.Name, err)
+		return
+	}
+	w.snapProc = p
+	log.Printf("[%s] snap 已按新频率重启", w.dev.Name)
 }
 
 // ---------- AI loop (redundant safety; per-device drain covers it) ----------

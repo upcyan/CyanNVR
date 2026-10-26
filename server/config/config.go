@@ -19,6 +19,12 @@ type Config struct {
 	RetentionDays       int
 	RetentionSizeGB     int // 录像总容量上限（GB），0 = 不限制
 	SnapshotIntervalSec int
+	// SnapshotFPS 快照抓帧频率（帧/秒）。0.5 = 每 2 秒一帧。
+	//
+	// current.jpg 只服务 AI 分析与首页缩略图，不需要秒级刷新；而抓帧进程要
+	// 完整解码每一帧再降采样，4K 源上单路可占 30% CPU（实测 Tesla P4 机器）。
+	// 降到 0.5 能省掉大半（ffmpeg 仍要解完整帧，但输出端开销与丢帧逻辑大幅减少）。
+	SnapshotFPS float64
 	// MinFreeMB 录像盘最低剩余空间（MB）。低于该水位时暂停录像并优先清理，
 	// 空间恢复后自动继续——防止录像把整块系统盘写满拖垮 NAS。
 	MinFreeMB int
@@ -63,6 +69,7 @@ func Load() *Config {
 		JWTSecret:           env("NVR_JWT_SECRET", ""),
 		RetentionDays:       30,
 		SnapshotIntervalSec: 10,
+		SnapshotFPS:         0.5,
 		MinFreeMB:           minFreeMB,
 
 		AIEnabled: env("NVR_AI_ENABLED", "false") == "true",
