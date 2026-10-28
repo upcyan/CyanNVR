@@ -65,7 +65,7 @@ object UpdateManager {
                     return UpdateInfo(false, "", current, null, null, "", error = "检查失败（HTTP ${resp.code}）")
                 }
                 val o = JSONObject(resp.body?.string() ?: return UpdateInfo(false, "", current, null, null, "", error = "响应为空"))
-                val tag = o.optString("tag_name", "").removePrefix("v")
+                var latest = ""
                 var apkUrl: String? = null
                 var apkName: String? = null
                 var apkSize = 0L
@@ -80,15 +80,13 @@ object UpdateManager {
                         val a = assets.optJSONObject(i) ?: continue
                         val name = a.optString("name", "")
                         if (!name.endsWith(".apk")) continue
-                        val ver = Regex("_(\\d+\\.\\d+\\.\\d+)_android\\.apk$")
-                            .find(name)?.groupValues?.get(1)
-                            ?.split(".")?.mapNotNull { it.toIntOrNull() } ?: continue
-                        if (ver.size != 3) continue
+                        val ver = apkAssetVersion(name)?.split(".")?.map { it.toInt() } ?: continue
                         if (bestVer == null || compareVersion(
                                 ver.joinToString("."), bestVer.joinToString(".")
                             ) > 0
                         ) {
                             bestVer = ver
+                            latest = ver.joinToString(".")
                             apkUrl = a.optString("browser_download_url", "")
                             apkName = name
                             apkSize = a.optLong("size", 0)
@@ -96,13 +94,14 @@ object UpdateManager {
                     }
                 }
                 return UpdateInfo(
-                    hasUpdate = compareVersion(tag, current) > 0,
-                    latest = tag,
+                    hasUpdate = apkUrl?.startsWith("https://") == true && compareVersion(latest, current) > 0,
+                    latest = latest,
                     current = current,
                     apkUrl = apkUrl,
                     apkName = apkName,
                     notes = o.optString("body", "").trim(),
                     apkSize = apkSize,
+                    error = if (latest.isEmpty()) "未找到可用的安卓安装包" else null,
                 )
             }
         } catch (e: Exception) {
@@ -112,7 +111,9 @@ object UpdateManager {
 
     /** 下载 APK 到应用外部缓存目录（可被安装器读取），返回文件。 */
     fun download(context: Context, info: UpdateInfo, onProgress: ((Long, Long) -> Unit)? = null): DownloadResult {
+        check(compareVersion(info.latest, currentVersion(context)) > 0) { "安装包不是更新版本，已阻止下载" }
         val url = info.apkUrl ?: throw IllegalStateException("没有可下载的 APK 地址")
+        check(url.startsWith("https://")) { "更新地址必须使用 HTTPS" }
         val name = info.apkName ?: "CyanNVR_${info.latest}.apk"
         val dir = context.getExternalFilesDir("updates") ?: context.cacheDir
         dir.mkdirs()
@@ -120,6 +121,7 @@ object UpdateManager {
 
         // 只复用完整包，避免上次失败遗留的非空文件被误认为下载完成。
         if (target.exists() && target.length() > 0 && (info.apkSize <= 0 || target.length() == info.apkSize)) {
+            validateApk(context, target, info.latest)
             onProgress?.invoke(target.length(), target.length())
             return DownloadResult(target, true)
         }
@@ -131,6 +133,7 @@ object UpdateManager {
             val tmp = File(dir, "$name.part")
             try {
                 copyUpdatePackage(body.byteStream(), tmp, total, onProgress)
+                validateApk(context, tmp, info.latest)
                 check(tmp.renameTo(target)) { "无法保存更新包" }
                 return DownloadResult(target, false)
             } finally {
@@ -140,19 +143,29 @@ object UpdateManager {
     }
 
     /** 比较 x.y.z 版本，a>b 返回正数。 */
-    fun compareVersion(a: String, b: String): Int {
-        val pa = a.removePrefix("v").split(".")
-        val pb = b.removePrefix("v").split(".")
-        for (i in 0 until 3) {
-            val na = pa.getOrNull(i)?.toIntOrNull() ?: 0
-            val nb = pb.getOrNull(i)?.toIntOrNull() ?: 0
-            if (na != nb) return na - nb
-        }
-        return 0
+    fun compareVersion(a: String, b: String): Int = compareApkVersions(a, b)
+
+    /** 缓存、下载完成和安装入口共用校验，不能仅凭文件名/大小信任 APK。 */
+    @Suppress("DEPRECATION")
+    internal fun validateApk(context: Context, file: File, expectedVersion: String? = null) {
+        val pm = context.packageManager
+        val flags = android.content.pm.PackageManager.GET_SIGNATURES
+        val archive = pm.getPackageArchiveInfo(file.absolutePath, flags)
+            ?: throw IllegalStateException("安装包损坏或无法解析，请重新下载")
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        val version = archive.versionName ?: ""
+        requireApkIdentity(
+            archive.packageName, context.packageName, version, currentVersion(context),
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(archive),
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(installed),
+            archive.signatures?.map { it.toCharsString() }?.toSet().orEmpty(),
+            installed.signatures?.map { it.toCharsString() }?.toSet().orEmpty(), expectedVersion
+        )
     }
 
     /** 调起系统安装器安装已下载的 APK。 */
     fun installApk(context: android.content.Context, file: java.io.File) {
+        validateApk(context, file)
         if (android.os.Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(android.content.Intent(
                 android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
