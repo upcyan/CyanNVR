@@ -20,7 +20,7 @@ package main
 //
 // 注意：本文件被 build-fpk.sh 写入，且被排除在「变更判定」的哈希之外
 // （否则每次打包都会自我触发 bump）。
-const CoreVersion = "1.10.35"
+const CoreVersion = "1.10.36"
 
 // FpkVersion 是**本二进制被哪个 fpk 包携带**的完整版本，形如 1.10.34-6
 // （核心版本 + 打包修订号），由 build-fpk.sh 用 -ldflags 注入。
